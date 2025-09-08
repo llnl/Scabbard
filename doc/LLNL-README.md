@@ -3,21 +3,25 @@
 
 > **NOTE:** These instructions are for LLNL affiliates, to be used on Tioga,
 > and may not apply to general users of Scabbard.
-> For General Configuration and Usage info please see [`scabbard/README.md`](https://github.com/osterhoutan-UofU/scabbard).
+<!-- > For General Configuration and Usage info please see [`scabbard/README.md`](https://github.com/osterhoutan-UofU/scabbard).
+> >_**NOTE:** at time of writing Scabbard is not yet published, so the above link might not work until the code is approved for release._ -->
 
-There are two ways to use Scabbard. 
-1. [Load and use the prebuilt version](#use-prebuilt-scabbard) _(only for ROCm 6.1.2)_
-2. [Build and use your own copy](#build-your-own-scabbard)
 
  Use Prebuilt Scabbard
 -----------------------------
-> _**NOTE:** the Scabbard provided in Tioga's LMod is only compatible with ROCm 6.1.2_
+> _**NOTE:** the Scabbard provided in Tioga's LMod is ONLY compatible with ROCm 6.1.2_
+> _If you absolutely need to use a different Scabbard, please contact the scabbard creator(s), or wait until it's full release to build your own Scabbard for a specific ROCm version._
+<!-- > _Scabbard will eventually be available at https://github.com/osterhoutan-UofU/scabbard_ -->
 
- 1. Load Scabbard from LMod:
+ 1. Load the relevant LMod modules:
+    - ROCm == 6.1.2
+    - Python >= 3.10
+    - CMake >= 3.20
+ 2. Load Scabbard from LMod:
     ```sh
     module load scabbard/0.1
     ```
- 2. Check to see that Scabbard is loaded by running the following commands:
+ 3. Check to see that Scabbard is loaded by running the following commands:
     - Check that `$SCABBARD_PATH` environment variable is defined:
       ```sh
       echo $SCABBARD_PATH
@@ -31,27 +35,8 @@ There are two ways to use Scabbard.
       ```
       Correct ROCm config
       ```
- 3. Follow the instructions in the _[CMake Configuration](#cmake-configuration)_ section to instrument and run your instrumetned code.
+ 4. Follow the instructions in the _[CMake Configuration](#cmake-configuration)_ section to instrument and run your instrumented code.
 
- Build Your Own Scabbard
------------------------------
-If you need to use anothter version of ROCm outside of 6.1.2, you will need to follow the instructions in the [`README.md`](https://github.com/osterhoutan-UofU/scabbard) to build a version of Scabbard for that version of ROCm.
-
-However, in the LLNL systems there are several kinds of ROCm modules and only one is compatible with Scabbard,
-and that is the unaltered versions.
-
-To test to see if the ROCm version you have is compatible please run the following command:
-```sh
-if module is-loaded rocm && ! module is-loaded rocmcc ; then echo "ROCm config is compatible with Scabbard" ; else echo "WARN: ROCm config is NOT compatible with" ; fi
-```
-The output should look like the following if your LMod configuration of ROCm is correct:
-```
-ROCm config is compatible with Scabbard
-```
-If it does not look like the above you will need to correct your LMod config and try rebuilding your project without Scabbard once your LMod configuration of ROCm passed the test.
-The attempt to build without Scabbard after making such changes is important as CMake and ROCm are sensitive to environmant and version changes.
-
-Following this check follow the instructions in the [`README.md`](https://github.com/osterhoutan-UofU/scabbard)
 
 
  CMake Configuration
@@ -73,7 +58,7 @@ scabbard_instrument_all()
 ### Set C++ and HIP Compilers
 Due to issues with file suffix ambiguities both the C++ compiler and HIP compiler in your CMake config should be set 
 to the same ROCm compiler.
-You can do this however you see fit but we recomend just adding the following line to your top level `CMakeLists.txt` file
+You can do this however you see fit but we recommend just adding the following line to your top level `CMakeLists.txt` file
 someplace after the ROCm/HIP package import/find line in said top level `CMakeLists.txt` file:
 ```cmake
 set(CMAKE_CXX_COMPILER "${ROCM_DIR}/bin/hipcc")
@@ -82,13 +67,6 @@ set(CMAKE_CXX_COMPILER "${ROCM_DIR}/bin/hipcc")
 
  Usage Instructions
 ------------------------------
-
-### Scabbard Install Location
-> {Ignatio please fill out this info}
-
-### Instrumenting your code with Scabbard
-- For CMake projects follow the instructions given in the [Load the Scabbard CMake Module](#load-the-scabbard-cmake-module) section.
-- For other build systems please follow the relivant instructions in the main [`README.md`](https://github.com/osterhoutan-UofU/scabbard)
 
 ### Running your instrumented code
 Scabbard uses the contents of the `$SCABBARD_TRACE_FILE` environment variable to know where to save the trace file to.
@@ -110,10 +88,10 @@ So all you need to do is set that variable in one of the following ways--where `
   SCABBARD_TRACE_FILE=<trace-file> <launch-cmd>
   ```
   This will set the environment variable just for this specific launch.
-> _**NOTE:** if you do not set `SCABBARD_TRACE_FILE` it will use the name of the executable with a `.scabbard.trace` suffex._
+> _**NOTE:** if you do not set `SCABBARD_TRACE_FILE` it will use the name of the executable with a `.scabbard.trace` suffix._
 
 
-### Verifing the Trace File
+### Verifying the Trace File
 After generating the trace file run the Scabbard verify tool.
 
 To do this you will need to find the metadata file generated durring instrumentation.
@@ -129,21 +107,22 @@ Scabbard groups all like data races to only report each one once, but keeps a ta
 > A data race is _"like"_ another race if they share the same read and write locations in the source code.
 
 Scabbard reports on the following occurrences:
-- `ERROR`: This is a true and verified data race, where the CPU read before the GPU could write to the same location.
-- `WARNING`: This is a place in your code where the read and write events happened in the correct order, 
+- ERROR/`DATA RACE`: This is a true and verified data race, where the CPU read before the GPU could write to the same location.
+- WARNING/`POSSIBLE DATA RACE`: This is a place in your code where the read and write events happened in the correct order, 
   but something else could be wrong.
-  It is usually one of the two scenarios, but Scabbard can't tell the difference.
+  It is usually one of the two scenarios, and Scabbard can tell the difference between the two, but not if there is no confounding issues.
    1. The CPU read from a shared memory location that the GPU has never written to.
       - This could mean multiple things neither is in the scope of Scabbard
         - The CPU incorrectly read from uninitialized unified memory
         - The memory location was initialized by the CPU which Scabbard would not know about
    2. There was no recognizable synchronization event between the GPU's write event and the CPU's read event.
       - This could mean that a data race could occur in the future but didn't this time.
-      - If you are using custom barrier or synchronizations systems Scabbard will report most operations as a warning.
-- `NO RACE`: This means that there wasn't even a warning, and your code is clean.
+      - If you are using custom barrier or synchronizations systems Scabbard will report most operations as a WARNING.
+- SUCCESS/`NO RACE`: This means that there wasn't even a warning, and your code is clean.
 
-In most cases Scabbard will report some number of `WARNING`s even if your code has no races,
+In most cases Scabbard will report some number of WARNINGs even if your code has no races,
  due to our inability to differentiate between the two scenarios listed above.
+It is recommended that you still investigate the WARNINGs, to ensure that there is no chance of a race in the future.
 
 
 
@@ -267,7 +246,7 @@ Now build your project like you would normally, for our example that means:
 ```sh
 mkdir build
 cd build
-cmake -B. -S.. -DCMAKE_CXX_COMPILER=hipcc
+cmake -B. -S.. -G"Unix Makefiles" -DCMAKE_CXX_COMPILER=hipcc
 make
 flux run -N1 -n1 -c8 -g1 ./HIP_example
 ```
@@ -295,7 +274,6 @@ scabbard --help
 Add the following line near the top of your top level `CMakeLists.txt`
 to load Scabbard's CMake module into your CMake environment.
 ```cmake
-list(APPEND CMAKE_MODULE_PATH "$ENV{SCABBARD_PATH}")
 include(scabbard)
 ```
 Then insert the following to the end of the file after all target definitions
@@ -309,7 +287,6 @@ For our example the resulting `CMakeLists.txt` should look like this:
 cmake_minimum_required(VERSION 3.10)
 project(HIPExample LANGUAGES CXX HIP)
 
-list(APPEND CMAKE_MODULE_PATH "$ENV{SCABBARD_PATH}")    # <<<
 include(scabbard)                                       # <<<
 
 find_package(HIP REQUIRED)
@@ -340,7 +317,7 @@ For Our Example it will look like the following:
 ```sh
 mkdir build
 cd build
-cmake -B. -S.. -DCMAKE_CXX_COMPILER=hipcc
+cmake -B. -S.. -G"Unix Makefiles" -DCMAKE_CXX_COMPILER=hipcc
 ```
 The output from cmake should contain some number of the following lines with messages from Scabbard:
 ```
