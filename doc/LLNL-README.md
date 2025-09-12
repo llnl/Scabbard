@@ -1,13 +1,68 @@
   LLNL README for Scabbard
 =============================
 
-> **NOTE:** These instructions are for LLNL affiliates, to be used on Tioga,
-> and may not apply to general users of Scabbard.
+> **NOTE:** These instructions are for LLNL affiliates, to be used in Tioga, and may not apply to general users of Scabbard.
 <!-- > For General Configuration and Usage info please see [`scabbard/README.md`](https://github.com/osterhoutan-UofU/scabbard).
 > >_**NOTE:** at time of writing Scabbard is not yet published, so the above link might not work until the code is approved for release._ -->
 
 
- Use Prebuilt Scabbard
+ Table of Contents
+-----------------------------
+- [LLNL README for Scabbard](#llnl-readme-for-scabbard)
+  - [Table of Contents](#table-of-contents)
+  - [About](#about)
+    - [Key Terms:](#key-terms)
+    - [About Scabbard](#about-scabbard)
+- [LLNL User Guide](#llnl-user-guide)
+  - [Setup Prebuilt Scabbard](#setup-prebuilt-scabbard)
+  - [CMake Configuration](#cmake-configuration)
+    - [Load the Scabbard CMake Module](#load-the-scabbard-cmake-module)
+    - [Set C++ and HIP Compilers](#set-c-and-hip-compilers)
+  - [Usage Instructions](#usage-instructions)
+    - [Running your instrumented code](#running-your-instrumented-code)
+    - [Verifying the Trace File](#verifying-the-trace-file)
+    - [Interpreting the Results](#interpreting-the-results)
+  - [Simple Code Example:](#simple-code-example)
+    - [Step 0: Prep Work](#step-0-prep-work)
+    - [Step 1: Load Scabbard module](#step-1-load-scabbard-module)
+    - [Step 2: Add Scabbard to your CMake Configuration](#step-2-add-scabbard-to-your-cmake-configuration)
+    - [Step 4: Reconfigure and Build your Project](#step-4-reconfigure-and-build-your-project)
+    - [Step 5: Run Your Instrumented Code:](#step-5-run-your-instrumented-code)
+    - [Step 6: Use Scabbard Verify to Check for Data Races](#step-6-use-scabbard-verify-to-check-for-data-races)
+- [Troubleshooting](#troubleshooting)
+  - [Things to Note](#things-to-note)
+  - [Tips and Tricks](#tips-and-tricks)
+  - [Common Issues](#common-issues)
+  - [Static Library Issues](#static-library-issues)
+
+
+ About
+-----------------------------
+### Key Terms:
+- **Unified Memory/Unified Heterogenous Memory (UHM):** A _"new"_ architectural framework that provides a single, shared memory address space for multiple, different types of processors (like CPUs and GPUs) in a system, eliminating the need for explicit data copying between their separate memory pools.
+- **ROCm:** AMD's partially open source compilation toolchain (and driver backend) meant to unify the compilation process of it's many different GPU architectures utilizing LLVM's compilation toolchain. (every instillation of ROCm comes with it's own version specific copy of the LLVM project)
+- **Hip:** A superset of the C++ programming language that allows for simple and familiar coding patterns (copies NVidia's CUDA) and a small useful library of software meant to improve GPU coding.
+- **LLVM Pass-Plugin:** a system used to allow external parties to extended the functionality of the LLVM compilation toolchain, that allows the external Pass-Plugin to see and make changes to a program during the compilation of a program.
+  (Known for being finicky when a plugin is loaded with any version or copy of LLVM that the plugin wasn't compiled with.)
+- **Instrumentation:** A process where a pice of software alters the functionality of another during a compilation step, to add a specific functionality while impacting the behavior of the software as little as possible.
+- **Data Race:** A type of runtime logic error in concurrent programming that occurs when two or more _threads_ access the same memory location (at the same or different times), and the accesses are not properly synchronized by locks or other synchronization mechanisms, so that the threads performing the read operations don't read the expected information.
+- **Synchronization Mechanism:** a kind of protection that prevents a thread from progressing until certain conditions are meet.  In the case of scabbard this refers to calls to `hipStreamSynchronize` and `hipDeviceSynchronize` which prevent the CPU/Host from progressing until specified actions on the GPU are completed.
+- **Offline Analysis:** A kind of verification process for software where a program is set to produce some kind of trace/log that can be analyzed by a separate program at a later time to determine what happened. 
+
+
+### About Scabbard
+Scabbard is a Unified Memory Data Race Detection tool for AMD's ROCm/HIP ecosystem.
+Scabbard is designed to detect data races where the CPU/Host reads from a Unified Memory location before a GPU/Device can write to it, or when the CPU/Host reads from said memory location without a proper synchronization event.
+Scabbard is implemented as a LLVM Pass-Plugin that instruments your code at the end of the Link Time Optimization (LTO) step in the compilation/linking/building process to produce a trace file of all
+possibly relevant events (writes on the GPUs/Devices and reads on the CPU/Host that occur to memory address accessible to both _aka_ unified memory).
+Scabbard then comes with a verification tool called verify/`verif` that will read this trace file and report on any data races, along with a summary of where in the source code the relevant actions stem from.
+
+
+
+  LLNL User Guide
+===========================================
+
+ Setup Prebuilt Scabbard
 -----------------------------
 > _**NOTE:** the Scabbard provided in Tioga's LMod is ONLY compatible with ROCm 6.1.2_
 > _If you absolutely need to use a different Scabbard, please contact the scabbard creator(s), or wait until it's full release to build your own Scabbard for a specific ROCm version._
@@ -385,4 +440,68 @@ The example will report no race unless you commented out the line indicated in t
 See the [_"Interpreting the Results"_](#interpreting-the-results) section for information on interpreting the results.
 
 
+
+  Troubleshooting
+=====================================================
+
+ Things to Note
+----------------------------------------
+- Scabbard must be able to instrument all code that will read or write to unified memory locations of interest.
+  - This means that you must also compile any dynamic/link libraries with Scabbard that fit this description.
+    Scabbard will automatically do this to all targets declared in your CMake project, 
+    but relevant external libraries must be compiled from source with Scabbard in order to ensure validity.
+  - _(see [Static Library Issues](#static-library-issues) section for more info on Static and Object Libraries external or otherwise)_
+
+- Scabbard can work with multi-node launches but you will want to define a separate trace file for each node, then run verify on them individually.
+ 
+- Scabbard verify can use a lot of memory, in general just a bit more RAM than the trace file is in size, be sure you have it available or expect slowdowns for system memory swapping.
+  - On versions of Scabbard >=0.2 compression is used to reduce the size of trace files, but they must be re-inflated inside the verify tool.
+  - For context while it can vary greatly the compressed trace files can get to be 13% of their uncompressed size.
+
+- Stream Callback Function (non) Support:  Scabbard's validity does not hold on any program that utilizes Stream callback functions as a form of Synchronization Mechanism, as we can't determine at compile time what functions will and won't be callback functions at what times (these functions can just be called by the CPU/Host at any time not just as a callback) and what Job Stream they are a part of when they are being called at all.
+
+- RAJA support: RAJA is primarily a header only library so Scabbard should work with it out of the box, unless you end up using some of the functionality provided in it's limited static library portion and during compilation it results in the error described in the [Static Library Issues](#static-library-issues) section.  Then you will need to use the solution provided therein to build that static library component as an Object library instead.
+
+- GTest/CTest (non) Support: these libraries might experience the [Static Library Issues](#static-library-issues), we have not had an opportunity to figure out what features/coding patterns cause the issue to prop up so we do not officially support these tools, but if unit test built with these tools do compile they should work fine and still be valid.
+
+
+ Tips and Tricks
+---------------------------------------
+- Always ensure your project build and runs with ROCm 6.1.2 before using Scabbard
+- Ensure you have `rocm/6.1.2` loaded up with LMod and not `rocmcc/6.1.2` as the latter messes up the environment and prevents Scabbard from running.
+- Build internal Static libraries as Object libraries instead, they still allow you to organise and reuse your code in the same way as a static library would, but it avoids a known issue with `ld.lld` and the LTO operations Scabbard relies on.
+  -  _(see [Static Library Issues](#static-library-issues) section for more info on Static and Object Libraries external or otherwise)_
+- You can use either environment variables or the Scabbard CLI tool to specify where to save trace and metadata files.
+  - Use the `SCABBARD_TRACE_FILE` environment variable while running your instrumented executable to tell Scabbard where to save the Trace File
+  - Use the `SCABBARD_METADATA_FILE` environment variable while building your project to tell Scabbard where to save the metadata file to.
+
+
+
+ Common Issues
+---------------------------------------
+- If during compilation or running the instrumented application you get errors involving some object in the LLVM library or the standard library, you likely don't have the correct ROCm LMod module loaded.
+  - Try `module unload rocm rocmcc` followed by `module load rocm/6.1.2`, then reconfigure and rebuild your project with CMake.
+  
+- If the Flux errors out when trying to run the Scabbard CLI tool replace the `scabbard` part of the command with `$SCABBARD_PATH/scabbard.py`.  (flux sometimes does not like aliases)
+
+
+
+ Static Library Issues
+---------------------------------------
+At time of writing there is an issue with LLVM's linker (`ld.lld`) that prevents host code from being part of the LTO step in certain use cases not entirely definable to us.
+We do know that it does consistently occur in static libraries that are comprised of GPU/Device only code (_i.e._ `__global__` and `__device__` functions).
+If this happens to you, a warning similar to the following will be provided by the linker:
+```
+ld.lld: warning: <static-lib>.a: archive member '<source-code>.cpp.o' is neither ET_REL nor LLVM bitcode
+```
+The quickest solution is to change the kind of library it is building from `STATIC` to `OBJECT`, 
+which is the same thing as a static library except it does not archive all of the object files (_i.e._ `.o` files)
+into an archive (_i.e._ `.a` files).
+```cmake
+add_library(<libName> STATIC ...)  
+# \/ becomes \/
+add_library(<libName> OBJECT ...)
+```
+
+For static libraries that are not in your CMake project you will want to build them from source as a sub-project of your own rather than importing them.  This is not always a straight forward process with large library tools, so best of luck.
 
