@@ -186,7 +186,7 @@ It is recommended that you still investigate the WARNINGs, to ensure that there 
 A simple single file example of how to use Scabbard with CMake on Tioga:
 
 Assume you have a project with the following files:
- 1. A source code file `SimpleExample.cpp`:
+ 1. A source code file `HIPExample.cpp`:
     ```cpp
     #include <hip/hip_runtime.h>
 
@@ -226,7 +226,7 @@ Assume you have a project with the following files:
 
       matrix_mul<<<(dim3){1u,1u,1u},(dim3){DIM,DIM,1u},0ul,0ul>>>(A,B,C);
 
-      HIP_CHECK(hipDeviceSyncronize();, "from `hipDeviceSyncronize()`");  // <<< Comment me out to create data race <<<
+      HIP_CHECK(hipDeviceSynchronize(), "from `hipDeviceSyncronize()`");  // <<< Comment me out to create data race <<<
       
       double res_sum = 0.0L;
       for (int64_t i=(DIM*DIM)-1l; i>=0l; --i) // iterating backwards should ensure that we read something before a write.
