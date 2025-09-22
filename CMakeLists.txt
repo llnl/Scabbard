@@ -1,7 +1,15 @@
 cmake_minimum_required(VERSION 3.20)
 project(scabbard VERSION 0.3.0)
 
-include(GNUInstallDirs)
+if(NOT DEFINED CMAKE_INSTALL_PREFIX)
+    include(GNUInstallDirs)
+    message("[NOTE] CMAKE_INSTALL_PREFIX will be configured using GNIInstallDirs")
+else()
+    if(CMAKE_INSTALL_PREFIX MATCHES "/usr/local")
+        set(CMAKE_INSTALL_PREFIX "${CMAKE_INSTALL_PREFIX}/scabbard" CACHE FILEPATH "don't drop all scabbard files into the top level of /urs/local" FORCE)
+    endif()
+    message("[NOTE] Scabbard will install to CMAKE_INSTALL_PREFIX:\"${CMAKE_INSTALL_PREFIX}\"")
+endif()
 configure_file(${CMAKE_SOURCE_DIR}/config/version.h.config
                 ${CMAKE_SOURCE_DIR}/lib/include/scabbard/version.h)
 
@@ -14,6 +22,7 @@ if (DEFINED ENV{ROCM_PATH})
     if (EXISTS "$ENV{ROCM_PATH}/hip")
         set(ENV{HIP_PATH} "$ENV{ROCM_PATH}/hip")
     endif ()
+    message("[NOTE] $ROCM_PATH was found to be \"$ENV{ROCM_PATH}\"")
 elseif (EXISTS "/opt/rocm") # if both are not defined define them if possible
     set(ENV{ROCM_PATH} "/opt/rocm")
     set(ENV{LLVM_HOME} "$ENV{ROCM_PATH}/llvm")
@@ -81,13 +90,13 @@ endif()
 set(CMAKE_C_COMPILER $ENV{ROCM_PATH}/llvm/bin/clang CACHE FILEPATH "set C compiler to amd-clang" FORCE)
 set(CMAKE_CXX_COMPILER $ENV{ROCM_PATH}/llvm/bin/clang++ CACHE FILEPATH "set C++ compiler to amd-clang" FORCE)
 
-# set(CMAKE_INSTALL_LIBDIR ${ROCM_PATH}/scabbard)
-# set(CMAKE_INSTALL_BINDIR ${ROCM_PATH}/scababrd)
-# set(CMAKE_INSTALL_INCLUDEDIR ${ROCM_PATH}/include)
-set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/scabbard)
-set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/scabbard)
-set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/scabbard)
+set(CMAKE_INSTALL_LIBDIR "")
+set(CMAKE_INSTALL_BINDIR "")
+set(CMAKE_INSTALL_INCLUDEDIR include)
 set(SCABBARD_PATH ${CMAKE_BINARY_DIR}/scabbard)
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${SCABBARD_PATH})
+set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${SCABBARD_PATH})
+set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${SCABBARD_PATH})
 
 option(SCABBARD_USE_COMPRESSION 
         "set compression level of trace files using zlib file notation i.e. /[1-9][hf]?/ in SCABBARD_COMPRESSION_LEVEL var" 
@@ -115,3 +124,14 @@ add_subdirectory(libtrace)
 add_subdirectory(instr)
 add_subdirectory(verif)
 add_subdirectory(interception)
+
+install(TARGETS scabbard instr trace trace.device
+        DESTINATION  ${CMAKE_INSTALL_PREFIX}/
+        PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_WRITE GROUP_EXECUTE WORLD_READ WORLD_EXECUTE
+        )
+install(DIRECTORY ${SCABBARD_PATH}/
+        DESTINATION ${CMAKE_INSTALL_PREFIX}
+        FILE_PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_WRITE GROUP_EXECUTE WORLD_READ WORLD_EXECUTE
+        DIRECTORY_PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_WRITE GROUP_EXECUTE WORLD_READ
+        FILES_MATCHING PATTERN "*.py" PATTERN "*.cmake"
+        )

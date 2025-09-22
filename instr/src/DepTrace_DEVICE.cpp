@@ -75,7 +75,11 @@ namespace scabbard {
       for (const auto& g : M.globals())
         if (const auto* mg = M.getNamedGlobal(llvm::StringRef(std::string(g.getName().str() + ".managed")))) {
           globalManagedMem.insert(std::make_pair(g.getName(),mg));
+#     if __clang_major__ <= 17
         } else if (not g.getName().endswith(".managed")) {
+#     else
+        } else if (not g.getName().ends_with(".managed")) {
+#     endif
           globalDeviceMem.insert(std::make_pair(g.getName(),&g));
         }
     }

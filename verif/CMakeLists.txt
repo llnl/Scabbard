@@ -23,6 +23,8 @@ target_link_libraries(verif
   $<INSTALL_INTERFACE:${CMAKE_INSTALL_LIBDIR}/libscabbard.so>
 )
 
+add_dependencies(verif scabbard)
+
 if(SCABBARD_USE_COMPRESSION)
 target_link_libraries(verif PUBLIC ZLIB::ZLIB)
 target_compile_options(verif PRIVATE "-DSCABBARD_USE_COMPRESSION=\"${SCABBARD_COMPRESSION_LEVEL}\"")
