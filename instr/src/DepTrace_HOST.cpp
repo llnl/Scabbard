@@ -196,7 +196,8 @@ namespace scabbard {
     template<>
     InstrData DepTrace<HOST>::__getInstrData_rec(const llvm::CallInst& I, llvm::SmallSet<llvm::StringRef, 8u>& phiBBVisited) const
     {
-      return InstrData::NEVER;
+      return InstrData::NEVER; //might need to change this to bellow if validity fails
+      // return InstrData::ON_HOST | InstrData::_RUNTIME_CONDITIONAL;
     }
 
     template<> 

@@ -22,6 +22,7 @@
 #include <llvm/Support/raw_ostream.h>
 #include <llvm/Support/Casting.h>
 #include <llvm/Support/DynamicLibrary.h>
+#include <llvm/Support/Regex.h>
 #include <llvm/Linker/IRMover.h>
 #include <llvm/Linker/Linker.h>
 #include <llvm/IR/IRBuilder.h>
@@ -805,9 +806,21 @@ namespace scabbard {
        instr_launch_func_host(F,*CI);
        return;
       }
-      else if (fnName == "hipMemcpy" || fnName == "hipMemcpyAsync")
+      else if (fnName.starts_with("hipMemcpy"))
       {
         auto loc = metadata.trace(F, CI->getDebugLoc(), ModuleType::HOST);
+        auto getSrcLoc = [&]() -> std::string {
+          return F.getParent()->getSourceFileName() 
+                + ':' + std::to_string(CI->getDebugLoc().getLine())
+                + ',' + std::to_string(CI->getDebugLoc().getCol());
+        };
+        llvm::Regex incompatiblePattern(".*(?:Symbol|Array|2D|3D).*");
+        if (incompatiblePattern.match(fnName)) {
+          llvm::errs() << "\n[scabbard.instr.host:WARN] WARNING: Scabbard does not currently support using Hip Symbols, Hip Arrays, or the Hip 2D/3D memcpy operations."
+                              " (from: `" << getSrcLoc() << "`)\n"
+                          "\n[scabbard.instr.host:WARN]          >>> Validity of Scabbard results cannot be guaranteed for this program! <<< \n";
+          return;
+        }
         // hipMemCpy performs a hipStreamSync(0) unless it's async so we must also register the sync event
         if (not fnName.contains("Async")) {
           auto cis = llvm::CallInst::Create(
@@ -825,18 +838,25 @@ namespace scabbard {
           );
           cis->insertBefore(CI);
         }
-        // we only need to register the cpy as a read if it's from device to host 
-        if (auto* TrTy = llvm::dyn_cast<llvm::ConstantInt>(CI->getArgOperand(3))) {
-          switch (TrTy->getSExtValue()) {
-            case 2: // D->H
-              break; // we only care about instrumenting copies that count as reading read by the host
-            case 1: // H->D
-            case 3: // D->D
-            case 0: // H->H
-            default: // Unknown
-              return;
+        // we only need to register the cpy as a read if it's from device to host
+        llvm::Regex transferDirPattern("\\w+[DH]to[DH]");
+        if (not transferDirPattern.match(fnName)) { // check if direction is an argument or not
+          if (auto* TrTy = llvm::dyn_cast<llvm::ConstantInt>(CI->getArgOperand(CI->arg_size()-1ull))) {
+            switch (TrTy->getSExtValue()) {
+              case 2: // D->H
+                break; // we only care about instrumenting copies that count as reading read by the host
+              case 0: // H->H
+              case 1: // H->D
+              case 3: // D->D
+              case 4: // D->D (no CU)
+              default: // Unknown
+                return;
+            }
+          } else { // could not determine value of direction argument at compiletime
+            llvm::errs() << "\n[scabbard.instr.host:ERR] ERROR: direction of memcpy is not determinable at compile time! (from: `" << getSrcLoc() << "`)\n";
+            return;
           }
-        }
+        } else if (not fnName.contains("DtoH")) return; // if not device to host and not determined in args
         auto ci = llvm::CallInst::Create(
           host.trace_append$alloc,
           llvm::ArrayRef<llvm::Value*>(std::array<llvm::Value*,4>{
@@ -844,11 +864,9 @@ namespace scabbard {
                   llvm::IntegerType::get(F.getContext(), sizeof(InstrData) * 8),
                   llvm::APInt(sizeof(InstrData)*8, InstrData::READ | InstrData::DEVICE_HEAP | InstrData::ON_HOST | InstrData::_OPT_USED)
                 ),
-              ((fnName == "hipDeviceSynchronize") 
-                ? llvm::ConstantPointerNull::get(llvm::PointerType::get(F.getContext(), 0u))
-                : CI->getArgOperand(0)), // ptrtoint
+              CI->getArgOperand(0ull),
               loc.get_as_constant(F.getContext()),
-              CI->getArgOperand(2)
+              CI->getArgOperand(2ull)
             })
         );
         ci->insertBefore(CI);
