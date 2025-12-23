@@ -28,8 +28,8 @@ INSTR_LIB:str = SCABBARD_PATH+"/libinstr.so"
 INTERCEPT_LIB:str = SCABBARD_PATH+"/intercept.so"
 
 ADDED_FLAGS: list = [
-        # f'-fpass-plugin={SCABBARD_PATH}/libinstr.so',           # load the pass plugin (during late opt) (requires adjustments to pass manager setup)
-        f'-Wl,--load-pass-plugin={INSTR_LIB}',                  # load pass plugin for cpu module (during LTO)
+        f'-fpass-plugin={INSTR_LIB}',                           # load the pass plugin (during late opt) (requires adjustments to pass manager setup)
+        # f'-Wl,--load-pass-plugin={INSTR_LIB}',                  # load pass plugin for cpu module (during LTO)
         '-Xoffload-linker', f'--load-pass-plugin={INSTR_LIB}',  # load pass plugin for gpu module (during LTO)
         f'-L{SCABBARD_PATH}',                                   # point the linker to where scabbard's trace libraries are
         '-ltrace',                                              # the tracing code for the gpu that the instrumentation will call on
@@ -38,7 +38,8 @@ ADDED_FLAGS: list = [
         '@SCABBARD_ZLIB_LIBRARIES@',                            # required by scabbard's libtrace (link zlib compression library)
         '@SCABBARD_LINK_ZLIB@',                                 # required by scabbard's libtrace (link zlib compression library)
         '-fgpu-rdc',                                            # if we compile in single TU mode the LTO pass won't run on the device modules
-        '-flto',                                                # ensure that LTO is run (will conflict if -fthin-lto or -fno-lto is used)
+        #'-flto',                                                # ensure that LTO is run (will conflict if -fthin-lto or -fno-lto is used)
+        '-foffload-lto=full',                                   # enable LTO for the device
         '-g'                                                    # required to get the location metadata
     ]
 
