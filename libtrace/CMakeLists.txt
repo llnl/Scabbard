@@ -38,6 +38,9 @@ target_link_libraries(trace
     # libscabbard
   )
 
+target_compile_options(trace PRIVATE -fgpu-rdc -flto -foffload-lto=full )
+target_link_options(trace PRIVATE -fgpu-rdc -flto -foffload-lto=full )
+
 if(SCABBARD_USE_COMPRESSION)
 target_link_libraries(trace PUBLIC ZLIB::ZLIB)
 target_compile_options(trace PRIVATE "-DSCABBARD_USE_COMPRESSION=\"${SCABBARD_COMPRESSION_LEVEL}\"")

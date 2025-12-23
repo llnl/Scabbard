@@ -44,6 +44,21 @@
 namespace scabbard {
   namespace instr {
 
+    namespace _DBG {
+    
+      auto write_module_to_file(const llvm::Module& M, const std::string file_name_mod="") -> std::string {
+        std::error_code EC;
+        std::string filename = M.getSourceFileName() + "." + file_name_mod + ".ll";
+        llvm::raw_fd_ostream OS(filename, EC);
+        if (EC) {
+            return "<file-not-found>";
+        }
+        M.print(OS, nullptr);
+        return filename;
+        //llvm::errs() << "\n[scabbard.instr.device:DBG] Saving snapshot of device module pre-instrumentation to: \"" << _DBG::write_module_to_file(M,"device") << "\"\n"; //DEBUG
+      }
+    } //?namespace _DBG
+
     auto get_meta_file_from_env() -> std::string {
       const char* _META_FILE = std::getenv("SCABBARD_METADATA_FILE");
       std::string r = ((_META_FILE) 
@@ -100,9 +115,9 @@ namespace scabbard {
       // archBit = ((target.isArch64Bit()) ? 64 //ASSUMING for now this will only be used on 64 bit machines
       //             : ((target.isArch32Bit()) ? 32 
       //               : (target.isArch16Bit()) ? 16 : 0))
-      if (target.isAMDGPU()) { // checks for both amdgcn & r600 arch(s) (might need to restrict this to just amdgcn with `isAMDGCN()`)
+      if (target.isAMDGCN() and isLTO) { // checks for both amdgcn & r600 arch(s) (might need to restrict this to just amdgcn with `isAMDGCN()`)
         run_device(M, MAM);    //                                        To support hip on Nvidia GPUs we might need to also run this for nvptx arch(s) (this might be the same as supporting CUDA though)
-      } else {
+      } else if (not target.isAMDGCN() and not isLTO) {
         run_host(M, MAM);
       }
       //TODO process analysis invalidations and return the Preserved analysis of all changes
@@ -114,7 +129,8 @@ namespace scabbard {
 
     void ScabbardPassPlugin::run_device(llvm::Module& M, llvm::ModuleAnalysisManager& MAM)
     {
-      llvm::errs() << "\n[scabbard.instr.device.run:DBG] running instrumentation pass on device/GPU module ("<< (isLTO ? "LTO" : "LateOpt") <<")\n"; //DEBUG
+      llvm::errs() << "\n[scabbard.instr.device.run:INFO] running instrumentation pass on device/GPU module ("<< (isLTO ? "LTO" : "LateOpt") <<")\n"; //DEBUG
+      // llvm::errs() << "\n[scabbard.instr.device:DBG] Saving snapshot of device module pre-instrumentation to: \"" << _DBG::write_module_to_file(M,"device") << "\"\n"; //DEBUG
       instrCallbacks_device(M, MAM);
       // llvm::FunctionAnalysisManager& fam = MAM.getResult<llvm::FunctionAnalysisManagerModuleProxy>(M)
       //   .getManager();
@@ -198,6 +214,8 @@ namespace scabbard {
 
       // remove the dummy caller function from device_def
       // M.getFunction(SCABBARD_DEVICE_DUMMY_FUNC_NAME)->eraseFromParent(); //note: causes all linked functions to also be removed
+
+      // llvm::errs() << "\n[scabbard.instr.device:DBG] Saving snapshot of device module post-instrumentation to: \"" << _DBG::write_module_to_file(M,"device.instr") << "\"\n"; //DEBUG
     }
 
     void ScabbardPassPlugin::instrCallbacks_device(llvm::Module& M, llvm::ModuleAnalysisManager& MAM)
@@ -243,7 +261,8 @@ namespace scabbard {
             || nullptr != M.getFunction(host.trace_append$mem_name)
             || nullptr != M.getFunction(host.register_job_name))
           return; // return early this is already instrumented
-      llvm::errs() << "\n[scabbard.instr.host.run:DBG] running instrumentation pass on host/CPU module ("<< (isLTO ? "LTO" : "LateOpt") <<")\n"; //DEBUG
+      llvm::errs() << "\n[scabbard.instr.host.run:INFO] running instrumentation pass on host/CPU module ("<< (isLTO ? "LTO" : "LateOpt") <<")\n\n"; //DEBUG
+      // llvm::errs() << "\n[scabbard.instr.host:DBG] Saving snapshot of host module pre-instrumentation to: \"" << _DBG::write_module_to_file(M,"host") << "\"\n\n"; //DEBUG
       // make any necessary additions to the Module (i.e.inserting globals and linking references)
       instrCallbacks_host(M, MAM);
       llvm::FunctionAnalysisManager& fam = MAM.getResult<llvm::FunctionAnalysisManagerModuleProxy>(M)
@@ -254,8 +273,11 @@ namespace scabbard {
       DepTraceHost dt(M);
       for (auto& f : M.getFunctionList())
         if (not(f.getName() == "__hip_module_ctor"
+             || f.getName() == "__hip_module_dtor"
              || f.hasFnAttribute("disable_sanitizer_instrumentation")))
           run_host(f, fam, dt);
+
+      // llvm::errs() << "\n[scabbard.instr.host:DBG] Saving snapshot of host module post-instrumentation to: \"" << _DBG::write_module_to_file(M,"host.instr") << "\"\n"; //DEBUG
     }
 
     void ScabbardPassPlugin::instrCallbacks_host(llvm::Module& M, llvm::ModuleAnalysisManager& MAM)
@@ -675,7 +697,9 @@ namespace scabbard {
     {
       // auto BB = llvm::BasicBlock::Create(MAIN.getContext(), "_BBscabbard_init");
       auto CI = llvm::CallInst::Create(host.scabbard_init, "");
-      CI->insertBefore(&(*(MAIN.getEntryBlock().getFirstInsertionPt())));
+      auto firstInst = &(*(MAIN.getEntryBlock().getFirstInsertionPt()));
+      CI->insertBefore(firstInst);
+      CI->setDebugLoc(firstInst->getDebugLoc());
       // BB->insertInto(&MAIN, &MAIN.getEntryBlock());
     }
 
@@ -701,6 +725,7 @@ namespace scabbard {
       // ci->setIsNoInline();
       ci->setDebugLoc(I.getDebugLoc());
       ci->setCallingConv(llvm::CallingConv::Fast);
+      ci->setDebugLoc(I.getDebugLoc());
       if (InsertAfter)
         ci->insertAfter(&I);
       else
@@ -759,6 +784,7 @@ namespace scabbard {
             })
         );
         ci->insertAfter(CI);
+        ci->setDebugLoc(CI->getDebugLoc());
       }
       else if (fnName == "hipMalloc")
       {
@@ -778,6 +804,7 @@ namespace scabbard {
                 })
             );
           ci->insertAfter(mem_loc);
+          ci->setDebugLoc(CI->getDebugLoc());
         } 
         else llvm::errs() << "\n[scabbard.instr.host:ERR] hip malloc found but could not find associated memory address!\n"; //DEBUG
       }
@@ -800,6 +827,7 @@ namespace scabbard {
             })
         );
         ci->insertBefore(CI);
+        ci->setDebugLoc(CI->getDebugLoc());
       }
       else if (fnName == "hipLaunchKernel")
       {
@@ -837,6 +865,7 @@ namespace scabbard {
               })
           );
           cis->insertBefore(CI);
+          cis->setDebugLoc(CI->getDebugLoc());
         }
         // we only need to register the cpy as a read if it's from device to host
         llvm::Regex transferDirPattern("\\w+[DH]to[DH]");
@@ -870,6 +899,7 @@ namespace scabbard {
             })
         );
         ci->insertBefore(CI);
+        ci->setDebugLoc(CI->getDebugLoc());
         return;
       }
     }
@@ -899,6 +929,7 @@ namespace scabbard {
                               "instrParamAlloc",
                               &alloc
                             );
+      newAlloc->setDebugLoc(alloc.getDebugLoc()); //might cause issues after alloc is deleted
       auto memLoc = llvm::GetElementPtrInst::Create(
                       plainPtrTy,
                       newAlloc, 
@@ -910,6 +941,7 @@ namespace scabbard {
                         })
                       );
       memLoc->insertAfter(newAlloc);
+      memLoc->setDebugLoc(alloc.getDebugLoc()); //might cause issues after alloc is deleted
       alloc.replaceAllUsesWith(memLoc); //DBG: does not seem to be working
       alloc.eraseFromParent();
       return llvm::GetElementPtrInst::Create(
@@ -936,6 +968,7 @@ namespace scabbard {
             })
         );
       regFn->insertBefore(&CI);
+      regFn->setDebugLoc(CI.getDebugLoc()); //might cause issues if in a device stub
       auto loc = ((CI.getDebugLoc()) // hip generated device stubs have no debug location data so must accommodate
                     ? metadata.trace(F, CI.getDebugLoc(), ModuleType::HOST) 
                     : MetadataHandler::get_hipAPI_loc());
@@ -949,6 +982,7 @@ namespace scabbard {
             })
         );
       regCbFn->insertAfter(&CI);
+      regCbFn->setDebugLoc(CI.getDebugLoc()); //might cause issues if in a device stub
       //TODO? modify the type of the last operand (should be a global or function pass)
       // trace back args var and expand it to include the pointer to the DeviceTracker that is returned as the result of `scabbard.trace.register_job` as the last parameter
       auto plainPtrTy = llvm::PointerType::get(F.getContext(),0ul);
@@ -973,9 +1007,13 @@ namespace scabbard {
         return;
       }
       auto dtAlloc = new llvm::AllocaInst(plainPtrTy, 0u, "dtPtr", regFn);
+      dtAlloc->setDebugLoc(CI.getDebugLoc()); //might cause issues if in a device stub
       paramPtr->insertAfter(regFn);
+      paramPtr->setDebugLoc(CI.getDebugLoc()); //might cause issues if in a device stub
       auto dtStore = new llvm::StoreInst(regFn, dtAlloc, paramPtr);
+      dtStore->setDebugLoc(CI.getDebugLoc()); //might cause issues if in a device stub
       auto dtParamStore = new llvm::StoreInst(dtAlloc, paramPtr, &CI);
+      dtParamStore->setDebugLoc(CI.getDebugLoc()); //might cause issues if in a device stub
     }
 
     // void ScabbardPassPlugin::instr_call_host(const llvm::Function& F, llvm::CallInst* ci)

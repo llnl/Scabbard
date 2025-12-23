@@ -46,22 +46,32 @@ function(scabbard_instrument_target target)
             message(NOTICE "[scabbard:NOTE] instrumenting '${target_type}': '${target}'")
             target_link_options(${target}
                 PUBLIC
-                -flto -fgpu-rdc 
-                ${SCABBARD_ZLIB_LINK_OPTIONS} 
+                # --offload-new-driver # -Wl,--offload-new-driver -Xoffload-linker "--offload-new-driver" -Xclang "--offload-new-driver"
+                -fgpu-rdc
+                -foffload-lto=full
                 -Wl,--load-pass-plugin=${SCABBARD_PATH}/libinstr.so 
-                -Xoffload-linker --load-pass-plugin=${SCABBARD_PATH}/libinstr.so 
-                -L${SCABBARD_PATH} -ltrace -ltrace.device -lpthread)
-            target_compile_options(${target} PUBLIC -g -fgpu-rdc -flto) # debug info always required for scabbard
+                -Xoffload-linker "--load-pass-plugin=${SCABBARD_PATH}/libinstr.so" 
+                ${SCABBARD_ZLIB_LINK_OPTIONS}
+                -L${SCABBARD_PATH} -ltrace -ltrace.device -lpthread
+                )
+            target_compile_options(${target} 
+                PUBLIC 
+                -g -fgpu-rdc -foffload-lto=full
+                -fpass-plugin=${SCABBARD_PATH}/libinstr.so
+              ) # debug info always required for scabbard
             # target_link_libraries(${target} PRIVATE instr)  #ensure that instrumentation gets built before a target that needs instrumenting
         elseif(target_type MATCHES "STATIC_LIBRARY|OBJECT_LIBRARY")
             message(NOTICE "[scabbard:NOTE] enabling GPU-RDC and LTO for '${target_type}' lib: '${target}'")
-            target_compile_options(${target} PUBLIC -g -fgpu-rdc -flto -foffload-lto) # debug info always required for scabbard
-            target_link_options(${target} PUBLIC -g -fgpu-rdc -flto -foffload-lto) # debug info always required for scabbard
+            target_compile_options(${target} 
+                PUBLIC 
+                -g -fgpu-rdc -foffload-lto=full
+                -fpass-plugin=${SCABBARD_PATH}/libinstr.so) # debug info always required for scabbard
+            target_link_options(${target} PUBLIC -g -fgpu-rdc -foffload-lto=full) # debug info always required for scabbard
         elseif(NOT DEFINED SCABBARD_SUPPRESS_TYPE_WARN)
             message(NOTICE "[scabbard:NOTE] '${target}' is not a target of a supported type for the scabbard cmake module.\n"
                            "[scabbard:NOTE]  If this target is a custom target meant to build a hip/c/c++ object try adding the\n"
                            "[scabbard:NOTE]  following flags to the build command to manually add the scabbard instrumentation passes:\n"
-                           "[scabbard:NOTE]    -g -flto -fgpu-rdc -Wl,--load-pass-plugin=\${SCABBARD_PATH}/libinstr.so -Xoffload-linker --load-pass-plugin=\${SCABBARD_PATH}/libinstr.so -L\${SCABBARD_PATH} -ltrace -ltrace.device -lpthread ${SCABBARD_ZLIB_LINK_OPTIONS}")
+                           "[scabbard:NOTE]    -g -flto -fgpu-rdc -foffload-lto=full -fpass-plugin=${SCABBARD_PATH}/libinstr.so -Xoffload-linker --load-pass-plugin=\${SCABBARD_PATH}/libinstr.so -L\${SCABBARD_PATH} -ltrace -ltrace.device -lpthread ${SCABBARD_ZLIB_LINK_OPTIONS}")
         endif()
     endif()
 endfunction()
