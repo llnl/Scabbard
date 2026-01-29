@@ -1,5 +1,6 @@
-  scabbard
+  Scabbard
 ============
+_By: Andrew Osterhout [@osterhoutan-UofU](github.com/osterhoutan-UofU) [@osterhoutan](github.com/osterhoutan) , Ignacio Laguna [@ilagunap](github.com/laguna) , Ganesh Gopalakrishnan [@ganeshutah](github.com/ganeshutah) &nbsp;_
 
 A GPU data race detector based upon the methods used in SWORD for AMD HIP (aka a HIP mounted sheath for a SWORD)
 
@@ -33,6 +34,9 @@ Scabbard cannot tell you if a data race occurred inside your GPU code, only if t
     - [Step 2: Generate a Trace File](#step-2-generate-a-trace-file)
     - [Step 3: Check for Unified Memory Data Races](#step-3-check-for-unified-memory-data-races)
       - [Interpreting the output:](#interpreting-the-output)
+  - [Getting Involved](#getting-involved)
+  - [Contributing](#contributing)
+  - [LLNL Software](#llnl-software)
 
 
 ## Build:
@@ -241,5 +245,31 @@ scabbard verif <meta-file\> <trace-file\>
 > _(this can very greatly between different CPUs)_ 
 
 #### Interpreting the output:
-TODO
+Scabbard produces one of 4 kinds of results:
+ - `<NONE>`: best result to get, nothing was found
+ - `Warning: Unmatched Read`: there was a read to a unifiedm memory location that was never written to (possily uninitilized)
+ - `Warning: Possible-Race/Missing-Sync`: There was a read after a write but no sync event in between, so order cannot be confirmed\*.
+ - `Error: Data Race`: There was a read before a write and no sync event, order is bad data race is known to have occured.
+
+> _\* - If you did **not** use stream host callbacks in your code to process data form the GPU then this warning is the same as the `Error Data Race` result, but if you did use stream callbacks then scabbard cannot tell what cpu reads occur in stream callbacks (with managed order) and which do not. Therefore we report all write read orderings that occur without a sync event in between as a warning._
+
+Scabbard reduces the output by categorising all reported events that happen between the same read and write points in the source code as the same race and will report how many time a race occured between these two points but only provide the specific runtime information about the first instance to occur at that point in the output feed.
+
+
+
+ Getting Involved
+-----------------------------------------------
+If you have questions or concerns please reach out via email to:
+ - [andrew.osterhout@utah.edu](mailto://andrew.osterhout@utah.edu)
+ - [ganesh@cs.utah.edu](mailto://ganesh@cs.utah.edu)
+
+ Contributing
+------------------------------------------------
+This project is inteneded to be modiefied until it in sutable for upstream into the LLVM project.
+Therefore we are limmiting direct contributions to those we can handle via direct communication.
+After this project is upstreamed into the LLVM Project all contributions should be handled in the ways required by that project.
+
+ LLNL Software
+------------------------------------------------
+This software was funded by and created for Lawrence Livermore National Laboratory (LLNL) in collaboration with the Kalhart School of Computing at Utah State University (UofU).
 
