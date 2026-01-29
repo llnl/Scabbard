@@ -273,3 +273,11 @@ After this project is upstreamed into the LLVM Project all contributions should 
 ------------------------------------------------
 This software was funded by and created for Lawrence Livermore National Laboratory (LLNL) in collaboration with the Kalhart School of Computing at Utah State University (UofU).
 
+## License
+
+Scabbard is distributed under the terms of the Apache License (Version 2.0 with LLVM Exceptions).
+
+See LICENSE and NOTICE for details.
+
+LLNL-CODE-2015024
+
