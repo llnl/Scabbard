@@ -37,6 +37,7 @@ Scabbard cannot tell you if a data race occurred inside your GPU code, only if t
   - [Getting Involved](#getting-involved)
   - [Contributing](#contributing)
   - [LLNL Software](#llnl-software)
+  - [License](#license)
 
 
 ## Build:
