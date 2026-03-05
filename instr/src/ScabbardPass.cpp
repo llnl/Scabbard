@@ -902,6 +902,10 @@ namespace scabbard {
         ci->setDebugLoc(CI->getDebugLoc());
         return;
       }
+      else if (fnName.starts_with("hipHostRegister")) 
+      {}
+      else if (fnName.starts_with("hipHostUnregister")) 
+      {}
     }
 
 
