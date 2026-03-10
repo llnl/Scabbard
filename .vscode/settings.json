@@ -131,6 +131,7 @@
         "__availability": "cpp"
     },
     "cSpell.words": [
+        "Allocas",
         "amdgcn",
         "AMDHSA",
         "argconfig",
@@ -142,6 +143,7 @@
         "endregion",
         "endswith",
         "hipcc",
+        "implicitarg",
         "INCLUDEDIR",
         "Instramentable",
         "instrs",
@@ -150,6 +152,7 @@
         "LLNL's",
         "Malloc",
         "Memcpy",
+        "ockl",
         "ROCM",
         "startswith",
         "syncthreads",
@@ -159,6 +162,7 @@
         "uninstrumented",
         "Unqual",
         "UREG",
-        "verif"
+        "verif",
+        "Xchgs"
     ]
 }
