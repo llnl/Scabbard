@@ -62,6 +62,8 @@ std::ostream& operator << (std::ostream& out, const instr::ModuleType& modTy) no
     // This inst should never be instrumented (no chance of being of interest in traces)
     NEVER                 = 0,
     NO                    = 0, // just a useful duplicate of NEVER
+    NONE                  = 0, // just a useful duplicate of NEVER
+    LOCAL                 = 0, // we don't want to instrument if mem is confirmed scope/block Local
     // This might be of interest, but we can only know after a runtime conditional is run.
     _RUNTIME_CONDITIONAL  = 1<<0,  // Note: conditional is only valid for HOST/CPU
     // This is used to indicate that the trace data's optional data slot is used

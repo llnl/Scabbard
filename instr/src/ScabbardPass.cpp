@@ -196,20 +196,22 @@ public:
 class scabbardIDevicePass {
 public:
   /// @brief The general kind of memory space of a pointer type in a AMD Device.
-  enum PtrOrigin {
+  typedef scabbard::InstrData PtrOrigin;
+  /* enum PtrOrigin {
     /// @brief Could not be determined statically at runtime.
     UNKNOWN = 0,
     /// @brief Device global memory, registered host memory, or managed memory.
     GLOBAL = 1,
     /// @brief Block level shared memory (allocated at kernel launch).
-    SHARED = 2,
+    MANAGED = 2,
     /// @brief Thread level local allocated on the stack by alloca instructions.
     LOCAL = 3,
     /// @brief Coming from vendor specific util like additional param ptr, or dispatch ptr.
     SYSTEM = 4,
     /// @brief Determined to be none of the Expected types
-    NONE = 5
-  };
+    NONE = 5;
+    friend inline InstrData operator | (PtrOrigin l, InstrData r) { return (l & 0b111ul) | r; }
+  }; */
 
 protected:
 
@@ -241,9 +243,9 @@ protected:
   ///        will be pulled from the module as this pass should only run after
   ///        the rtl gets linked in.
   struct scabbardRTL {
-    llvm::FunctionCallee trace_append$mem;
+    FunctionCallee trace_append$mem;
     const std::string trace_append$mem_name = SCABBARD_DEVICE_CALLBACK_APPEND_MEM_NAME;
-    llvm::FunctionCallee trace_append$alloc;
+    FunctionCallee trace_append$alloc;
     const std::string trace_append$alloc_name = SCABBARD_DEVICE_CALLBACK_APPEND_ALLOC_NAME;
     MetadataHandler Metadata;
   } scabbard;
@@ -338,6 +340,18 @@ protected:
   /// @return \c scabbardIDevicePass::PtrOrigin - the memory space type of the
   ///         ptr provided.
   inline PtrOrigin getPtrOrigin(LoopInfo& LI, Value* Ptr, const Value** Object) const;
+
+  /// @brief Simple single interface to insert the call to Scabbard's RTL func for any kind of instruction.
+  ///        It will determine bassed off of where \c Ptr comes from if it should instrument before instrumenting.
+  ///        If it should not instrument it will return \c false.
+  /// @param LI The Loop info for the function/module
+  /// @param I The instruction being instrumented
+  /// @param Ptr The Pointer Operand of above Instruction
+  /// @param ScabbardFn The Specific Scabbard RTL Fn to instrument in
+  /// @param InstrContext The metadata about where the memory is located and what actions are being done on it.
+  /// @return if the instrumentation actually took place.
+  inline bool instrumentInScabbardFunc(LoopInfo& LI, Instruction& I, Value* Ptr, 
+                                       FunctionCallee& ScabbardFn, const InstrData InstrContext) const;
 
   /// @brief Create scabbard's module Constructor (ctor) function for the target arch.
   ///        (Must be defined in child classes,
@@ -437,7 +451,7 @@ protected:
   /// @param P2I the instruction in question.
   /// @return \c bool - if any changes were made to the instruction, parent fn, or module.
   virtual bool instrumentPtrToIntInst(LoopInfo& LI, PtrToIntInst& P2I) {
-    llvm::errs() << "\n[scabbard.device:WARN] unsupported pointer arithmetic, sanitizer results may be invalid: "
+    llvm::errs() << "\n[scabbard.device:WARN] unsupported pointer arithmetic, Scabbard's results may be invalid: "
                  << P2I.getDebugLoc() << "\n";
     return false; // DEFAULT: do nothing
   }
@@ -451,7 +465,7 @@ protected:
   /// @param I2P the instruction in question.
   /// @return \c bool - if any changes were made to the instruction, parent fn, or module.
   virtual bool instrumentIntToPtrInst(LoopInfo& LI, IntToPtrInst& I2P) {
-    llvm::errs() << "\n[scabbard.device:WARN] unsupported pointer arithmetic, sanitizer results may be invalid: "
+    llvm::errs() << "\n[scabbard.device:WARN] unsupported pointer arithmetic, Scabbard's results may be invalid: "
                  << I2P.getDebugLoc() << "\n";
     return false; // DEFAULT: do nothing
   }
@@ -610,6 +624,7 @@ protected:
   /// @return \ref llvm::Function \c* - ptr to the dtor fn.
   Function* createDTor(Module& M, ModuleAnalysisManager& MAM) const override {}
 
+
   /// @brief When a load instruction is found in a fn this is called.
   ///        It will decide if the Fn is worth instrumenting
   ///        and perform said instrumentation as required.
@@ -617,22 +632,9 @@ protected:
   /// @param Load the instruction in question.
   /// @return \c bool - if any changes were made to the instruction, parent fn, or module.
   bool instrumentLoadInst(LoopInfo& LI, LoadInst& Load) override {
-    // TODO determine if instruction should be instrumented (skip locals, and determine if global, shared, or
-    // globalshared)
-    Function* fn = Load.getFunction();
-    Value* threadState = fn->getArg(fn->arg_size() - 1ul);
-    auto addrSpace = Load.getPointerAddressSpace();
-    auto ci = CallInst::Create(
-        scabbard.MemoryAccess_callee[addrSpace],
-        std::array<Value*, 5u>{
-            threadState, Load.getPointerOperand(),
-            Constant::getIntegerValue(Type::getInt64Ty(fn->getContext()),
-                                      APInt(Load.getType()->getScalarSizeInBits() / 8ul, 64ul)),
-            Constant::getIntegerValue(Type::getInt64Ty(fn->getContext()), APInt(/*AccessType::READ*/ 0ul, 64ul)),
-            scabbard.Metadata.getId(&Load)},
-        "scabbard." + Load.getName(), &Load);
-    Load.setOperand(Load.getPointerOperandIndex(), ci);
-    return true;
+    return instrumentInScabbardFunc(LI, Load, Load.getPointerOperand(), 
+                                    scabbard.trace_append$mem, 
+                                    InstrData::ON_GPU | InstrData::READ | (Load.isAtomic() ? InstrData::ATOMIC_MEM : InstrData::NO));
   }
 
   /// @brief When a store instruction is found in a fn this is called.
@@ -642,46 +644,9 @@ protected:
   /// @param Store the instruction in question.
   /// @return \c bool - if any changes were made to the instruction, parent fn, or module.
   bool instrumentStoreInst(LoopInfo& LI, StoreInst& Store) override {
-    Value *PtrOp = Store.getPointerOperand();
-    const Value *Object = nullptr;
-    PtrOrigin PO = getPtrOrigin(LI, PtrOp, &Object);
-
-    if (PO > PtrOrigin::GLOBAL) // don't instrument if it is not accessible outside of the GPU.
-      return false;
-
-    auto [locID, is_inserted] = scabbard.Metadata.insert(&Store);
-
-    if (not is_inserted && locID == 0ull)
-      errs() << "\n[scabbard.instr.device.AMD.Store: ERROR] failed to insert instruction into the metadata system!\n";
-
-    Value* V = Store.getPointerOperand();
-    llvm::CastInst* castInst = nullptr;
-      if (auto ptrTy = llvm::dyn_cast<llvm::PointerType>(V->getType()))
-        if (ptrTy->getAddressSpace() != 0u) { //NOTE hard coding this might be an issue
-          castInst = llvm::AddrSpaceCastInst::Create(llvm::Instruction::CastOps::AddrSpaceCast, V, scabbard.trace_append$mem.getFunctionType()->getParamType(2u));
-          castInst->insertBefore(&Store);
-        }
-
-    Function& fn = *Store.getFunction();
-    Value* threadState = fn.getArg(fn.arg_size() - 1ul);
-    auto addrSpace = Store.getPointerAddressSpace();
-    auto ci = CallInst::Create(
-        scabbard.trace_append$mem,
-        std::array<Value*, 4u>{
-            fn.getArg(fn.arg_size()-1),
-            ConstantInt::get(
-                IntegerType::get(fn.getContext(), sizeof(InstrData) * 8),
-                APInt(sizeof(InstrData)*8, data)
-              ),
-            (castInst ? castInst : V),
-            ConstantInt::get(
-                IntegerType::get(fn.getContext(), sizeof(size_t) * 8),
-                APInt(sizeof(size_t)*8, locID)
-              )
-          },
-        "scabbard." + Store.getName(), &Store);
-    return true;
-
+    return instrumentInScabbardFunc(LI, Store, Store.getPointerOperand(), 
+                                    scabbard.trace_append$mem, 
+                                    InstrData::ON_GPU | InstrData::WRITE | (Store.isAtomic() ? InstrData::ATOMIC_MEM : InstrData::NO));
   }
 
   /// @brief When a atomicrmw instruction is found in a fn this is called.
@@ -690,7 +655,11 @@ protected:
   /// @param LI The loop info / analysis for the parent fn.
   /// @param RMW the instruction in question.
   /// @return \c bool - if any changes were made to the instruction, parent fn, or module.
-  bool instrumentAtomicRMWInst(LoopInfo& LI, AtomicRMWInst& RMW) override {}
+  bool instrumentAtomicRMWInst(LoopInfo& LI, AtomicRMWInst& RMW) override {
+    return instrumentInScabbardFunc(LI, RMW, RMW.getPointerOperand(), 
+                                    scabbard.trace_append$mem, 
+                                    InstrData::ON_GPU | InstrData::READ | InstrData::WRITE | InstrData::ATOMIC_MEM);
+  }
 
   /// @brief When a cmpxchg instruction is found in a fn this is called.
   ///        It will decide if the Fn is worth instrumenting
@@ -698,7 +667,11 @@ protected:
   /// @param LI The loop info / analysis for the parent fn.
   /// @param CXC the instruction in question.
   /// @return \c bool - if any changes were made to the instruction, parent fn, or module.
-  bool instrumentCmpXChgInst(LoopInfo& LI, AtomicCmpXchgInst& CXC) override {}
+  bool instrumentCmpXChgInst(LoopInfo& LI, AtomicCmpXchgInst& CXC) override {
+    return instrumentInScabbardFunc(LI, CXC, CXC.getPointerOperand(), 
+                                    scabbard.trace_append$mem, 
+                                    InstrData::ON_GPU | InstrData::WRITE | InstrData::ATOMIC_MEM);
+  }
 
   /// @brief When a fence instruction is found in a fn this is called.
   ///        It will decide if the Fn is worth instrumenting
@@ -714,7 +687,9 @@ protected:
   /// @param LI The loop info / analysis for the parent fn.
   /// @param Call the instruction in question.
   /// @return \c bool - if any changes were made to the instruction, parent fn, or module.
-  bool instrumentCallInst(LoopInfo& LI, CallInst& Call) override {}
+  bool instrumentCallInst(LoopInfo& LI, CallInst& Call) override {
+    //TODO figure out what calls to instrument
+  }
 };
 
 
@@ -750,8 +725,8 @@ PreservedAnalyses ScabbardPass::run(Module& M, ModuleAnalysisManager& MAM) {
 bool scabbardIDevicePass::runImpl(Function& F, FunctionAnalysisManager& FAM) {
   bool changed = false;
   LoopInfo& LI = FAM.getResult<LoopAnalysis>(F);
-  SmallVector<std::pair<AllocaInst*, Value*>> Allocas;
-  SmallVector<ReturnInst*> Returns;
+  // SmallVector<std::pair<AllocaInst*, Value*>> Allocas;
+  // SmallVector<ReturnInst*> Returns;
   SmallVector<LoadInst*> Loads;
   SmallVector<StoreInst*> Stores;
   SmallVector<CallInst*> Calls;
@@ -764,11 +739,11 @@ bool scabbardIDevicePass::runImpl(Function& F, FunctionAnalysisManager& FAM) {
 
   for (auto& I : instructions(F)) {
     switch (I.getOpcode()) {
-    case Instruction::Alloca: {
-      AllocaInst& AI = cast<AllocaInst>(I);
-      Allocas.push_back({&AI, nullptr});
-      break;
-    }
+    // case Instruction::Alloca: {
+    //   AllocaInst& AI = cast<AllocaInst>(I);
+    //   Allocas.push_back({&AI, nullptr});
+    //   break;
+    // }
     case Instruction::Load:
       Loads.push_back(&cast<LoadInst>(I));
       break;
@@ -786,9 +761,9 @@ bool scabbardIDevicePass::runImpl(Function& F, FunctionAnalysisManager& FAM) {
         AmbiguousCalls.insert(&CI);
       break;
     }
-    case Instruction::Ret:
-      Returns.push_back(&cast<ReturnInst>(I));
-      break;
+    // case Instruction::Ret:
+    //   Returns.push_back(&cast<ReturnInst>(I));
+    //   break;
     case Instruction::AtomicRMW:
       AtomicRMWs.push_back(&cast<AtomicRMWInst>(I));
       break;
@@ -832,10 +807,10 @@ bool scabbardIDevicePass::runImpl(Function& F, FunctionAnalysisManager& FAM) {
     instrumentGEPInst(LI, *GEP);
   for (auto* Call : Calls)
     changed |= instrumentCallInst(LI, *Call);
-  for (auto& It : Allocas)
-    It.second = instrumentAllocaInst(LI, *It.first);
+  // for (auto& It : Allocas)
+  //   It.second = instrumentAllocaInst(LI, *It.first);
 
-  instrumentReturns(LI, Allocas, Returns);
+  // changed |= instrumentReturns(LI, Allocas, Returns);
 
   return changed;
 }
@@ -969,47 +944,90 @@ scabbardIDevicePass::PtrOrigin scabbardIDevicePass::getPtrOrigin(LoopInfo& LI, V
   getUnderlyingObjects(Ptr, Objects, &LI);
   if (Object && Objects.size() == 1)
     *Object = Objects.front();
-  PtrOrigin PO = UNKNOWN;
+  PtrOrigin PO = NONE;
   for (auto* Obj : Objects) {
-    PtrOrigin ObjPO = HasAllocas ? UNKNOWN : GLOBAL;
+    PtrOrigin ObjPO = HasAllocas ? UNKNOWN_HEAP : DEVICE_HEAP; //TODO investigate what this means
     if (isa<AllocaInst>(Obj)) {
       ObjPO = LOCAL;
     } else if (auto* Global = dyn_cast<GlobalVariable>(Obj)) {
-      ObjPO = isSharedGlobal(*Global) ? SHARED : GLOBAL;
+      ObjPO = isSharedGlobal(*Global) ? MANAGED_MEM : DEVICE_HEAP;
     } else if (auto* Load = dyn_cast<LoadInst>(Obj)) {
       if (auto* Global = dyn_cast<GlobalVariable>(Load->getPointerOperand())) {
         if (Global->getName().ends_with(".device") 
             || _M.getGlobalVariable(Global->getName().str()+".device"))
-          ObjPO = GLOBAL;
+          ObjPO = DEVICE_HEAP;
         else if (Global->getName().ends_with(".managed") 
             || _M.getGlobalVariable(Global->getName().str()+".managed"))
-          ObjPO = GLOBAL; // SHARED; // - using shared for block level shared memory
+          ObjPO = MANAGED_MEM; // - using shared for block level shared memory
       }
     } else if (auto* II = dyn_cast<IntrinsicInst>(Obj)) {
       if (II->getIntrinsicID() == Intrinsic::amdgcn_implicitarg_ptr ||
           II->getIntrinsicID() == Intrinsic::amdgcn_dispatch_ptr)
-        return SYSTEM;
+        return NEVER; //SYSTEM;
     } else if (auto* CI = dyn_cast<CallInst>(Obj)) {
       if (auto* Callee = CI->getCalledFunction())
         if (Callee->getName().starts_with("ompx_")) {
           if (Callee->getName().ends_with("_global"))
-            ObjPO = GLOBAL;
+            ObjPO = DEVICE_HEAP;
           else if (Callee->getName().ends_with("_local"))
             ObjPO = LOCAL;
           else if (Callee->getName().ends_with("_shared"))
-            ObjPO = SHARED;
+            ObjPO = MANAGED_MEM;
         }
     } else if (auto* Arg = dyn_cast<Argument>(Obj)) {
       if (Arg->getParent()->hasFnAttribute("kernel"))
-        ObjPO = GLOBAL;
+        ObjPO = UNKNOWN_HEAP;
     }
     if (PO == NONE || PO == ObjPO)
       PO = ObjPO;
     else
-      return UNKNOWN;
+      return UNKNOWN_HEAP;
   }
   return PO;
 }
+
+bool scabbardIDevicePass::instrumentInScabbardFunc(LoopInfo& LI, Instruction& I, Value* Ptr, 
+                                                   FunctionCallee& ScabbardFn, const InstrData InstrContext) const {
+    Value* PtrOp = Ptr;
+    const Value *Object = nullptr;
+    PtrOrigin PO = getPtrOrigin(LI, PtrOp, &Object);
+
+    if (PO > NO) // don't instrument if it is not accessible outside of the GPU.
+      return false;
+
+    auto [locID, is_inserted] = scabbard.Metadata.insert(&I);
+
+    if (not is_inserted && locID == 0ull)
+      errs() << "\n[scabbard.instr.device.AMD.I: ERROR] failed to insert instruction into the metadata system!\n";
+
+    // if Ptr is not in the expected address space (0: global) we will need to cast it's Addrspace first.
+    //    This is only a LLVM formality and does not cost any compute at runtime.
+    llvm::CastInst* castInst = nullptr;
+    if (auto ptrTy = dyn_cast<llvm::PointerType>(Ptr->getType()))
+      if (ptrTy->getAddressSpace() != 0u) //NOTE: hard coding this might be an issue
+        castInst = AddrSpaceCastInst::Create(llvm::Instruction::CastOps::AddrSpaceCast, Ptr, 
+                                              ScabbardFn.getFunctionType()->getParamType(2u),
+                                            "scabbard.addrCast." + I.getName(),  /* insertBefore= */ &I);
+
+    Function& fn = *I.getFunction();
+    Value* threadState = fn.getArg(fn.arg_size() - 1ul);
+    auto ci = CallInst::Create(
+        ScabbardFn,
+        std::array<Value*, 4u>{
+            fn.getArg(fn.arg_size()-1),
+            ConstantInt::get(
+                IntegerType::get(fn.getContext(), sizeof(InstrData) * 8),
+                APInt(sizeof(InstrData)*8, InstrContext | PO)
+              ),
+            (castInst ? castInst : Ptr),
+            ConstantInt::get(
+                IntegerType::get(fn.getContext(), sizeof(size_t) * 8),
+                APInt(sizeof(size_t)*8, locID)
+              )
+          },
+        "scabbard." + I.getName(), /* insertBefore= */ &I);
+    return true;
+  }
 
 // << ========================== Metadata Handler Extra Definitions ============================ >>
 
