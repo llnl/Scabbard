@@ -146,6 +146,36 @@ private:
   inline ConstantInt* getCalledFn(const StringRef& FnName, LLVMContext& C);
 };
 
+
+/// @brief A helper class that holds a reference to the module the pass is working on 
+///        and some commonly used types for easy access.
+class IRHelper {
+protected:
+  /// @brief a handy copy of module to use when you just need to get a context or quick query.
+  const Module& _M;
+  /// @brief a handy pointer the oft used generic IR pointer type for this module.
+  const PointerType* PtrTy = null;
+  /// @brief a handy pointer to the oft used IR Integer Type for the RTL's TraceData
+  const IntegerType* TraceDataTy = null;
+  /// @brief a handy pointer to the oft used IR Integer Type for the RTL's source code location metadata ID
+  const IntegerType* LocDataTy = null;
+  /// @brief a handy pointer to the oft used IR Integer Type for the RTL's exta info (size_t/uint64_t) type.
+  const IntegerType* ExtraDataTy = null;
+public:
+  IRHelper() = delete;
+  IRHelper(Module& M) :
+    _M(M), 
+    PtrTy(PointerType::get(M.getContext(), 0ull)),
+    TraceDataTy(IntegerType::get(M.getContext(), sizeof(InstrData)*8)),
+    LocDataTy(IntegerType::get(M.getContext(), 64u)),
+    ExtraDataTy(IntegerType::get(M.getContext(), 64u))
+    {}
+  
+  // ConstantInt* getConstInt(const IntegerType* Ty, uint64_t val) const {
+  //   return ConstantInt::get((Type*)Ty, APInt(val,Ty->getBitWidth()));
+  // }
+};
+
 // << ========================================================================================== >>
 // <<                                   HOST INSTR IMPL PASS                                     >>
 // << ========================================================================================== >>
@@ -158,20 +188,100 @@ private:
 ///        Finally it will modify global variable allocations to
 ///        contain shadow memory.
 ///
-class scabbardHostPass {
+class ScabbardHostPass : public IRHelper {
+
+  bool run(Function& F, FunctionAnalysisManager& FAM) {
+    // prevent instrumenting functions that should not be instrumented
+    if (not isInstramentableFn(F))
+      return false;
+    // TODO any prereq work...
+    // run the actual implementation that might be modified in inherited classes
+    return runImpl(F, FAM);
+  }
+
+  void initFromModule(Module& M) {
+    PtrTy = PointerType::get(M.getContext(), 0ull);
+    registerRTL(M);
+  }
+
+  void registerRTL(Module& M);
+
+protected:
+
+  /// @brief A struct used to organize all of the Code and IR elements of 
+  ///        Scabbard's RTL into one place.
+  struct ScabbardHostRTL {
+    llvm::FunctionCallee scabbard_init;
+    const std::string scabbard_init_name = SCABBARD_CALLBACK_INIT_NAME;
+    llvm::FunctionCallee trace_append$mem;
+    const std::string trace_append$mem_name = SCABBARD_HOST_CALLBACK_APPEND_MEM_NAME;
+    llvm::FunctionCallee trace_append$mem$cond; 
+    const std::string trace_append$mem$cond_name = SCABBARD_HOST_CALLBACK_APPEND_MEM_COND_NAME;
+    llvm::FunctionCallee trace_append$alloc;
+    const std::string trace_append$alloc_name = SCABBARD_HOST_CALLBACK_APPEND_ALLOC_NAME;
+    llvm::FunctionCallee register_job;
+    const std::string register_job_name = SCABBARD_CALLBACK_REGISTER_JOB;
+    llvm::FunctionCallee register_job_callback;
+    const std::string register_job_callback_name = SCABBARD_CALLBACK_REGISTER_JOB_CALLBACK;
+    MetadataHandler Metadata;
+  };
+  ScabbardHostRTL scabbard;
+
+  /// @brief Returns \c false if the function should not be instrumented. \n
+  ///        Used by the top level run method to determine if the pass will run on a fn. \n 
+  ///        Override in child classes if you want to change what is instramentable.
+  /// @param F the function to examine
+  /// @return \c bool - if \param F should be instrumented or skipped.
+  virtual inline bool isInstramentableFn(const Function& F) const {
+    return (not F.isDeclaration()                        // exclude any functions not defined
+            && not F.getName().starts_with("llvm.")      // exclude intrinsics
+            && not F.getName().starts_with("scabbard.")  // exclude name mangled scabbard rtl functions
+            && not F.hasFnAttribute("disable_sanitizer_instrumentation")); // any fn marked as not to be instrumented
+  }
+
+
+  /// @brief Instrument host module for scabbard, implementation details for child classes.
+  /// @param M the module to instrument 
+  /// @param MAM the analysis manager for the module
+  /// @return \c bool - if the module was modified
+  virtual bool runImpl(Module& M, ModuleAnalysisManager& MAM) { return false; }
 
   /// @brief Instrument a host function for scabbard.
   /// @param F the function who's body will be instrumented.
   /// @param FAM the analysis manager for above function.
   /// @return \c bool - if the function was modified.
-  bool run(Function& F, FunctionAnalysisManager& FAM) {}
+  virtual bool runImpl(Function& F, FunctionAnalysisManager& FAM);
+
 
 public:
+
+  ScabbardHostPass() = delete;
+  ScabbardHostPass(Module& M) : IRHelper(M) {}
+    
+
   /// @brief Instrument a host module for scabbard.
   /// @param M the module who's contents will be instrumented.
   /// @param MAM the analysis manager for above module.
   /// @return \c bool - if the module was modified.
-  bool run(Module& M, ModuleAnalysisManager& MAM) {}
+  bool run(Module& M, ModuleAnalysisManager& MAM) {
+    
+    // run the actual implementation that might be modified in inherited classes
+    bool changed = runImpl(M, MAM);
+
+    // add definitions for our RTL fn's
+    registerRTL(M);
+
+    FunctionAnalysisManager& FAM = MAM.getResult<FunctionAnalysisManagerModuleProxy>(M);
+
+    for (Function& F: M.functions())
+      changed |= run(F, FAM);
+    
+    if (changed) //NOTE: this method of metadata will need to be altered to work with instrumenting durring compilation instead of LTO.
+      GlobalVariable& MetadataStringVar = scabbard.Metadata.outputMetadata(M, 0ull);
+    
+    return changed;
+  }
+
 };
 
 // << ========================================================================================== >>
@@ -193,7 +303,7 @@ public:
 ///        Deriving classes will need to implement the following:
 ///        > TODO...
 ///
-class scabbardIDevicePass {
+class scabbardIDevicePass : public IRHelper {
 public:
   /// @brief The general kind of memory space of a pointer type in a AMD Device.
   typedef scabbard::InstrData PtrOrigin;
@@ -215,8 +325,6 @@ public:
 
 protected:
 
-  const Module& _M;
-
   /// @brief Names of functions that are generated by the language or other
   ///        that should not be instrumented or have their parameters expanded
   static const std::unordered_set<std::string> NO_INSTR_FNS;
@@ -231,18 +339,11 @@ protected:
   /// @brief if the module contains any alloca instructions
   bool HasAllocas = false;
 
-  /* the following members values are set in the \c initFromModule fn */
-
-  /// @brief pointer to the ubiquitous Opaque Pointer Type for the module.
-  PointerType* PtrTy = nullptr;
-  // PointerType* GlobalPtrTy = nullptr;
-  // PointerType* SharedPtrTy = nullptr;
-  // PointerType* LocalPtrTy = nullptr;
 
   /// @brief collections of the types and fn's defined in scabbard's RTL.
   ///        will be pulled from the module as this pass should only run after
   ///        the rtl gets linked in.
-  struct scabbardRTL {
+  struct scabbardDeviceRTL {
     FunctionCallee trace_append$mem;
     const std::string trace_append$mem_name = SCABBARD_DEVICE_CALLBACK_APPEND_MEM_NAME;
     FunctionCallee trace_append$alloc;
@@ -252,7 +353,7 @@ protected:
 
 public:
   scabbardIDevicePass() = delete;
-  scabbardIDevicePass(Module& M_) : _M(M_) { initFromModule(M_); }
+  scabbardIDevicePass(Module& M) : IRHelper(M) {}
 
 private:
   /// @brief Expand all defined functions to accept a pointer to a \c JobState object.
@@ -266,42 +367,7 @@ protected:
   ///        the class instance.
   ///        \b NOTE: Assumes that the RTL has already been linked into the device module.
   /// @param M the device module to pull the RTL elements from.
-  virtual void registerRTL(Module& M) final {
-    auto int64Ty = llvm::IntegerType::get(M.getContext(), 64u);
-    scabbard.trace_append$mem = M.getOrInsertFunction(
-        scabbard.trace_append$mem_name,
-        llvm::FunctionType::get(
-            llvm::Type::getVoidTy(M.getContext()),
-            llvm::ArrayRef<llvm::Type*>(std::vector<llvm::Type*>{
-                PtrTy,
-                llvm::IntegerType::get(M.getContext(), sizeof(InstrData) * 8),
-                PtrTy, //WARN: This constant 0u might need to be dynamicly decided for host modules
-                int64Ty
-              }),
-            false
-          )
-      );
-    scabbard.trace_append$alloc = M.getOrInsertFunction(
-        scabbard.trace_append$alloc_name,
-        llvm::FunctionType::get(
-            llvm::Type::getVoidTy(M.getContext()),
-            llvm::ArrayRef<llvm::Type*>(std::vector<llvm::Type*>{
-                PtrTy,
-                llvm::IntegerType::get(M.getContext(), sizeof(InstrData) * 8),
-                PtrTy,
-                int64Ty,
-                int64Ty
-              }),
-            false
-          )
-      );
-  }
-
-  virtual void initFromModule(Module& M) {
-    PtrTy = PointerType::get(M.getContext(), 0u); // generic opaque ptr in generic/default address space.
-    registerRTL(M);
-    // TODO other init stuff we needed the module for...
-  }
+  virtual void registerRTL(Module& M) final;
 
   /// @brief return if a function is a builtin for/from the device vendor.
   /// @param F the Fn in question.
@@ -529,13 +595,7 @@ protected:
   /// @param M the module who's globals and functions will need to be instrumented.
   /// @param MAM the analysis manager for above module.
   /// @return \c bool - if the Module was changed at all.
-  virtual bool runImpl(Module& M, ModuleAnalysisManager& MAM) {
-    bool changed = false;
-    FunctionAnalysisManager& FAM = MAM.getResult<FunctionAnalysisManagerModuleProxy>(M).getManager();
-    for (Function& F : M.functions())
-      changed |= run(F, FAM);
-    return changed;
-  }
+  virtual bool runImpl(Module& M, ModuleAnalysisManager& MAM) { return false; }
 
 public:
   /// @brief Instrument a device module for scabbard.
@@ -553,14 +613,21 @@ public:
             return true;
       return false;
     }();
+    // run any device arch specific tasks before moving on.
+    changed |= runImpl(M, MAM);
+    registerRTL(M);
     // initiate the class members based on the contents of the module
     // add JobState ptrs to the end of all non-intrinsic functions.
-    changed |= expandFnParams(M);
     // TODO handle conversions of globals
     // TODO any additional prereq work...
     // run the actual implementation that might be modified in inherited classes
-    changed |= runImpl(M, MAM);
+    changed |= expandFnParams(M);
     // create and insert the ctor and dtor
+
+    FunctionAnalysisManager& FAM = MAM.getResult<FunctionAnalysisManagerModuleProxy>(M).getManager();
+    for (Function& F : M.functions())
+      changed |= run(F, FAM);
+
     if (changed) {                                 // if any instrumentation occurred insert the ctor and dtor
       Function* CtorFn = this->createCTor(M, MAM); // defined by implementing class
       CtorFn->addFnAttr(Attribute::DisableSanitizerInstrumentation);
@@ -718,9 +785,123 @@ PreservedAnalyses ScabbardPass::run(Module& M, ModuleAnalysisManager& MAM) {
 }
 
 // << ========================================================================================== >>
-// <<                                     EXTRA DEFINTIONS                                       >>
+// <<                                     EXTRA DEFINITIONS                                      >>
 // << ========================================================================================== >>
 
+
+void ScabbardHostPass::registerRTL(Module& M) {
+  if (M.getFunction("main") != nullptr)
+      scabbard.scabbard_init = M.getOrInsertFunction(
+          scabbard.scabbard_init_name,
+          llvm::FunctionType::get(
+              llvm::Type::getVoidTy(M.getContext()),
+              {},
+              // llvm::ArrayRef<llvm::Type*>(std::array<llvm::Type*,1>{
+              //     llvm::Type::getVoidTy(M.getContext()),
+              //   }),
+              false
+            )
+        );
+    // host.scabbard_close = M.getOrInsertFunction(
+    //     host.scabbard_close_name,
+    //     llvm::FunctionType::get(
+    //         llvm::Type::getVoidTy(M.getContext()),
+    //         llvm::ArrayRef<llvm::Type*>(std::array<llvm::Type*,1>{
+    //             llvm::Type::getVoidTy(M.getContext()),
+    //           }),
+    //         false
+    //       )
+    //   );
+    scabbard.trace_append$mem = M.getOrInsertFunction(
+        scabbard.trace_append$mem_name,
+        llvm::FunctionType::get(
+            llvm::Type::getVoidTy(M.getContext()),
+            llvm::ArrayRef<llvm::Type*>(std::vector<llvm::Type*>{
+                TraceDataTy,
+                PtrTy, //WARN: This constant 0u might need to be dynamicly decided for host modules
+                LocDataTy
+              }),
+            false
+          )
+      );
+    scabbard.trace_append$mem$cond = M.getOrInsertFunction(
+        scabbard.trace_append$mem$cond_name,
+        llvm::FunctionType::get(
+            llvm::Type::getVoidTy(M.getContext()),
+            llvm::ArrayRef<llvm::Type*>(std::vector<llvm::Type*>{
+                TraceDataTy,
+                PtrTy, //WARN: This constant 0u might need to be dynamicly decided for host modules
+                LocDataTy
+              }),
+            false
+          )
+      );
+    scabbard.trace_append$alloc = M.getOrInsertFunction(
+        scabbard.trace_append$alloc_name,
+        llvm::FunctionType::get(
+            llvm::Type::getVoidTy(M.getContext()),
+            llvm::ArrayRef<llvm::Type*>(std::vector<llvm::Type*>{
+                TraceDataTy,
+                PtrTy, //WARN: This constant 0u might need to be dynamicly decided for host modules
+                LocDataTy,
+                ExtraDataTy
+              }),
+            false
+          )
+      );
+    scabbard.register_job = M.getOrInsertFunction(
+        scabbard.register_job_name,
+        llvm::FunctionType::get(
+            llvm::PointerType::getUnqual(M.getContext()),
+            llvm::ArrayRef<llvm::Type*>(std::vector<llvm::Type*>{
+                llvm::PointerType::getUnqual(M.getContext())
+              }),
+            false
+          )
+      );
+    scabbard.register_job_callback = M.getOrInsertFunction(
+        scabbard.register_job_callback_name,
+        llvm::FunctionType::get(
+            llvm::Type::getVoidTy(M.getContext()),
+            llvm::ArrayRef<llvm::Type*>(std::vector<llvm::Type*>{
+                llvm::PointerType::getUnqual(M.getContext()),
+                llvm::PointerType::getUnqual(M.getContext()),
+                LocDataTy
+              }),
+            false
+          )
+      );
+}
+
+void ScabbardIDevicePass::registerRTL(Module& M) {
+    scabbard.trace_append$mem = M.getOrInsertFunction(
+        scabbard.trace_append$mem_name,
+        llvm::FunctionType::get(
+            llvm::Type::getVoidTy(M.getContext()),
+            llvm::ArrayRef<llvm::Type*>(std::vector<llvm::Type*>{
+                PtrTy,
+                TraceDataTy,
+                PtrTy, //WARN: This constant 0u might need to be dynamicly decided for host modules
+                LocDataTy
+              }),
+            false
+          )
+      );
+    scabbard.trace_append$alloc = M.getOrInsertFunction(
+        scabbard.trace_append$alloc_name,
+        llvm::FunctionType::get(
+            llvm::Type::getVoidTy(M.getContext()),
+            llvm::ArrayRef<llvm::Type*>(std::vector<llvm::Type*>{
+                PtrTy,
+                TraceDataTy,
+                PtrTy,
+                LocDataTy,
+                ExtraDataTy
+              }),
+            false
+          )
+      );
+  }
 
 bool scabbardIDevicePass::runImpl(Function& F, FunctionAnalysisManager& FAM) {
   bool changed = false;
@@ -1016,12 +1197,12 @@ bool scabbardIDevicePass::instrumentInScabbardFunc(LoopInfo& LI, Instruction& I,
         std::array<Value*, 4u>{
             fn.getArg(fn.arg_size()-1),
             ConstantInt::get(
-                IntegerType::get(fn.getContext(), sizeof(InstrData) * 8),
+                TraceDataTy,
                 APInt(sizeof(InstrData)*8, InstrContext | PO)
               ),
             (castInst ? castInst : Ptr),
             ConstantInt::get(
-                IntegerType::get(fn.getContext(), sizeof(size_t) * 8),
+                LocDataTy,
                 APInt(sizeof(size_t)*8, locID)
               )
           },
