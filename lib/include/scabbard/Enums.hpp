@@ -43,17 +43,17 @@ std::ostream& operator << (std::ostream& out, const instr::ModuleType& modTy) no
     *        ^^^^ ^^^  ^^^^ ^^^^
     *        |||| |||  |||| |||L Runtime Conditional
     *        |||| |||  |||| ||L Optional data used
-    *        |||| |||  |||| |L Instr in DEVICE (GPU) module
-    *        |||| |||  |||| L Instr in HOST (CPU) module
+    *        |||| |||  |||| |L Instr-ed in DEVICE (GPU) module
+    *        |||| |||  |||| L Instr-ed in HOST (CPU) module
     *        |||| |||  |||L Instr as ALLOCATE
     *        |||| |||  ||L Instr as READ
     *        |||| |||  |L Instr as FREE
     *        |||| |||  L Instr as WRITE
     *        |||| ||L Instr as ATOMIC
     *        |||| |L Is a DeSync/kernel Launch event
-    *        |||| L Instr as MANAGED
-    *        |||L Is in DEVICE HEAP memory
-    *        ||L Is in UNKNOWN memory
+    *        |||| L Is in a UNKNOWN memory heap
+    *        |||L Is in a MANAGED MEM heap
+    *        ||L Is in DEVICE HEAP memory
     *        |L Is in HOST HEAP memory
     *        L Is a sync event
     *   \endcode
@@ -90,11 +90,11 @@ std::ostream& operator << (std::ostream& out, const instr::ModuleType& modTy) no
     LAUNCH_EVENT          = 1<<10,
     DESYNC_EVENT          = 1<<10,
     // 
-    MANAGED_MEM           = 1<<11,
+    UNKNOWN_HEAP          = 1<<11,
     //
-    DEVICE_HEAP           = 1<<12,
+    MANAGED_MEM           = 1<<12,
     //
-    UNKNOWN_HEAP          = 1<<13,
+    DEVICE_HEAP           = 1<<13,
     //
     HOST_HEAP             = 1<<14,
     //

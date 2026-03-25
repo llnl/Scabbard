@@ -46,7 +46,7 @@ namespace verif {
       std::map<size_t, const scabbard::TraceData *>::iterator it = mem.end();
       switch (td.data & FILTER)
       {
-        case InstrData::SYNC_EVENT:
+        case InstrData::SYNC_EVENT: //NOTE: hipMemcpy might fuck this up look into separating trace data fields into two entires in some tbd order
           if (td.ptr == 0) {
             last_global_sync = td.time_stamp;
             last_stream_sync.clear();
