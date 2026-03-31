@@ -216,7 +216,15 @@ class ScabbardHostPass : public IScabbardInstrPass, public IRHelper {
     registerRTL(M);
   }
 
-  void registerRTL(Module& M);
+  /// @brief Ensure that Scabbard's RTL Fn's are defined in this module and
+  ///        pointed to by the appropriate member of \c ScabbardHostRTL struct. 
+  /// @param M module to insert/inspect.
+  inline void registerRTL(Module& M);
+
+  /// @brief Find all global variables that are in unified memory (as known by this TU).
+  ///        Store in \c GLobalUnifiedMemVar .
+  /// @param M module to search.
+  inline void registerGlobalVarsInUnifiedMemory(const Module& M);
 
 protected:
 
@@ -238,6 +246,10 @@ protected:
     MetadataHandler Metadata;
   };
   ScabbardHostRTL scabbard;
+
+  /// @brief Map of GLobal Variable Names of Variables known to be in Unified memory to what heap they are in. \n 
+  ///        (if not in map assume it is in \c UNKNOWN_HEAP ).
+  StringMap<PtrOrigin> GlobalUnifiedMemVar;
 
   /// @brief Returns \c false if the function should not be instrumented. \n
   ///        Used by the top level run method to determine if the pass will run on a fn. \n 
@@ -1046,15 +1058,15 @@ const Value* throughConstExpr(const Value* V) {
 
 typedef std::function<scabbard::InstrData(const Value&,const CallInst&)> CallCheck_t;
 
-CallCheck_t BASE_CHECK = [](const Value& V, const CallInst& C) -> scabbard::InstrData {
+CallCheck_t BASE_CHECK = [=](const Value& V, const CallInst& C) -> scabbard::InstrData {
   return (((&V) == throughConstExpr(C.getArgOperand(0))) ? scabbard::UNKNOWN_HEAP : scabbard::NONE); // compare ptr's and hope llvm does not make copies of IR objects
 };
 
-CallCheck_t ALWAYS_HOST = [](const Value&, const CallInst&) -> scabbard::InstrData { return scabbard::HOST_HEAP; };
-CallCheck_t ALWAYS_DEVICE = [](const Value&, const CallInst&) -> scabbard::InstrData { return scabbard::DEVICE_HEAP; };
-CallCheck_t ALWAYS_MANAGED = [](const Value&, const CallInst&) -> scabbard::InstrData { return scabbard::MANAGED_MEM; };
-CallCheck_t ALWAYS_LOCAL = [](const Value&, const CallInst&) -> scabbard::InstrData { return scabbard::LOCAL; };
-CallCheck_t ALWAYS_UNKNOWN_HEAP = [](const Value&, const CallInst&) -> scabbard::InstrData { return scabbard::UNKNOWN_HEAP; };
+CallCheck_t ALWAYS_HOST = [=](const Value&, const CallInst&) -> scabbard::InstrData { return scabbard::HOST_HEAP; };
+CallCheck_t ALWAYS_DEVICE = [=](const Value&, const CallInst&) -> scabbard::InstrData { return scabbard::DEVICE_HEAP; };
+CallCheck_t ALWAYS_MANAGED = [=](const Value&, const CallInst&) -> scabbard::InstrData { return scabbard::MANAGED_MEM; };
+CallCheck_t ALWAYS_LOCAL = [=](const Value&, const CallInst&) -> scabbard::InstrData { return scabbard::LOCAL; };
+CallCheck_t ALWAYS_UNKNOWN_HEAP = [=](const Value&, const CallInst&) -> scabbard::InstrData { return scabbard::UNKNOWN_HEAP; };
 
 
 const std::unordered_map<std::string, CallCheck_t> funcsOfInterest = {
@@ -1082,9 +1094,50 @@ const std::unordered_map<std::string, CallCheck_t> funcsOfInterest = {
       }
     },
     { "hipHostRegister", ALWAYS_HOST },
+    { "hipHostMalloc", ALWAYS_HOST },
+    { "hipHostAlloc", ALWAYS_HOST },
     { "hipMallocManaged", ALWAYS_MANAGED },
     { "hipMemAdvise", BASE_CHECK },
   };
+
+inline void scabbardHostPass::registerGlobalVarsInUnifiedMemory(const Module& M) {
+  auto get_next = [=](const llvm::Value* V) -> const Value* {
+    if (const auto* CE = llvm::dyn_cast_or_null<llvm::ConstantExpr>(V)) {
+      for (const auto& U : CE->operands()) {
+        const llvm::Value* res = get_next(U.get());
+        if (res != nullptr)
+          return res;
+      }
+    } else if (const auto* GV = llvm::dyn_cast_or_null<llvm::GlobalValue>(V)) {
+      return GV;
+    }
+    return nullptr;
+  };
+  auto checkFn = [&](const Function* Fn, const scabbard::InstrData HeapLoc) -> void {
+    for (const auto u : Fn->users())
+      if (const auto* call = llvm::dyn_cast_or_null<llvm::CallInst>(u.get())) {
+        if (const auto* global = llvm::dyn_cast_or_null<llvm::GlobalVariable>(get_next(call->getArgOperand(1)))) {
+          this->GlobalUnifiedMemVar.insert(std::make_pair(global->getName(), HeapLoc));
+        }
+      }
+  };
+
+  if (const auto* hFn = dyn_cast<Function>(M.getFunction("hipHostRegister"))) {
+    checkFn(hFn, HOST_HEAP);
+  }
+  if (const auto* hFn = dyn_cast<Function>(M.getFunction("hipHostMalloc"))) {
+    checkFn(hFn, HOST_HEAP);
+  }
+  if (const auto* hFn = dyn_cast<Function>(M.getFunction("hipHostAlloc"))) {
+    checkFn(hFn, HOST_HEAP);
+  }
+  if (const auto* dFn = dyn_cast<Function>(M.getFunction("__hipRegisterVar"))) {
+    checkFn(hFn, DEVICE_HEAP);
+  }
+  if (const auto* mFn = dyn_cast<Function>(M.getFunction("__hipRegisterManagedVar"))) {
+    checkFn(hFn, MANAGED_MEM);
+  }
+} 
 
 scabbardHostPass::PtrOrigin scabbardHostPass::getPtrOrigin(LoopInfo& LI, Value* Ptr, const Value** Object) const {
   // derived from
@@ -1096,31 +1149,32 @@ scabbardHostPass::PtrOrigin scabbardHostPass::getPtrOrigin(LoopInfo& LI, Value* 
   PtrOrigin PO = NONE;
   for (auto* Obj : Objects) {
     PtrOrigin ObjPO = NONE;
-    if (auto AI = dyn_cast<AllocaInst>(Obj)) {
-      //check if this is used in a hipMalloc
-      PtrOrigin PosPO = NONE;
-      for (const auto& U : AI.uses())
-        if (const auto* CI = llvm::dyn_cast_or_null<llvm::CallInst>(U.getUser())) {
-          auto p = funcsOfInterest.find(CI->getCalledFunction()->getName().str());
-          if (p != funcsOfInterest.end() && (auto res = p->second(I,*CI)))
-            PosPO = res;
-        }
-      if (PosPO == NONE)
-        return LOCAL;
-      ObjPO = PosPO;
-    } else if (auto* Global = dyn_cast<GlobalVariable>(Obj)) {
-      ObjPO = UNKNOWN_HEAP;
-    } else if (auto* Load = dyn_cast<LoadInst>(Obj)) {
-      if (auto* Global = dyn_cast<GlobalVariable>(Load->getPointerOperand())) {
-        if (Global->getName().ends_with(".device") 
-            || _M.getGlobalVariable(Global->getName().str()+".device"))
-          ObjPO = DEVICE_HEAP;
-        else if (Global->getName().ends_with(".managed") 
-            || _M.getGlobalVariable(Global->getName().str()+".managed"))
-          ObjPO = MANAGED_MEM;
+    switch (Obj->getValueID()) {
+      case Value::GlobalVariableVal: {
+        GlobalVariable* GV = (GlobalVariable*) Obj;
+        auto res = GlobalUnifiedMemVar.find(GV->getName());
+        ObjPO = ((res != GlobalUnifiedMemVar.end()) ? res.second : UNKNOWN_HEAP); 
+        //TODO remove globals not known to be on device or managed
+        break;
       }
-    } else if (auto* CI = dyn_cast<CallInst>(Obj)) {
-      if (auto* Callee = CI->getCalledFunction())
+      case Value::ArgumentVal:
+        ObjPO = UNKNOWN_HEAP;
+        break;
+      case Instruction::Load + Value::InstructionVal: {
+        LoadInst* Load = (LoadInst*) Obj;
+        if (auto* Global = dyn_cast<GlobalVariable>(Load->getPointerOperand())) {
+          if (Global->getName().ends_with(".device") 
+              || _M.getGlobalVariable(Global->getName().str()+".device"))
+            ObjPO = DEVICE_HEAP;
+          else if (Global->getName().ends_with(".managed") 
+              || _M.getGlobalVariable(Global->getName().str()+".managed"))
+            ObjPO = MANAGED_MEM;
+        }
+        break;
+      }
+      case Instruction::Call + Value::InstructionVal: {
+        CallInst* CI = (CallInst*) Obj;
+        if (auto* Callee = CI->getCalledFunction())
         if (Callee->getName().starts_with("ompx_")) {
           if (Callee->getName().ends_with("_global"))
             ObjPO = DEVICE_HEAP;
@@ -1129,8 +1183,25 @@ scabbardHostPass::PtrOrigin scabbardHostPass::getPtrOrigin(LoopInfo& LI, Value* 
           else if (Callee->getName().ends_with("_shared"))
             ObjPO = MANAGED_MEM;
         }
-    } else if (auto* Arg = dyn_cast<Argument>(Obj)) {
-      ObjPO = UNKNOWN_HEAP;
+        break;
+      }
+      case Instruction::Alloca + Value::InstructionVal: {
+        AllocaInst* AI = (AllocaInst*) Obj;
+        //check if this is used in a hipMalloc
+        PtrOrigin PosPO = NONE;
+        for (const auto& U : AI.uses())
+          if (const auto* CI = llvm::dyn_cast_or_null<llvm::CallInst>(U.getUser())) {
+            auto p = funcsOfInterest.find(CI->getCalledFunction()->getName().str());
+            if (p != funcsOfInterest.end() && (auto res = p->second(I,*CI)))
+              PosPO = res;
+          }
+        if (PosPO == NONE)
+          return LOCAL;
+        ObjPO = PosPO;
+        break;
+      }
+      default:
+        break;
     }
     if (PO == NONE || (PO == UNKNOWN_HEAP && ObjPO > UNKNOWN_HEAP))
       PO = ObjPO;
@@ -1438,36 +1509,51 @@ scabbardIDevicePass::PtrOrigin scabbardIDevicePass::getPtrOrigin(LoopInfo& LI, V
   PtrOrigin PO = NONE;
   for (auto* Obj : Objects) {
     PtrOrigin ObjPO = HasAllocas ? LOCAL : UNKNOWN_HEAP; //TODO investigate what this means
-    if (isa<AllocaInst>(Obj)) {
-      ObjPO = LOCAL;
-    } else if (auto* Global = dyn_cast<GlobalVariable>(Obj)) {
-      ObjPO = isSharedGlobal(*Global) ? MANAGED_MEM : DEVICE_HEAP;
-    } else if (auto* Load = dyn_cast<LoadInst>(Obj)) {
-      if (auto* Global = dyn_cast<GlobalVariable>(Load->getPointerOperand())) {
-        if (Global->getName().ends_with(".device") 
-            || _M.getGlobalVariable(Global->getName().str()+".device"))
-          ObjPO = DEVICE_HEAP;
-        else if (Global->getName().ends_with(".managed") 
-            || _M.getGlobalVariable(Global->getName().str()+".managed"))
-          ObjPO = MANAGED_MEM; // - using shared for block level shared memory
+    switch (Obj->getValueID()) {
+      case Value::GlobalVariableVal:
+        ObjPO = isSharedGlobal(*((GlobalVariable*) Obj)) ? MANAGED_MEM : DEVICE_HEAP;
+        break;
+      case Value::ArgumentVal: {
+        Argument* Arg = (Argument*) Obj;
+        if (Arg->getParent()->hasFnAttribute("kernel"))
+          ObjPO = UNKNOWN_HEAP;
+        break;
       }
-    } else if (auto* II = dyn_cast<IntrinsicInst>(Obj)) {
-      if (II->getIntrinsicID() == Intrinsic::amdgcn_implicitarg_ptr ||
-          II->getIntrinsicID() == Intrinsic::amdgcn_dispatch_ptr)
-        return NEVER; //SYSTEM;
-    } else if (auto* CI = dyn_cast<CallInst>(Obj)) {
-      if (auto* Callee = CI->getCalledFunction())
-        if (Callee->getName().starts_with("ompx_")) {
-          if (Callee->getName().ends_with("_global"))
+      case Instruction::Alloca + Value::InstructionVal:
+        ObjPO = LOCAL;
+        break;
+      case Instruction::Load + Value::InstructionVal: {
+        LoadInst* Load = (LoadInst*) Obj;
+        if (auto* Global = dyn_cast<GlobalVariable>(Load->getPointerOperand())) {
+          if (Global->getName().ends_with(".device") 
+              || _M.getGlobalVariable(Global->getName().str()+".device"))
             ObjPO = DEVICE_HEAP;
-          else if (Callee->getName().ends_with("_local"))
-            ObjPO = LOCAL;
-          else if (Callee->getName().ends_with("_shared"))
-            ObjPO = MANAGED_MEM;
+          else if (Global->getName().ends_with(".managed") 
+              || _M.getGlobalVariable(Global->getName().str()+".managed"))
+            ObjPO = MANAGED_MEM; // - using shared for block level shared memory
         }
-    } else if (auto* Arg = dyn_cast<Argument>(Obj)) {
-      if (Arg->getParent()->hasFnAttribute("kernel"))
-        ObjPO = UNKNOWN_HEAP;
+        break;
+      }
+      case Instruction::Call + Value::InstructionVal: {
+        CallInst* CI = (CallInst*) Obj;
+        if (auto* II = dyn_cast<IntrinsicInst>(CI)) { // check if call to intrinsic fn
+          if (II->getIntrinsicID() == Intrinsic::amdgcn_implicitarg_ptr ||
+            II->getIntrinsicID() == Intrinsic::amdgcn_dispatch_ptr)
+          return NEVER; //SYSTEM;
+        }
+        if (auto* Callee = CI->getCalledFunction())
+          if (Callee->getName().starts_with("ompx_")) {
+            if (Callee->getName().ends_with("_global"))
+              ObjPO = DEVICE_HEAP;
+            else if (Callee->getName().ends_with("_local"))
+              ObjPO = LOCAL;
+            else if (Callee->getName().ends_with("_shared"))
+              ObjPO = MANAGED_MEM;
+          }
+        break;
+      }
+      default:
+        break;
     }
     if (PO == NONE || (PO == UNKNOWN_HEAP && ObjPO > UNKNOWN_HEAP))
       PO = ObjPO;
