@@ -40,22 +40,23 @@ std::ostream& operator << (std::ostream& out, const instr::ModuleType& modTy) no
     * @brief ENUM BYTE MAP\n
     *   \code{.txt}
     *     0b_0000_0000_0000_0000
-    *        ^^^^ ^^^  ^^^^ ^^^^
-    *        |||| |||  |||| |||L Runtime Conditional
-    *        |||| |||  |||| ||L Optional data used
-    *        |||| |||  |||| |L Instr-ed in DEVICE (GPU) module
-    *        |||| |||  |||| L Instr-ed in HOST (CPU) module
-    *        |||| |||  |||L Instr as ALLOCATE
-    *        |||| |||  ||L Instr as READ
-    *        |||| |||  |L Instr as FREE
-    *        |||| |||  L Instr as WRITE
-    *        |||| ||L Instr as ATOMIC
-    *        |||| |L Is a DeSync/kernel Launch event
-    *        |||| L Is in a UNKNOWN memory heap
-    *        |||L Is in a MANAGED MEM heap
-    *        ||L Is in DEVICE HEAP memory
-    *        |L Is in HOST HEAP memory
-    *        L Is a sync event
+    *        ^^^^ ^^^^ ^^^^ ^^^^
+    *        |||| |||| |||| |||L Runtime Conditional
+    *        |||| |||| |||| ||L Optional data used
+    *        |||| |||| |||| |L Instr-ed in DEVICE (GPU) module
+    *        |||| |||| |||| L Instr-ed in HOST (CPU) module
+    *        |||| |||| |||L Instr as ALLOCATE event
+    *        |||| |||| ||L Instr as READ event
+    *        |||| |||| |L Instr as FREE event
+    *        |||| |||| L Instr as WRITE event
+    *        |||| |||L Instr as SYNC event
+    *        |||| ||L Instr as a DeSYNC/Kernel-Launch event
+    *        |||| |L Is an ATOMIC operation
+    *        |||| L Ptr is in a UNKNOWN memory heap
+    *        |||L Ptr is in a MANAGED MEM heap
+    *        ||L Ptr is in DEVICE HEAP memory
+    *        |L Ptr is in (registered) HOST HEAP memory
+    *        L <UNUSED>
     *   \endcode
     */
   enum InstrData : std::uint16_t {
@@ -78,17 +79,24 @@ std::ostream& operator << (std::ostream& out, const instr::ModuleType& modTy) no
     ON_CPU                = 1<<3,
     //
     ALLOCATE              = 1<<4,
+    ALLOCATE_EVENT        = 1<<4,
     //
     READ                  = 1<<5,
+    READ_EVENT            = 1<<5,
     //
     FREE                  = 1<<6,
+    FREE_EVENT            = 1<<6,
     //
     WRITE                 = 1<<7,
-    // this memory should be treated as atomic
-    ATOMIC_MEM            = 1<<9,
+    WRITE_EVENT           = 1<<7,
+    //
+    SYNC                  = 1<<8,
+    SYNC_EVENT            = 1<<8,
     //
     LAUNCH_EVENT          = 1<<10,
     DESYNC_EVENT          = 1<<10,
+    // this memory should be treated as atomic
+    ATOMIC                = 1<<9,
     // 
     UNKNOWN_HEAP          = 1<<11,
     //
@@ -97,8 +105,6 @@ std::ostream& operator << (std::ostream& out, const instr::ModuleType& modTy) no
     DEVICE_HEAP           = 1<<13,
     //
     HOST_HEAP             = 1<<14,
-    //
-    SYNC_EVENT            = 1<<15
   };
 
   inline InstrData operator | (InstrData l, InstrData r) 

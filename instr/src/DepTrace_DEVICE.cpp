@@ -95,7 +95,7 @@ namespace scabbard {
       InstrData res = __getInstrData_val(*I.getPointerOperand(), phiBBVisited);
       if (res == InstrData::NEVER)
         return InstrData::NEVER;
-      res |= (I.isAtomic()) ? InstrData::ATOMIC_MEM : InstrData::NEVER;
+      res |= (I.isAtomic()) ? InstrData::ATOMIC : InstrData::NEVER;
       return (InstrData)(InstrData::ON_DEVICE | InstrData::WRITE | res);
     }
 
@@ -109,7 +109,7 @@ namespace scabbard {
       InstrData res = __getInstrData_val(*I.getPointerOperand(), phiBBVisited);
       if (res == InstrData::NEVER)
         return InstrData::NEVER;
-      res |= (I.isAtomic()) ? InstrData::ATOMIC_MEM : InstrData::NEVER;
+      res |= (I.isAtomic()) ? InstrData::ATOMIC : InstrData::NEVER;
       return (InstrData)(InstrData::ON_DEVICE | InstrData::READ | res);
 #     else
       return InstrData::NEVER;
@@ -132,7 +132,7 @@ namespace scabbard {
       InstrData res = __getInstrData_val(*I.getPointerOperand(), phiBBVisited);
       if (res == InstrData::NEVER)
         return InstrData::NEVER;
-      return (InstrData)(InstrData::ATOMIC_MEM | InstrData::ON_DEVICE | InstrData::READ | InstrData::WRITE | res);  // this means that the mem is device heap (shared or global doesn't matter)
+      return (InstrData)(InstrData::ATOMIC | InstrData::ON_DEVICE | InstrData::READ | InstrData::WRITE | res);  // this means that the mem is device heap (shared or global doesn't matter)
     }
 
     template<>
@@ -144,7 +144,7 @@ namespace scabbard {
       InstrData res = __getInstrData_val(*I.getPointerOperand(), phiBBVisited);
       if (res == InstrData::NEVER)
         return InstrData::NEVER;
-      return (InstrData)(InstrData::ATOMIC_MEM | InstrData::ON_DEVICE | InstrData::WRITE | res);  // this means that the mem is device heap (shared or global doesn't matter)
+      return (InstrData)(InstrData::ATOMIC | InstrData::ON_DEVICE | InstrData::WRITE | res);  // this means that the mem is device heap (shared or global doesn't matter)
     }
 
     // << ------------------------------------------------------------------------------------------ >> 

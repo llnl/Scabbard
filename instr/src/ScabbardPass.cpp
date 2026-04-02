@@ -33,6 +33,7 @@
 #include <llvm/IR/IRBuilder.h>
 #include <llvm/IR/InstIterator.h>
 #include <llvm/IR/Metadata.h>
+#include <llvm/IR/DebugInfoMetadata.h>
 #include <llvm/Support/Casting.h>
 #include <llvm/Support/Debug.h>
 #include <llvm/Support/raw_ostream.h>
@@ -151,10 +152,15 @@ private:
 /// @brief Class for standard design decisions common to all Scabbard Instrumentation passes
 class IScabbardInstrPass {
 protected:
-  /// @brief The general kind of memory space of a pointer type in a AMD Device.
-  typedef scabbard::InstrData PtrOrigin;
-
 public:
+  /// @brief Produce a string for log/error messages that gives the source file and location in 
+  ///        \c `\"<filepath>\":<line>,<col>` format
+  /// @param I instruction to get the location for
+  /// @return \c std::string - the formatted location string for log/error messages
+  static inline Twine getLocStr(const Instruction& I);
+
+  /// @brief The general kind of memory space of a pointer type in a AMD Device.
+  using PtrOrigin = scabbard::InstrData;
 
 };
 
@@ -165,18 +171,21 @@ class IRHelper {
 protected:
   /// @brief a handy copy of module to use when you just need to get a context or quick query.
   const Module& _M;
+  /// @brief a handy pointer to the oft used IR void type.
+  Type* const VoidTy = null;
   /// @brief a handy pointer the oft used generic IR pointer type for this module.
-  const PointerType* PtrTy = null;
+  PointerType* const PtrTy = null;
   /// @brief a handy pointer to the oft used IR Integer Type for the RTL's TraceData
-  const IntegerType* TraceDataTy = null;
+  IntegerType* const TraceDataTy = null;
   /// @brief a handy pointer to the oft used IR Integer Type for the RTL's source code location metadata ID
-  const IntegerType* LocDataTy = null;
+  IntegerType* const LocDataTy = null;
   /// @brief a handy pointer to the oft used IR Integer Type for the RTL's exta info (size_t/uint64_t) type.
-  const IntegerType* ExtraDataTy = null;
+  IntegerType* const ExtraDataTy = null;
 public:
   IRHelper() = delete;
   IRHelper(Module& M) :
-    _M(M), 
+    _M(M),
+    VoidTy(Type::getVoidTy(M.getContext())),
     PtrTy(PointerType::get(M.getContext(), 0ull)),
     TraceDataTy(IntegerType::get(M.getContext(), sizeof(InstrData)*8)),
     LocDataTy(IntegerType::get(M.getContext(), 64u)),
@@ -211,11 +220,6 @@ class ScabbardHostPass : public IScabbardInstrPass, public IRHelper {
     return runImpl(F, FAM);
   }
 
-  void initFromModule(Module& M) {
-    PtrTy = PointerType::get(M.getContext(), 0ull);
-    registerRTL(M);
-  }
-
   /// @brief Ensure that Scabbard's RTL Fn's are defined in this module and
   ///        pointed to by the appropriate member of \c ScabbardHostRTL struct. 
   /// @param M module to insert/inspect.
@@ -227,6 +231,9 @@ class ScabbardHostPass : public IScabbardInstrPass, public IRHelper {
   inline void registerGlobalVarsInUnifiedMemory(const Module& M);
 
 protected:
+
+  /// @brief The target triple to reference for OS and Arch variations on the host.
+  const Triple _Triple;
 
   /// @brief A struct used to organize all of the Code and IR elements of 
   ///        Scabbard's RTL into one place.
@@ -307,7 +314,7 @@ protected:
   /// @return \c bool - if any changes were made to the instruction, parent fn, or module.
   bool instrumentLoadInst(LoopInfo& LI, LoadInst& Load) {
     return instrumentInScabbardFunc(LI, Load, Load.getPointerOperand(), 
-                                    InstrData::ON_CPU | InstrData::READ | (Load.isAtomic() ? InstrData::ATOMIC_MEM : InstrData::NO));
+                                    InstrData::ON_CPU | InstrData::READ | (Load.isAtomic() ? InstrData::ATOMIC : InstrData::NO));
   }
 
   /// @brief When a store instruction is found in a fn this is called.
@@ -318,7 +325,7 @@ protected:
   /// @return \c bool - if any changes were made to the instruction, parent fn, or module.
   bool instrumentStoreInst(LoopInfo& LI, StoreInst& Store) {
     return instrumentInScabbardFunc(LI, Store, Store.getPointerOperand(),
-                                    InstrData::ON_CPU | InstrData::WRITE | (Store.isAtomic() ? InstrData::ATOMIC_MEM : InstrData::NO));
+                                    InstrData::ON_CPU | InstrData::WRITE | (Store.isAtomic() ? InstrData::ATOMIC : InstrData::NO));
   }
 
   /// @brief When a atomicrmw instruction is found in a fn this is called.
@@ -329,7 +336,7 @@ protected:
   /// @return \c bool - if any changes were made to the instruction, parent fn, or module.
   bool instrumentAtomicRMWInst(LoopInfo& LI, AtomicRMWInst& RMW) {
     return instrumentInScabbardFunc(LI, RMW, RMW.getPointerOperand(), 
-                                    InstrData::ON_CPU | InstrData::READ | InstrData::WRITE | InstrData::ATOMIC_MEM);
+                                    InstrData::ON_CPU | InstrData::READ | InstrData::WRITE | InstrData::ATOMIC);
   }
 
   /// @brief When a cmpxchg instruction is found in a fn this is called.
@@ -340,7 +347,7 @@ protected:
   /// @return \c bool - if any changes were made to the instruction, parent fn, or module.
   bool instrumentCmpXChgInst(LoopInfo& LI, AtomicCmpXchgInst& CXC) {
     return instrumentInScabbardFunc(LI, CXC, CXC.getPointerOperand(),
-                                    InstrData::ON_CPU | InstrData::WRITE | InstrData::ATOMIC_MEM);
+                                    InstrData::ON_CPU | InstrData::WRITE | InstrData::ATOMIC);
   }
 
   /// @brief When a fence instruction is found in a fn this is called.
@@ -357,26 +364,35 @@ protected:
   /// @param LI The loop info / analysis for the parent fn.
   /// @param Call the instruction in question.
   /// @return \c bool - if any changes were made to the instruction, parent fn, or module.
-  bool instrumentCallInst(LoopInfo& LI, CallInst& Call) {
-    //TODO figure out what calls to instrument
+  bool instrumentCallInst(LoopInfo& LI, CallInst& Call) { return false; } // not used, replaced with a definition based approach
+
+  /// @brief Look at all the calls to GPU Driver API functions and handle them as needed.
+  /// @return \c bool - if the module was modified at all durring this process.
+  inline bool handleAPICalls() {
+    // for (auto [Do, FnName] : )
   }
 
 
 public:
 
   ScabbardHostPass() = delete;
-  ScabbardHostPass(Module& M) : IRHelper(M) {}
+  ScabbardHostPass(Module& M, const Triple& Triple_) : 
+    IRHelper(M), 
+    _Triple(Triple_) 
+    {}
     
 
   /// @brief Instrument a host module for scabbard.
   /// @param M the module who's contents will be instrumented.
   /// @param MAM the analysis manager for above module.
   /// @return \c bool - if the module was modified.
-  bool run(Module& M, ModuleAnalysisManager& MAM) {
+  virtual bool run(Module& M, ModuleAnalysisManager& MAM) final {
     
     // run the actual implementation that might be modified in inherited classes
     bool changed = runImpl(M, MAM);
 
+    // notate all global variables that are known to be in Unified memory at some point (in this module/TU)
+    registerGlobalVarsInUnifiedMemory(M);
     // add definitions for our RTL fn's
     registerRTL(M);
 
@@ -810,7 +826,7 @@ protected:
   bool instrumentLoadInst(LoopInfo& LI, LoadInst& Load) override {
     return instrumentInScabbardFunc(LI, Load, Load.getPointerOperand(), 
                                     scabbard.trace_append$mem, 
-                                    InstrData::ON_GPU | InstrData::READ | (Load.isAtomic() ? InstrData::ATOMIC_MEM : InstrData::NO));
+                                    InstrData::ON_GPU | InstrData::READ | (Load.isAtomic() ? InstrData::ATOMIC : InstrData::NO));
   }
 
   /// @brief When a store instruction is found in a fn this is called.
@@ -822,7 +838,7 @@ protected:
   bool instrumentStoreInst(LoopInfo& LI, StoreInst& Store) override {
     return instrumentInScabbardFunc(LI, Store, Store.getPointerOperand(), 
                                     scabbard.trace_append$mem, 
-                                    InstrData::ON_GPU | InstrData::WRITE | (Store.isAtomic() ? InstrData::ATOMIC_MEM : InstrData::NO));
+                                    InstrData::ON_GPU | InstrData::WRITE | (Store.isAtomic() ? InstrData::ATOMIC : InstrData::NO));
   }
 
   /// @brief When a atomicrmw instruction is found in a fn this is called.
@@ -834,7 +850,7 @@ protected:
   bool instrumentAtomicRMWInst(LoopInfo& LI, AtomicRMWInst& RMW) override {
     return instrumentInScabbardFunc(LI, RMW, RMW.getPointerOperand(), 
                                     scabbard.trace_append$mem, 
-                                    InstrData::ON_GPU | InstrData::READ | InstrData::WRITE | InstrData::ATOMIC_MEM);
+                                    InstrData::ON_GPU | InstrData::READ | InstrData::WRITE | InstrData::ATOMIC);
   }
 
   /// @brief When a cmpxchg instruction is found in a fn this is called.
@@ -846,7 +862,7 @@ protected:
   bool instrumentCmpXChgInst(LoopInfo& LI, AtomicCmpXchgInst& CXC) override {
     return instrumentInScabbardFunc(LI, CXC, CXC.getPointerOperand(), 
                                     scabbard.trace_append$mem, 
-                                    InstrData::ON_GPU | InstrData::WRITE | InstrData::ATOMIC_MEM);
+                                    InstrData::ON_GPU | InstrData::WRITE | InstrData::ATOMIC);
   }
 
   /// @brief When a fence instruction is found in a fn this is called.
@@ -874,234 +890,95 @@ protected:
 // << ========================================================================================== >>
 
 
+inline Twine IScabbardInstrPass::getLocStr(const Instruction& I) {
+  const DILocation& DLoc = *I.getDebugLoc();
+  return Twine("\"")
+        + DLoc.getDirectory() + "/" + DLoc.getFilename() 
+        + "\":" 
+        + (Twine) DLoc.getLine()
+        + ","
+        + (Twine) DLoc.getColumn();
+}
+
+// << ================================= HOST PASS DEFINITIONS ================================== >> 
+
 void ScabbardHostPass::registerRTL(Module& M) {
   if (M.getFunction("main") != nullptr)
     scabbard.scabbard_init = M.getOrInsertFunction(
         scabbard.scabbard_init_name,
-        llvm::FunctionType::get(
-            llvm::Type::getVoidTy(M.getContext()),
-            {},
-            // llvm::ArrayRef<llvm::Type*>(std::array<llvm::Type*,1>{
-            //     llvm::Type::getVoidTy(M.getContext()),
-            //   }),
+        FunctionType::get(
+            VoidTy,
+            {}, // std::array<VoidTyType*,1ull>{VoidTy},
             false
           )
       );
   // host.scabbard_close = M.getOrInsertFunction(
   //     host.scabbard_close_name,
-  //     llvm::FunctionType::get(
-  //         llvm::Type::getVoidTy(M.getContext()),
-  //         llvm::ArrayRef<llvm::Type*>(std::array<llvm::Type*,1>{
-  //             llvm::Type::getVoidTy(M.getContext()),
-  //           }),
+  //     FunctionType::get(
+  //         VoidTy,
+  //         {}, // std::array<VoidTyType*,1ull>{VoidTy},
   //         false
   //       )
   //   );
   scabbard.trace_append$mem = M.getOrInsertFunction(
       scabbard.trace_append$mem_name,
-      llvm::FunctionType::get(
-          llvm::Type::getVoidTy(M.getContext()),
-          llvm::ArrayRef<llvm::Type*>(std::vector<llvm::Type*>{
+      FunctionType::get(
+          VoidTy,
+          std::array<Type*,3ull>{
               TraceDataTy,
               PtrTy, //WARN: This constant 0u might need to be dynamicly decided for host modules
               LocDataTy
-            }),
+            },
           false
         )
     );
   scabbard.trace_append$mem$cond = M.getOrInsertFunction(
       scabbard.trace_append$mem$cond_name,
-      llvm::FunctionType::get(
-          llvm::Type::getVoidTy(M.getContext()),
-          llvm::ArrayRef<llvm::Type*>(std::vector<llvm::Type*>{
+      FunctionType::get(
+          VoidTy,
+          std::array<Type*,3ull>{
               TraceDataTy,
               PtrTy, //WARN: This constant 0u might need to be dynamicly decided for host modules
               LocDataTy
-            }),
+            },
           false
         )
     );
   scabbard.trace_append$alloc = M.getOrInsertFunction(
       scabbard.trace_append$alloc_name,
-      llvm::FunctionType::get(
-          llvm::Type::getVoidTy(M.getContext()),
-          llvm::ArrayRef<llvm::Type*>(std::vector<llvm::Type*>{
+      FunctionType::get(
+          VoidTy,
+          std::array<Type*,4ull>{
               TraceDataTy,
               PtrTy, //WARN: This constant 0u might need to be dynamicly decided for host modules
               LocDataTy,
               ExtraDataTy
-            }),
+            },
           false
         )
     );
   scabbard.register_job = M.getOrInsertFunction(
       scabbard.register_job_name,
-      llvm::FunctionType::get(
-          llvm::PointerType::getUnqual(M.getContext()),
-          llvm::ArrayRef<llvm::Type*>(std::vector<llvm::Type*>{
-              llvm::PointerType::getUnqual(M.getContext())
-            }),
+      FunctionType::get(
+          PtrTy,
+          std::array<Type*,1ull>{PtrTy},
           false
         )
     );
   scabbard.register_job_callback = M.getOrInsertFunction(
       scabbard.register_job_callback_name,
-      llvm::FunctionType::get(
-          llvm::Type::getVoidTy(M.getContext()),
-          llvm::ArrayRef<llvm::Type*>(std::vector<llvm::Type*>{
-              llvm::PointerType::getUnqual(M.getContext()),
-              llvm::PointerType::getUnqual(M.getContext()),
-              LocDataTy
-            }),
+      FunctionType::get(
+          VoidTy,
+          std::array<Type*,3ull>{
+              PtrTy, PtrTy, LocDataTy
+            },
           false
         )
     );
 }
 
-bool scabbardHostPass::runImpl(Function& F, FunctionAnalysisManager& FAM) {
-  bool changed = false;
-  LoopInfo& LI = FAM.getResult<LoopAnalysis>(F);
-  // SmallVector<std::pair<AllocaInst*, Value*>> Allocas; // used for fakPtr/ShadowMem impl (not cur impl)
-  // SmallVector<ReturnInst*> Returns;    // used for fakPtr/ShadowMem impl (not cur impl)
-  SmallVector<LoadInst*> Loads;
-  SmallVector<StoreInst*> Stores;
-  SmallVector<CallInst*> Calls;
-  // SmallVector<GetElementPtrInst*> GEPs;  // used for fakPtr/ShadowMem impl (not cur impl)
-  SmallVector<AtomicRMWInst*> AtomicRMWs;
-  SmallVector<AtomicCmpXchgInst*> CmpXchgs;
-  // SmallVector<IntToPtrInst*> Int2Ptrs;  // used for fakPtr/ShadowMem impl (not cur impl)
-  // SmallVector<PtrToIntInst*> Ptr2Ints; // used for fakPtr/ShadowMem impl (not cur impl)
-
-  for (auto& I : instructions(F)) {
-    switch (I.getOpcode()) {
-    // case Instruction::Alloca: {
-    //   AllocaInst& AI = cast<AllocaInst>(I);
-    //   Allocas.push_back({&AI, nullptr});
-    //   break;
-    // }
-    case Instruction::Load:
-      Loads.push_back(&cast<LoadInst>(I));
-      break;
-    case Instruction::Store:
-      Stores.push_back(&cast<StoreInst>(I));
-      break;
-    // case Instruction::GetElementPtr:
-    //   GEPs.push_back(&cast<GetElementPtrInst>(I));
-    //   changed = true;
-    //   break;
-    case Instruction::Call: {
-      auto& CI = cast<CallInst>(I);
-      Calls.push_back(&CI);
-      if (CI.isIndirectCall())
-        AmbiguousCalls.insert(&CI);
-      break;
-    }
-    // case Instruction::Ret:
-    //   Returns.push_back(&cast<ReturnInst>(I));
-    //   break;
-    case Instruction::AtomicRMW:
-      AtomicRMWs.push_back(&cast<AtomicRMWInst>(I));
-      break;
-    case Instruction::AtomicCmpXchg:
-      // TODO handle cmpxchg instructions
-      CmpXchgs.push_back(&cast<AtomicCmpXchgInst>(I));
-      break;
-    // case Instruction::IntToPtr:
-    //   Int2Ptrs.push_back(&cast<IntToPtrInst>(I));
-    //   break;
-    // case Instruction::PtrToInt:
-    //   Ptr2Ints.push_back(&cast<PtrToIntInst>(I));
-    //   break;
-    default:
-      break;
-    }
-  }
-
-  for (auto* P2I : Ptr2Ints)
-    changed |= instrumentPtrToIntInst(LI, *P2I);
-  for (auto* I2P : Int2Ptrs)
-    changed |= instrumentIntToPtrInst(LI, *I2P);
-  for (auto* Load : Loads)
-    changed |= instrumentLoadInst(LI, *Load);
-  for (auto* Store : Stores)
-    changed |= instrumentStoreInst(LI, *Store);
-  for (auto* RMW : AtomicRMWs)
-    changed |= instrumentAtomicRMWInst(LI, *RMW);
-  for (auto* CMP : CmpXchgs)
-    changed |= instrumentCmpXChgInst(LI, *CMP);
-  // for (auto* Fence : Fences)
-  //   changed |= instrumentFenceInst(LI, *Fence);
-  for (auto* GEP : GEPs)
-    instrumentGEPInst(LI, *GEP);
-  for (auto* Call : Calls)
-    changed |= instrumentCallInst(LI, *Call);
-  // for (auto& It : Allocas)
-  //   It.second = instrumentAllocaInst(LI, *It.first);
-
-  // changed |= instrumentReturns(LI, Allocas, Returns);
-
-  return changed;
-}
-
-const Value* throughConstExpr(const Value* V) {
-  if (const auto* CE = dyn_cast_or_null<ConstantExpr>(V)) {
-    for (const auto& U : CE->operands()) {
-      const llvm::Value* res = throughConstExpr(U.get());
-      if (res != nullptr)
-        return res;
-    }
-  } else if (const auto* I = dyn_cast_or_null<Instruction>(V)) {
-    return I;
-  }
-  return nullptr;
-}
-
-typedef std::function<scabbard::InstrData(const Value&,const CallInst&)> CallCheck_t;
-
-CallCheck_t BASE_CHECK = [=](const Value& V, const CallInst& C) -> scabbard::InstrData {
-  return (((&V) == throughConstExpr(C.getArgOperand(0))) ? scabbard::UNKNOWN_HEAP : scabbard::NONE); // compare ptr's and hope llvm does not make copies of IR objects
-};
-
-CallCheck_t ALWAYS_HOST = [=](const Value&, const CallInst&) -> scabbard::InstrData { return scabbard::HOST_HEAP; };
-CallCheck_t ALWAYS_DEVICE = [=](const Value&, const CallInst&) -> scabbard::InstrData { return scabbard::DEVICE_HEAP; };
-CallCheck_t ALWAYS_MANAGED = [=](const Value&, const CallInst&) -> scabbard::InstrData { return scabbard::MANAGED_MEM; };
-CallCheck_t ALWAYS_LOCAL = [=](const Value&, const CallInst&) -> scabbard::InstrData { return scabbard::LOCAL; };
-CallCheck_t ALWAYS_UNKNOWN_HEAP = [=](const Value&, const CallInst&) -> scabbard::InstrData { return scabbard::UNKNOWN_HEAP; };
-
-
-const std::unordered_map<std::string, CallCheck_t> funcsOfInterest = {
-    { "hipMalloc", ALWAYS_DEVICE },
-    {
-      "hipMemcpy", 
-      [](const Value& V, const CallInst& C) -> bool {
-        const Value* _V = &V;
-        if (auto* TrTy = dyn_cast<ConstantInt>(C.getArgOperand(3)))
-          // get which 
-          switch (TrTy->getSExtValue()) {
-            case 1: // H->D
-              return (throughConstExpr(C.getArgOperand(0)) == _V) ? scabbard::DEVICE_HEAP : scabbard::LOCAL;
-            case 2: // D->H
-              return (throughConstExpr(C.getArgOperand(1)) == _V) ? scabbard::DEVICE_HEAP : scabbard::LOCAL;
-            case 3: // D->D
-              return scabbard::DEVICE_HEAP;
-            case 0: // H->H
-            default: // Unknown
-              return scabbard::NONE;
-          }
-        }
-        errs() << "\n[scabbard::ERROR] `hipMemcpy`'s `hipMemcpyKind` was not as expected\n";
-        LLVM_BUILTIN_UNREACHABLE;
-      }
-    },
-    { "hipHostRegister", ALWAYS_HOST },
-    { "hipHostMalloc", ALWAYS_HOST },
-    { "hipHostAlloc", ALWAYS_HOST },
-    { "hipMallocManaged", ALWAYS_MANAGED },
-    { "hipMemAdvise", BASE_CHECK },
-  };
-
 inline void scabbardHostPass::registerGlobalVarsInUnifiedMemory(const Module& M) {
-  auto get_next = [=](const llvm::Value* V) -> const Value* {
+  auto get_next = [=](const llvm::Value* V) -> const llvm::Value* {
     if (const auto* CE = llvm::dyn_cast_or_null<llvm::ConstantExpr>(V)) {
       for (const auto& U : CE->operands()) {
         const llvm::Value* res = get_next(U.get());
@@ -1138,10 +1015,163 @@ inline void scabbardHostPass::registerGlobalVarsInUnifiedMemory(const Module& M)
     checkFn(hFn, MANAGED_MEM);
   }
 } 
+  
+bool ScabbardHostPass::runImpl(Function& F, FunctionAnalysisManager& FAM) {
+  bool changed = false;
+  LoopInfo& LI = FAM.getResult<LoopAnalysis>(F);
+  // SmallVector<std::pair<AllocaInst*, Value*>> Allocas; // used for fakPtr/ShadowMem impl (not cur impl)
+  // SmallVector<ReturnInst*> Returns;    // used for fakPtr/ShadowMem impl (not cur impl)
+  SmallVector<LoadInst*> Loads;
+  SmallVector<StoreInst*> Stores;
+  // SmallVector<CallInst*> Calls;          // moved to separate processing step that does not require searching.
+  // SmallVector<GetElementPtrInst*> GEPs;  // used for fakPtr/ShadowMem impl (not cur impl)
+  SmallVector<AtomicRMWInst*> AtomicRMWs;
+  SmallVector<AtomicCmpXchgInst*> CmpXchgs;
+  // SmallVector<IntToPtrInst*> Int2Ptrs;  // used for fakPtr/ShadowMem impl (not cur impl)
+  // SmallVector<PtrToIntInst*> Ptr2Ints; // used for fakPtr/ShadowMem impl (not cur impl)
 
-scabbardHostPass::PtrOrigin scabbardHostPass::getPtrOrigin(LoopInfo& LI, Value* Ptr, const Value** Object) const {
+  for (auto& I : instructions(F)) {
+    switch (I.getOpcode()) {
+    // case Instruction::Alloca: {
+    //   AllocaInst& AI = cast<AllocaInst>(I);
+    //   Allocas.push_back({&AI, nullptr});
+    //   break;
+    // }
+    case Instruction::Load:
+      Loads.push_back(&cast<LoadInst>(I));
+      break;
+    case Instruction::Store:
+      Stores.push_back(&cast<StoreInst>(I));
+      break;
+    // case Instruction::GetElementPtr:
+    //   GEPs.push_back(&cast<GetElementPtrInst>(I));
+    //   changed = true;
+    //   break;
+    // case Instruction::Call: {
+    //   auto& CI = cast<CallInst>(I);
+    //   Calls.push_back(&CI);
+    //   if (CI.isIndirectCall())
+    //     AmbiguousCalls.insert(&CI);
+    //   break;
+    // }
+    // case Instruction::Ret:
+    //   Returns.push_back(&cast<ReturnInst>(I));
+    //   break;
+    case Instruction::AtomicRMW:
+      AtomicRMWs.push_back(&cast<AtomicRMWInst>(I));
+      break;
+    case Instruction::AtomicCmpXchg:
+      // TODO handle cmpxchg instructions
+      CmpXchgs.push_back(&cast<AtomicCmpXchgInst>(I));
+      break;
+    // case Instruction::IntToPtr:
+    //   Int2Ptrs.push_back(&cast<IntToPtrInst>(I));
+    //   break;
+    // case Instruction::PtrToInt:
+    //   Ptr2Ints.push_back(&cast<PtrToIntInst>(I));
+    //   break;
+    default:
+      break;
+    }
+  }
+
+  // for (auto* P2I : Ptr2Ints)
+  //   changed |= instrumentPtrToIntInst(LI, *P2I);
+  // for (auto* I2P : Int2Ptrs)
+  //   changed |= instrumentIntToPtrInst(LI, *I2P);
+  for (auto* Load : Loads)
+    changed |= instrumentLoadInst(LI, *Load);
+  for (auto* Store : Stores)
+    changed |= instrumentStoreInst(LI, *Store);
+  for (auto* RMW : AtomicRMWs)
+    changed |= instrumentAtomicRMWInst(LI, *RMW);
+  for (auto* CMP : CmpXchgs)
+    changed |= instrumentCmpXChgInst(LI, *CMP);
+  // for (auto* Fence : Fences)
+  //   changed |= instrumentFenceInst(LI, *Fence);
+  // for (auto* GEP : GEPs)
+  //   instrumentGEPInst(LI, *GEP);
+  // for (auto* Call : Calls)
+  //   changed |= instrumentCallInst(LI, *Call);
+  // for (auto& It : Allocas)
+  //   It.second = instrumentAllocaInst(LI, *It.first);
+
+  // changed |= instrumentReturns(LI, Allocas, Returns);
+
+  return changed;
+}
+
+
+namespace HostPtrOriginHelpers {
+using namespace llvm;
+using PtrOrigin = IScabbardInstrPass::PtrOrigin;
+
+const Value* throughConstExpr(const Value* V) {
+  if (const auto* CE = dyn_cast_or_null<ConstantExpr>(V)) {
+    for (const auto& U : CE->operands()) {
+      const llvm::Value* res = throughConstExpr(U.get());
+      if (res != nullptr)
+        return res;
+    }
+  } else if (const auto* I = dyn_cast_or_null<Instruction>(V)) {
+    return I;
+  }
+  return nullptr;
+}
+
+// typedef std::function<scabbard::InstrData(const Value&,const CallInst&)> CallCheck_t;
+using CallCheck_t = std::function<PtrOrigin(const Value&,const CallInst&)>;
+
+CallCheck_t BASE_CHECK = [&](const Value& V, const CallInst& C) -> PtrOrigin {
+  return (((&V) == throughConstExpr(C.getArgOperand(0))) ? PtrOrigin::UNKNOWN_HEAP : PtrOrigin::NONE); // compare ptr's and hope llvm does not make copies of IR objects
+};
+
+CallCheck_t ALWAYS_HOST = [=](const Value&, const CallInst&) -> PtrOrigin { return PtrOrigin::HOST_HEAP; };
+CallCheck_t ALWAYS_DEVICE = [=](const Value&, const CallInst&) -> PtrOrigin { return PtrOrigin::DEVICE_HEAP; };
+CallCheck_t ALWAYS_MANAGED = [=](const Value&, const CallInst&) -> PtrOrigin { return PtrOrigin::MANAGED_MEM; };
+CallCheck_t ALWAYS_LOCAL = [=](const Value&, const CallInst&) -> PtrOrigin { return PtrOrigin::LOCAL; };
+CallCheck_t ALWAYS_UNKNOWN_HEAP = [=](const Value&, const CallInst&) -> PtrOrigin { return PtrOrigin::UNKNOWN_HEAP; };
+
+
+const StringMap<CallCheck_t> funcsOfInterest {
+    { "hipMalloc", ALWAYS_DEVICE },
+    {
+      "hipMemcpy", 
+      [&](const Value& V, const CallInst& C) -> PtrOrigin {
+        using namespace llvm;
+        const Value* _V = &V;
+        if (auto* TrTy = dyn_cast<ConstantInt>(C.getArgOperand(3)))
+          // get which 
+          switch (TrTy->getSExtValue()) {
+            case 1: // H->D
+              return (throughConstExpr(C.getArgOperand(0)) == _V) ? PtrOrigin::DEVICE_HEAP : PtrOrigin::LOCAL;
+            case 2: // D->H
+              return (throughConstExpr(C.getArgOperand(1)) == _V) ? PtrOrigin::DEVICE_HEAP : PtrOrigin::LOCAL;
+            case 3: // D->D
+              return PtrOrigin::DEVICE_HEAP;
+            case 0: // H->H
+              return PtrOrigin::UNKNOWN_HEAP;
+            default: // Unknown
+              errs() << "\n\n[scabbard.instr.host:ERROR] `hipMemcpy`'s `hipMemcpyKind` argument was not an expected value! "
+                        "("<< ScabbardHostPass::getLocStr(C) <<")\n\n";
+          }
+        errs() << "\n\n[scabbard.instr.host:ERROR] `hipMemcpy`'s `hipMemcpyKind` argument was not a constant value!"
+                  "("<< ScabbardHostPass::getLocStr(C) <<")\n\n";
+        LLVM_BUILTIN_UNREACHABLE;
+      }
+    },
+    { "hipHostRegister", ALWAYS_HOST },
+    { "hipHostMalloc", ALWAYS_HOST },
+    { "hipHostAlloc", ALWAYS_HOST },
+    { "hipMallocManaged", ALWAYS_MANAGED },
+    { "hipMemAdvise", BASE_CHECK },
+  };
+} //? namespace HostPtrOriginHelpers
+
+inline IScabbardInstrPass::PtrOrigin scabbardHostPass::getPtrOrigin(LoopInfo& LI, Value* Ptr, const Value** Object) const {
   // derived from
   // https://github.com/jdoerfert/llvm-project/blob/b416d0c996bc01aeb6708c715bfe5e53bcac998d/llvm/lib/Transforms/Instrumentation/GPUSan.cpp#L592
+  using namespace HostPtrOriginHelpers;
   SmallVector<const Value*> Objects;
   getUnderlyingObjects(Ptr, Objects, &LI);
   if (Object && Objects.size() == 1)
@@ -1211,23 +1241,23 @@ scabbardHostPass::PtrOrigin scabbardHostPass::getPtrOrigin(LoopInfo& LI, Value* 
 
 bool scabbardHostPass::instrumentInScabbardFunc(LoopInfo& LI, Instruction& I, Value* Ptr, 
                                                    const InstrData InstrContext, const Value* ExtraData) const {
-    Value* PtrOp = Ptr;
-    const Value *Object = nullptr;
-    PtrOrigin PO = getPtrOrigin(LI, PtrOp, &Object);
+  Value* PtrOp = Ptr;
+  const Value *Object = nullptr;
+  PtrOrigin PO = getPtrOrigin(LI, PtrOp, &Object);
 
-    if (PO > NO) // don't instrument if it is Known to be not in Unified Memory.
-      return false;
+  if (PO > NO) // don't instrument if it is Known to be not in Unified Memory.
+    return false;
 
-    if (PO == UNKNOWN_HEAP) // mark memory to be determined at runtime if it is in Unified Memory
-      PO |= _RUNTIME_CONDITIONAL;
+  if (PO == UNKNOWN_HEAP) // mark memory to be determined at runtime if it is in Unified Memory
+    PO |= _RUNTIME_CONDITIONAL;
 
-    auto [locID, is_inserted] = scabbard.Metadata.insert(&I);
+  auto [locID, is_inserted] = scabbard.Metadata.insert(&I);
 
-    if (not is_inserted && locID == 0ull)
-      errs() << "\n[scabbard.instr.device.AMD.I: ERROR] failed to insert instruction into the metadata system!\n";
+  if (not is_inserted && locID == 0ull)
+    errs() << "\n[scabbard.instr.device.AMD.I: ERROR] failed to insert instruction into the metadata system!\n";
 
-    if (ExtraData == nullptr)
-      CallInst::Create(
+  if (ExtraData == nullptr)
+    auto _ = CallInst::Create(
         scabbard.trace_append$mem,
         std::array<Value*, 4u>{
             ConstantInt::get(TraceDataTy, APInt(sizeof(InstrData)*8, InstrContext | PO)),
@@ -1237,8 +1267,8 @@ bool scabbardHostPass::instrumentInScabbardFunc(LoopInfo& LI, Instruction& I, Va
         "scabbard." + I.getName(), 
         /* insertBefore= */ &I
       );
-    else 
-      CallInst::Create(
+  else 
+    auto _ = CallInst::Create(
         scabbard.trace_append$alloc,
         std::array<Value*, 5u>{
             ConstantInt::get(TraceDataTy, APInt(sizeof(InstrData)*8, InstrContext | PO)),
@@ -1250,29 +1280,32 @@ bool scabbardHostPass::instrumentInScabbardFunc(LoopInfo& LI, Instruction& I, Va
         /* insertBefore= */ &I
       );
 
-    
-    return true;
-  }
+  
+  return true;
+}
+
+
+// << ================================== DEVICE HELPER CODE ==================================== >> 
 
 void ScabbardIDevicePass::registerRTL(Module& M) {
   scabbard.trace_append$mem = M.getOrInsertFunction(
       scabbard.trace_append$mem_name,
-      llvm::FunctionType::get(
-          llvm::Type::getVoidTy(M.getContext()),
-          llvm::ArrayRef<llvm::Type*>(std::vector<llvm::Type*>{
+      FunctionType::get(
+          VoidTy,
+          std::array<Type*,4ull>{
               PtrTy,
               TraceDataTy,
               PtrTy, //WARN: This constant 0u might need to be dynamicly decided for host modules
               LocDataTy
-            }),
+            },
           false
         )
     );
   scabbard.trace_append$alloc = M.getOrInsertFunction(
       scabbard.trace_append$alloc_name,
-      llvm::FunctionType::get(
-          llvm::Type::getVoidTy(M.getContext()),
-          llvm::ArrayRef<llvm::Type*>(std::vector<llvm::Type*>{
+      FunctionType::get(
+          VoidTy,
+          std::array<Type*,5ull>{
               PtrTy,
               TraceDataTy,
               PtrTy,
@@ -1680,7 +1713,7 @@ ConstantInt* MetadataHandler::getCalledFn(const StringRef& FnName, LLVMContext& 
 //   : /* IF NEEDED */
 // {}
 
-PreservedAnalyses llvm::ScabbardPass::run(Module& M, ModuleAnalysisManager& MAM) {
+PreservedAnalyses ScabbardPass::run(Module& M, ModuleAnalysisManager& MAM) {
   // llvm::errs() << "\n[scabbard.instr.run:DBG] running instrumentation pass\n"; //DEBUG
   const Triple target(M.getTargetTriple());
   bool changed = false;
@@ -1689,11 +1722,13 @@ PreservedAnalyses llvm::ScabbardPass::run(Module& M, ModuleAnalysisManager& MAM)
                                       // `isAMDGCN()`)
     changed = scabbardAMDDevicePass(M).run(M, MAM);
   } else if (not IS_LTO and not target.isAMDGPU()) { // most likely the host arch
-    changed = scabbardHostPass(M).run(M, MAM);
+    changed = scabbardHostPass(M, target).run(M, MAM);
   }
   if (changed)
-    return llvm::PreservedAnalyses::none(); // this will have to change after transforms are performed
-  return llvm::PreservedAnalyses::all();
+    return PreservedAnalyses::none(); // this will have to change after transforms are performed
+  return PreservedAnalyses::all();
 }
+
+} // namespace llvm
 
 #undef DEBUG_TYPE // "scabbard"

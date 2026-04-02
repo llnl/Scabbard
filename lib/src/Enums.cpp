@@ -24,7 +24,7 @@ namespace scabbard {
          << std::string((data & InstrData::UNKNOWN_HEAP) ? "UNKNOWN_HEAP, " : "")
          << std::string((data & InstrData::DEVICE_HEAP) ? "DEVICE_HEAP, " : "")
          << std::string((data & InstrData::HOST_HEAP) ? "HOST_HEAP, " : "")
-         << std::string((data & InstrData::ATOMIC_MEM) ? "ATOMIC_MEM, " : "")
+         << std::string((data & InstrData::ATOMIC) ? "ATOMIC, " : "")
          << std::string((data & InstrData::MANAGED_MEM) ? "MANAGED_MEM, " : "")
          << std::string((data & InstrData::READ) ? "READ, " : "")
          << std::string((data & InstrData::WRITE) ? "WRITE, " : "")

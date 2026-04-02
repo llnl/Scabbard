@@ -140,7 +140,7 @@ namespace scabbard {
       InstrData res = __getInstrData_val(*I.getPointerOperand(), phiBBVisited);
       if (res == InstrData::NEVER)
         return InstrData::NEVER;
-      res |= (I.isAtomic()) ? InstrData::ATOMIC_MEM : InstrData::NEVER;
+      res |= (I.isAtomic()) ? InstrData::ATOMIC : InstrData::NEVER;
       return (InstrData)(InstrData::ON_HOST | InstrData::WRITE | res);
 #     else
       return InstrData::NEVER;
@@ -157,7 +157,7 @@ namespace scabbard {
       InstrData res = __getInstrData_val(*I.getPointerOperand(), phiBBVisited);
       if (res == InstrData::NEVER)
         return InstrData::NEVER;
-      res |= (I.isAtomic()) ? InstrData::ATOMIC_MEM : InstrData::NEVER;
+      res |= (I.isAtomic()) ? InstrData::ATOMIC : InstrData::NEVER;
       return (InstrData)(InstrData::ON_HOST | InstrData::READ | res);
     }
 
@@ -207,7 +207,7 @@ namespace scabbard {
       auto res = __getInstrData_val(*I.getPointerOperand(), phiBBVisited);
       if (res == InstrData::NEVER)
         return InstrData::NEVER;
-      return (InstrData)(InstrData::ATOMIC_MEM | res);
+      return (InstrData)(InstrData::ATOMIC | res);
     }
 
     template<> 
