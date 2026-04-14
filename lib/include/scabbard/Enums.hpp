@@ -69,6 +69,8 @@ std::ostream& operator << (std::ostream& out, const instr::ModuleType& modTy) no
     _RUNTIME_CONDITIONAL  = 1<<0,  // Note: conditional is only valid for HOST/CPU
     // This is used to indicate that the trace data's optional data slot is used
     _OPT_USED             = 1<<1,
+    _OPT_DATA             = 1<<1,
+    _OPT_DATA_USED        = 1<<1,
     // This inst should always be instrumented (no chance of NOT being of interest in traces) 
     ALWAYS                = (1<<2)|(1<<3),
     // If this is on the GPU/Device it should be instrumented

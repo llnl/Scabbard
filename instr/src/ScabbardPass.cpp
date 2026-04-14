@@ -197,6 +197,7 @@ public:
   // }
 };
 
+
 // << ========================================================================================== >>
 // <<                                   HOST INSTR IMPL PASS                                     >>
 // << ========================================================================================== >>
@@ -209,11 +210,11 @@ public:
 ///        Finally it will modify global variable allocations to
 ///        contain shadow memory.
 ///
-class ScabbardHostPass : public IScabbardInstrPass, public IRHelper {
+class IScabbardHostPass : public IScabbardInstrPass, public IRHelper {
 
   bool run(Function& F, FunctionAnalysisManager& FAM) {
     // prevent instrumenting functions that should not be instrumented
-    if (not isInstramentableFn(F))
+    if (not isInstrumentableFn(F))
       return false;
     // TODO any prereq work...
     // run the actual implementation that might be modified in inherited classes
@@ -258,12 +259,19 @@ protected:
   ///        (if not in map assume it is in \c UNKNOWN_HEAP ).
   StringMap<PtrOrigin> GlobalUnifiedMemVar;
 
+  /// @brief Fn Type that describes a Function that will instrument a call of a GPU Driver API Fn, 
+  ///        and return true if any changes were made to the module durring the process.
+  using APIInstrumenterFn_t = std::function<bool(CallInst&,FunctionAnalysisManager&)>;
+
+  /// @brief List of {APIFnName, APIHandlerFn} that will proccess the relevant GPU Driver API calls.
+  SmallVector<std::pair<const StringRef,APIInstrumenterFn_t>,8ull> APIInstrumenters;
+
   /// @brief Returns \c false if the function should not be instrumented. \n
   ///        Used by the top level run method to determine if the pass will run on a fn. \n 
-  ///        Override in child classes if you want to change what is instramentable.
+  ///        Override in child classes if you want to change what is instrumentable.
   /// @param F the function to examine
   /// @return \c bool - if \param F should be instrumented or skipped.
-  virtual inline bool isInstramentableFn(const Function& F) const {
+  virtual inline bool isInstrumentableFn(const Function& F) const {
     return (not F.isDeclaration()                        // exclude any functions not defined
             && not F.getName().starts_with("llvm.")      // exclude intrinsics
             && not F.getName().starts_with("scabbard.")  // exclude name mangled scabbard rtl functions
@@ -292,7 +300,7 @@ protected:
   /// @param Object The object that is the origin of Ptr.
   /// @return \c scabbardIDevicePass::PtrOrigin - the memory space type of the
   ///         ptr provided.
-  inline PtrOrigin getPtrOrigin(LoopInfo& LI, Value* Ptr, const Value** Object) const;
+  virtual PtrOrigin getPtrOrigin(LoopInfo& LI, Value* Ptr, const Value** Object) const;
 
   /// @brief Simple single interface to insert the call to Scabbard's RTL func for any kind of instruction.
   ///        It will determine bassed off of where \c Ptr comes from if it should instrument before instrumenting.
@@ -312,7 +320,7 @@ protected:
   /// @param LI The loop info / analysis for the parent fn.
   /// @param Load the instruction in question.
   /// @return \c bool - if any changes were made to the instruction, parent fn, or module.
-  bool instrumentLoadInst(LoopInfo& LI, LoadInst& Load) {
+  virtual bool instrumentLoadInst(LoopInfo& LI, LoadInst& Load) {
     return instrumentInScabbardFunc(LI, Load, Load.getPointerOperand(), 
                                     InstrData::ON_CPU | InstrData::READ | (Load.isAtomic() ? InstrData::ATOMIC : InstrData::NO));
   }
@@ -323,7 +331,7 @@ protected:
   /// @param LI The loop info / analysis for the parent fn.
   /// @param Store the instruction in question.
   /// @return \c bool - if any changes were made to the instruction, parent fn, or module.
-  bool instrumentStoreInst(LoopInfo& LI, StoreInst& Store) {
+  virtual bool instrumentStoreInst(LoopInfo& LI, StoreInst& Store) {
     return instrumentInScabbardFunc(LI, Store, Store.getPointerOperand(),
                                     InstrData::ON_CPU | InstrData::WRITE | (Store.isAtomic() ? InstrData::ATOMIC : InstrData::NO));
   }
@@ -334,7 +342,7 @@ protected:
   /// @param LI The loop info / analysis for the parent fn.
   /// @param RMW the instruction in question.
   /// @return \c bool - if any changes were made to the instruction, parent fn, or module.
-  bool instrumentAtomicRMWInst(LoopInfo& LI, AtomicRMWInst& RMW) {
+  virtual bool instrumentAtomicRMWInst(LoopInfo& LI, AtomicRMWInst& RMW) {
     return instrumentInScabbardFunc(LI, RMW, RMW.getPointerOperand(), 
                                     InstrData::ON_CPU | InstrData::READ | InstrData::WRITE | InstrData::ATOMIC);
   }
@@ -345,7 +353,7 @@ protected:
   /// @param LI The loop info / analysis for the parent fn.
   /// @param CXC the instruction in question.
   /// @return \c bool - if any changes were made to the instruction, parent fn, or module.
-  bool instrumentCmpXChgInst(LoopInfo& LI, AtomicCmpXchgInst& CXC) {
+  virtual bool instrumentCmpXChgInst(LoopInfo& LI, AtomicCmpXchgInst& CXC) {
     return instrumentInScabbardFunc(LI, CXC, CXC.getPointerOperand(),
                                     InstrData::ON_CPU | InstrData::WRITE | InstrData::ATOMIC);
   }
@@ -364,23 +372,37 @@ protected:
   /// @param LI The loop info / analysis for the parent fn.
   /// @param Call the instruction in question.
   /// @return \c bool - if any changes were made to the instruction, parent fn, or module.
-  bool instrumentCallInst(LoopInfo& LI, CallInst& Call) { return false; } // not used, replaced with a definition based approach
+  virtual bool instrumentCallInst(LoopInfo& LI, CallInst& Call) { return false; } // not used, replaced with a definition based approach
 
   /// @brief Look at all the calls to GPU Driver API functions and handle them as needed.
-  /// @return \c bool - if the module was modified at all durring this process.
-  inline bool handleAPICalls() {
-    // for (auto [Do, FnName] : )
+  /// @param M The module to search in 
+  /// @param FAM the analysis manager to pass into the APIInstrumenter Fn. 
+  ///            (usually actually a \c llvm::FunctionAnalysisManagerModuleProxy  )
+  /// @return \c bool - if any changes were made to the IR.
+  virtual bool handleAPICalls(Module& M, FunctionAnalysisManager& FAM) {
+    bool changed = false;
+    for (auto [APIName, InstrumenterFn] : APIInstrumenters)
+      if (Function* APIFn = M.getFunction(APIName))
+        for (auto user : APIFn->users())
+          if (auto _CI = dyn_cast<CallInst>(user))
+            if (APIFn == _CI->getCalledFunction())
+              changed |= InstrumenterFn(*_CI, FAM);
   }
 
 
 public:
 
-  ScabbardHostPass() = delete;
-  ScabbardHostPass(Module& M, const Triple& Triple_) : 
+  IScabbardHostPass() = delete;
+  IScabbardHostPass(Module& M, const Triple& Triple_) : 
     IRHelper(M), 
     _Triple(Triple_) 
     {}
     
+  /// @brief Mostly just a Fn to keep programers from using the base host version of the pass rather
+  ///        than the impl meant for the specific GPU driver API. 
+  ///        ( \em i.e. hip, cuda, openmp, sycl, opencl, \em etc. )
+  /// @return \c llvm::StringRef - plain text name of the API being used.
+  virtual StringRef getGPUDriverAPIName() = 0;
 
   /// @brief Instrument a host module for scabbard.
   /// @param M the module who's contents will be instrumented.
@@ -400,12 +422,36 @@ public:
 
     for (Function& F: M.functions())
       changed |= run(F, FAM);
+
+    // instrument the GPU driver API calls as appropriate for the specific API suite.
+    changed |= handleAPICalls(M, FAM);
     
     if (changed) //NOTE: this method of metadata will need to be altered to work with instrumenting durring compilation instead of LTO.
       GlobalVariable& MetadataStringVar = scabbard.Metadata.outputMetadata(M, 0ull);
     
     return changed;
   }
+
+};
+
+
+/// @brief Scabbard instrumentation pass implementation for AMD's HIP API.
+class ScabbardHostPassHip : public IScabbardHostPass {
+  /// @brief Load up the API Instrumenters into \c IScabbardHostPass::APIInstrumenters
+  void registerAPIInstrumenters();
+protected:
+  CallInst* CreateRTLCall(const CallInst& CI, scabbard::InstrData data, 
+                          const Value* Ptr, bool InsertBefore=true) const;
+  CallInst* CreateRTLCallEx(const CallInst& CI, scabbard::InstrData data, const Value* Ptr, 
+                            const Value* Extra, bool InsertBefore=true) const;
+  bool APIInstr_Alloc(CallInst&, FunctionAnalysisManager& FAM, InstrData Data) const;
+public:
+  ScabbardHostPassHip() = delete;
+  ScabbardHostPassHip(Module& M_, const Triple& T_) :
+    IScabbardHostPass(M_, T_)
+  { registerAPIInstrumenters(); }
+
+  StringRef getGPUDriverAPIName() final { return StringRef("amdhip"); }
 
 };
 
@@ -504,7 +550,7 @@ protected:
   /// @brief Check to see if this function should be instrumented.
   /// @param F the \c llvm::Function to check
   /// @return \c bool - true if it's appropriate to instrument the fn.
-  virtual bool isInstramentableFn(const Function& F) const final {
+  virtual bool isInstrumentableFn(const Function& F) const final {
     return (not F.isDeclaration()                        // exclude any functions not defined
             && not F.getName().starts_with("llvm.")      // exclude intrinsics
             && not F.getName().starts_with("scabbard.")     // exclude name mangled scabbard rtl functions
@@ -695,7 +741,7 @@ protected:
   /// @brief Instrument a device function Implementation.
   ///         ( \b NOTE: always call \c run instead of \c runImpl so that
   ///           prerequisite work can be done before you do your instrumentation,
-  ///           in this case the \c isInstramentableFn check.)
+  ///           in this case the \c isInstrumentableFn check.)
   /// @param F the function who's body will be instrumented
   /// @param FAM the analysis manager for above function
   /// @return \c bool - if the Function was changed at all
@@ -707,7 +753,7 @@ protected:
   /// @return \c bool - if the Function was changed at all
   virtual bool run(Function& F, FunctionAnalysisManager& FAM) final {
     // prevent instrumenting functions that should not be instrumented
-    if (not isInstramentableFn(F))
+    if (not isInstrumentableFn(F))
       return;
     // TODO any prereq work...
     // run the actual implementation that might be modified in inherited classes
@@ -902,7 +948,7 @@ inline Twine IScabbardInstrPass::getLocStr(const Instruction& I) {
 
 // << ================================= HOST PASS DEFINITIONS ================================== >> 
 
-void ScabbardHostPass::registerRTL(Module& M) {
+void IScabbardHostPass::registerRTL(Module& M) {
   if (M.getFunction("main") != nullptr)
     scabbard.scabbard_init = M.getOrInsertFunction(
         scabbard.scabbard_init_name,
@@ -1016,7 +1062,7 @@ inline void scabbardHostPass::registerGlobalVarsInUnifiedMemory(const Module& M)
   }
 } 
   
-bool ScabbardHostPass::runImpl(Function& F, FunctionAnalysisManager& FAM) {
+bool IScabbardHostPass::runImpl(Function& F, FunctionAnalysisManager& FAM) {
   bool changed = false;
   LoopInfo& LI = FAM.getResult<LoopAnalysis>(F);
   // SmallVector<std::pair<AllocaInst*, Value*>> Allocas; // used for fakPtr/ShadowMem impl (not cur impl)
@@ -1153,10 +1199,10 @@ const StringMap<CallCheck_t> funcsOfInterest {
               return PtrOrigin::UNKNOWN_HEAP;
             default: // Unknown
               errs() << "\n\n[scabbard.instr.host:ERROR] `hipMemcpy`'s `hipMemcpyKind` argument was not an expected value! "
-                        "("<< ScabbardHostPass::getLocStr(C) <<")\n\n";
+                        "("<< IScabbardHostPass::getLocStr(C) <<")\n\n";
           }
         errs() << "\n\n[scabbard.instr.host:ERROR] `hipMemcpy`'s `hipMemcpyKind` argument was not a constant value!"
-                  "("<< ScabbardHostPass::getLocStr(C) <<")\n\n";
+                  "("<< IScabbardHostPass::getLocStr(C) <<")\n\n";
         LLVM_BUILTIN_UNREACHABLE;
       }
     },
@@ -1254,12 +1300,12 @@ bool scabbardHostPass::instrumentInScabbardFunc(LoopInfo& LI, Instruction& I, Va
   auto [locID, is_inserted] = scabbard.Metadata.insert(&I);
 
   if (not is_inserted && locID == 0ull)
-    errs() << "\n[scabbard.instr.device.AMD.I: ERROR] failed to insert instruction into the metadata system!\n";
+    errs() << "\n[scabbard.instr.host.metadata: ERROR] failed to insert instruction into the metadata system!\n";
 
   if (ExtraData == nullptr)
     auto _ = CallInst::Create(
         scabbard.trace_append$mem,
-        std::array<Value*, 4u>{
+        std::array<Value*, 3ull>{
             ConstantInt::get(TraceDataTy, APInt(sizeof(InstrData)*8, InstrContext | PO)),
             Ptr,
             ConstantInt::get(LocDataTy, APInt(sizeof(size_t)*8, locID))
@@ -1270,7 +1316,7 @@ bool scabbardHostPass::instrumentInScabbardFunc(LoopInfo& LI, Instruction& I, Va
   else 
     auto _ = CallInst::Create(
         scabbard.trace_append$alloc,
-        std::array<Value*, 5u>{
+        std::array<Value*, 4ull>{
             ConstantInt::get(TraceDataTy, APInt(sizeof(InstrData)*8, InstrContext | PO)),
             Ptr,
             ConstantInt::get(LocDataTy, APInt(sizeof(size_t)*8, locID)),
@@ -1282,6 +1328,154 @@ bool scabbardHostPass::instrumentInScabbardFunc(LoopInfo& LI, Instruction& I, Va
 
   
   return true;
+}
+
+CallInst* ScabbardHostPassHip::CreateRTLCall(const CallInst& CI, scabbard::InstrData Data, 
+                                            const Value* Ptr, bool InsertBefore) const {
+  auto [locID, is_inserted] = scabbard.Metadata.insert(CI);
+  if (not is_inserted && locID == 0ull)
+    errs() << "\n[scabbard.instr.host.metadata.amdhip: ERROR] failed to insert instruction into the metadata system!\n";
+  auto ci = CallInst::Create(
+        scabbard.trace_append$mem,
+        std::array<Value*, 3ull>{
+            ConstantInt::get(TraceDataTy, APInt(sizeof(InstrData)*8, 
+                              InstrData::ON_HOST | Data)),
+            Ptr,
+            ConstantInt::get(LocDataTy, APInt(sizeof(size_t)*8, locID))
+          },
+        Twine("scabbard.") + (InsertBefore ? "pre." : "post.") + CI.getName()
+      );
+  if (InsertBefore)
+    ci->insertBefore(&CI);
+  else
+    ci->insertAfter(&CI);
+  ci->setDebugLoc(CI.getDebugLoc());
+  return ci;
+}
+
+CallInst* ScabbardHostPassHip::CreateRTLCallEx(const CallInst& CI, scabbard::InstrData Data, const Value* Ptr, 
+                                              const Value* Extra, bool InsertBefore) const {
+  auto [locID, is_inserted] = scabbard.Metadata.insert(CI);
+  if (not is_inserted && locID == 0ull) {
+    errs() << "\n[scabbard.instr.host.metadata.amdhip: ERROR] failed to insert instruction into the metadata system!\n";
+    return nullptr;
+  }
+  auto ci = CallInst::Create(
+        scabbard.trace_append$alloc,
+        std::array<Value*, 4ull>{
+            ConstantInt::get(TraceDataTy, APInt(sizeof(InstrData)*8, 
+                              InstrData::ON_HOST | Data | InstrData::_OPT_USED)),
+            Ptr,
+            ConstantInt::get(LocDataTy, APInt(sizeof(size_t)*8, locID))
+          },
+        Twine("scabbard.") + (InsertBefore ? "pre." : "post.") + CI.getName()
+      );
+  if (ci == nullptr) return nullptr;
+  if (InsertBefore)
+    ci->insertBefore(&CI);
+  else
+    ci->insertAfter(&CI);
+  ci->setDebugLoc(CI.getDebugLoc());
+  return ci;
+}
+
+
+/// @brief Get the value that contains the mem address of the pointer pointer
+///        (used to get the mem address of the ptr value of hipMalloc)
+///       Not safe to use outside of specific use
+const Value* get_ptr_from_ptr(const Value* V) {
+  switch (V->getValueID()) {
+  case Instruction::Alloca + Value::InstructionVal:
+    return V;
+  case Value::ArgumentVal:
+    return (V->getType()->isPointerTy()) ? V : nullptr;
+  case Value::ConstantExpr: {
+      const ConstExpr* CE = (ConstExpr*) V;
+      switch (CE->getOpcode()) {
+      case Instruction::BitCast:
+        return get_ptr_from_ptr(CE->getOperand(0ull));
+      default:
+        return nullptr;
+      }
+    }
+  case Instruction::BitCast + Value::InstructionVal: {
+      const BitCastInst* bci = (BitCastInst*) V;
+      return get_ptr_from_ptr(bci->getOperand(0ull));
+    }
+  default:
+    return nullptr;
+  }
+  errs() << "\n[scabbard.host.amdhip:ERR] unreachable section `get_ptr_from_ptr()`\n";
+}
+
+bool ScabbardHostPassHip::APIInstr_Alloc(CallInst&, FunctionAnalysisManager& FAM, InstrData Data) const {
+  if (auto ptr = get_ptr_from_ptr(_CI->getArgOperand(0ull))) {
+    return CreateRTLCallEx(*_CI, InstrData::ON_HOST | Data,
+                            ptr, _CI->getArgOperand(1ull), false) ? true : false;
+  }
+  errs() << "\n[scabbard.instr.host.amdhip:ERR] could not backtrack `hipMalloc` ptr parameter (`" 
+          << _CI->getArgOperand(0ull) << "`)\n";  
+  return false;
+}
+
+void ScabbardHostPassHip::registerAPIInstrumenters() {
+  APIInstrumenters = SmallVector<std::pair<const StringRef,APIInstrumenter_t>,24ull>{
+    {
+      "hipStreamSynchronize", 
+      [this](auto _CI, auto FAM) -> bool { 
+        return CreateRTLCall(*_CI, InstrData::SYNC_EVENT, 
+                             _CI->getArgOperand(0ull), false) ? true : false;
+      }
+    },
+    {
+      "hipDeviceSynchronize", 
+      [this](auto _CI, auto FAM) -> bool { 
+        return CreateRTLCall(*_CI, InstrData::SYNC_EVENT,
+                             ConstantPointerNull::get(PtrTy), false) ? true : false;
+      }
+    },
+    {
+      "hipMalloc", 
+      [this](auto _CI, auto FAM) -> bool { return APIInstr_Alloc(*_CI,FAM,ALLOCATE|DEVICE_HEAP); }
+    },
+    {
+      "hipExtMallocWithFlags", 
+      [this](auto _CI, auto FAM) -> bool { return APIInstr_Alloc(*_CI,FAM,ALLOCATE|DEVICE_HEAP); }
+    },
+    {
+      "hipHostAlloc", 
+      [this](auto _CI, auto FAM) -> bool { return APIInstr_Alloc(*_CI,FAM,ALLOCATE|HOST_HEAP); }
+    },
+    {
+      "hipHostMalloc", 
+      [this](auto _CI, auto FAM) -> bool { return APIInstr_Alloc(*_CI,FAM,ALLOCATE|HOST_HEAP); }
+    },
+    {
+      "hipMallocManaged", 
+      [this](auto _CI, auto FAM) -> bool { return APIInstr_Alloc(*_CI,FAM,ALLOCATE|MANAGED_MEM); }
+    },
+    {
+      "hipHostRegister", 
+      [this](auto _CI, auto FAM) -> bool {
+        return CreateRTLCallEx(*_CI, InstrData::ALLOCATE | InstrData::HOST_HEAP,
+                              _CI->getArgOperand(0ull), _CI->getArgOperand(1ull), false) ? true : false;
+      }
+    },
+    {
+      "hipFree",
+      [this](auto _CI, auto FAM) -> bool {
+        return CreateRTLCall(*_CI, InstrData::FREE_EVENT | InstrData::UNKNOWN_HEAP,
+                              _CI->getArgOperand(0ull), true) ? true : false;
+      }
+    },
+    {
+      "hipFreeHost",
+      [this](auto _CI, auto FAM) -> bool {
+        return CreateRTLCall(*_CI, InstrData::FREE_EVENT | InstrData::HOST_HEAP,
+                              _CI->getArgOperand(0ull), true) ? true : false;
+      }
+    },
+  };
 }
 
 
@@ -1416,7 +1610,7 @@ inline bool scabbardIDevicePass::expandFnParams(Module& M) const {
   bool changed = false;
   SmallVector<std::pair<Function*, Function*>, 8ul> to_replace;
   for (auto& OldFn : M.functions()) {
-    if (not isInstramentableFn(OldFn)) // skip fn's that shouldn't be instrumented
+    if (not isInstrumentableFn(OldFn)) // skip fn's that shouldn't be instrumented
       continue;
     std::string old_name = OldFn.getName().str();
     OldFn.setName(old_name + "__old__scabbard_instr_replaced__old__");
