@@ -56,7 +56,7 @@ std::ostream& operator << (std::ostream& out, const instr::ModuleType& modTy) no
     *        |||L Ptr is in a MANAGED MEM heap
     *        ||L Ptr is in DEVICE HEAP memory
     *        |L Ptr is in (registered) HOST HEAP memory
-    *        L <UNUSED>
+    *        L Operation performed ASYNC
     *   \endcode
     */
   enum InstrData : std::uint16_t {
@@ -107,6 +107,9 @@ std::ostream& operator << (std::ostream& out, const instr::ModuleType& modTy) no
     DEVICE_HEAP           = 1<<13,
     //
     HOST_HEAP             = 1<<14,
+    //
+    ASYNC_OPERATION       = 1<<15,
+    ASYNC                 = 1<<15
   };
 
   inline InstrData operator | (InstrData l, InstrData r) 

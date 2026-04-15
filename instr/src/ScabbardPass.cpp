@@ -440,11 +440,14 @@ class ScabbardHostPassHip : public IScabbardHostPass {
   /// @brief Load up the API Instrumenters into \c IScabbardHostPass::APIInstrumenters
   void registerAPIInstrumenters();
 protected:
-  CallInst* CreateRTLCall(const CallInst& CI, scabbard::InstrData data, 
-                          const Value* Ptr, bool InsertBefore=true) const;
-  CallInst* CreateRTLCallEx(const CallInst& CI, scabbard::InstrData data, const Value* Ptr, 
-                            const Value* Extra, bool InsertBefore=true) const;
-  bool APIInstr_Alloc(CallInst&, FunctionAnalysisManager& FAM, InstrData Data) const;
+  CallInst* CreateRTLCall(const CallInst& CI, const InstrData data, 
+                          const Value* Ptr, const bool InsertBefore=true) const;
+  CallInst* CreateRTLCallEx(const CallInst& CI, const InstrData data, const Value* Ptr, 
+                            const Value* Extra, const bool InsertBefore=true) const;
+  bool APIInstr_Alloc(const CallInst& CI, const InstrData Data) const;
+  bool APIInstr_Memcpy(CallInst& CI, FunctionAnalysisManager& FAM, const uint CopyDir,
+                      const Value* Stream=nullptr, const bool IsAsync) const;
+  bool APIInstr_Unsupported(const CallInst& CI, const StringRef APIName) const;
 public:
   ScabbardHostPassHip() = delete;
   ScabbardHostPassHip(Module& M_, const Triple& T_) :
@@ -1330,8 +1333,8 @@ bool scabbardHostPass::instrumentInScabbardFunc(LoopInfo& LI, Instruction& I, Va
   return true;
 }
 
-CallInst* ScabbardHostPassHip::CreateRTLCall(const CallInst& CI, scabbard::InstrData Data, 
-                                            const Value* Ptr, bool InsertBefore) const {
+CallInst* ScabbardHostPassHip::CreateRTLCall(const CallInst& CI, const InstrData Data, 
+                                            const Value* Ptr, const bool InsertBefore) const {
   auto [locID, is_inserted] = scabbard.Metadata.insert(CI);
   if (not is_inserted && locID == 0ull)
     errs() << "\n[scabbard.instr.host.metadata.amdhip: ERROR] failed to insert instruction into the metadata system!\n";
@@ -1353,8 +1356,8 @@ CallInst* ScabbardHostPassHip::CreateRTLCall(const CallInst& CI, scabbard::Instr
   return ci;
 }
 
-CallInst* ScabbardHostPassHip::CreateRTLCallEx(const CallInst& CI, scabbard::InstrData Data, const Value* Ptr, 
-                                              const Value* Extra, bool InsertBefore) const {
+CallInst* ScabbardHostPassHip::CreateRTLCallEx(const CallInst& CI, const InstrData Data, const Value* Ptr, 
+                                              const Value* Extra, const bool InsertBefore) const {
   auto [locID, is_inserted] = scabbard.Metadata.insert(CI);
   if (not is_inserted && locID == 0ull) {
     errs() << "\n[scabbard.instr.host.metadata.amdhip: ERROR] failed to insert instruction into the metadata system!\n";
@@ -1408,72 +1411,176 @@ const Value* get_ptr_from_ptr(const Value* V) {
   errs() << "\n[scabbard.host.amdhip:ERR] unreachable section `get_ptr_from_ptr()`\n";
 }
 
-bool ScabbardHostPassHip::APIInstr_Alloc(CallInst&, FunctionAnalysisManager& FAM, InstrData Data) const {
+bool ScabbardHostPassHip::APIInstr_Alloc(const CallInst& CI, const InstrData Data) const {
   if (auto ptr = get_ptr_from_ptr(_CI->getArgOperand(0ull))) {
     return CreateRTLCallEx(*_CI, InstrData::ON_HOST | Data,
                             ptr, _CI->getArgOperand(1ull), false) ? true : false;
   }
-  errs() << "\n[scabbard.instr.host.amdhip:ERR] could not backtrack `hipMalloc` ptr parameter (`" 
-          << _CI->getArgOperand(0ull) << "`)\n";  
+  errs() << "\n[scabbard.instr.host.amdhip:ERR] could not backtrack `hipMalloc` ptr parameter (" 
+          << IScabbardHostPass::getLocStr(_CI->getArgOperand(0ull)) << ")\n";  
   return false;
 }
+
+bool ScabbardHostPassHip::APIInstr_Memcpy(CallInst& CI, FunctionAnalysisManager& FAM, const uint CopyDir, 
+                                          const Value* Stream, bool IsAsync) const {
+  CallInst* SyncCall = nullptr;
+  if (not IsAsync) // register memcpy as a sync event if it is not an Async call (inserted before )
+    SyncCall = CreateRTLCall(CI, InstrData::SYNC_EVENT, 
+                             ((Stream) ? Stream : ConstantPointerNull::get(PtrTy)), false) ? true : false;
+  Value* ReadOrigin = nullptr, * WriteOrigin = nullptr;
+  LoopInfo& LI = FAM.getResult<LoopAnalysis>(CI.getFunction());
+  InstrData ReadData = GetPtrOrigin(LI, CI.getArgOperand(1ull), &ReadOrigin);
+  InstrData WriteData = GetPtrOrigin(LI, CI.getArgOperand(0ull), &WriteOrigin);
+  // switch (CopyDir) { // not supper relevant as it could only help hint at heap type,
+  //   case 0: // H->H  //  but managed memory can pretend to be either H or D so it is not helpful
+  //   case 1: // H->D
+  //   case 2: // D->H
+  //   case 3: // D->D
+  //   case 4: // default (driver decides what is happening)
+  //   case 1024: // D->D no CU
+  //   default: // Unknown value
+  //     break;
+  // }
+  CallInst* ReadCall = nullptr, * WriteCall = nullptr;
+  if (ReadData != InstrData::NO)
+    ReadCall  = CreateRTLCallEx(((SyncCall) ? SyncCall : CI), 
+                                 ReadData | READ_EVENT | (IsAsync) ? InstrData::Async : InstrData::NONE,
+                                 CI.getArgOperand(1ull), CI.getArgOperand(2ull), false);
+  if (WriteData != InstrData::NO)
+    WriteCall = CreateRTLCallEx(((ReadCall) ? ReadCall : ((SyncCall) ? SyncCall : CI,)), 
+                                ReadData | WRITE_EVENT | (IsAsync) ? InstrData::Async : InstrData::NONE,
+                                CI.getArgOperand(0ull), CI.getArgOperand(2ull), false);
+  return SyncCall || ReadCall || WriteCall;
+}
+
+
+bool ScabbardHostPassHip::APIInstr_Unsupported(const CallInst& CI, const StringRef APIName) const {
+  errs() << "\n[scabbard.instr.host.amdhip:WARN] WARNING: Scabbard does not support the following HIP API: `" 
+         << APIName << "`"
+            "\n[scabbard.instr.host.amdhip:WARN]          -> Scabbard's Results may be invalid! "
+            "\n[scabbard.instr.host.amdhip:WARN]  SrcLoc: "
+         << IScabbardHostPass::getLocStr(CI) << "\n";
+  return false;
+}
+
+
 
 void ScabbardHostPassHip::registerAPIInstrumenters() {
   APIInstrumenters = SmallVector<std::pair<const StringRef,APIInstrumenter_t>,24ull>{
     {
       "hipStreamSynchronize", 
-      [this](auto _CI, auto FAM) -> bool { 
-        return CreateRTLCall(*_CI, InstrData::SYNC_EVENT, 
-                             _CI->getArgOperand(0ull), false) ? true : false;
+      [this](auto CI, auto FAM) -> bool { 
+        return CreateRTLCall(*CI, InstrData::SYNC_EVENT, 
+                             CI->getArgOperand(0ull), false) ? true : false;
       }
     },
     {
       "hipDeviceSynchronize", 
-      [this](auto _CI, auto FAM) -> bool { 
-        return CreateRTLCall(*_CI, InstrData::SYNC_EVENT,
+      [this](auto CI, auto FAM) -> bool { 
+        return CreateRTLCall(*CI, InstrData::SYNC_EVENT,
                              ConstantPointerNull::get(PtrTy), false) ? true : false;
       }
     },
     {
       "hipMalloc", 
-      [this](auto _CI, auto FAM) -> bool { return APIInstr_Alloc(*_CI,FAM,ALLOCATE|DEVICE_HEAP); }
+      [this](auto CI, auto FAM) -> bool { return APIInstr_Alloc(*CI,ALLOCATE|DEVICE_HEAP); }
     },
     {
       "hipExtMallocWithFlags", 
-      [this](auto _CI, auto FAM) -> bool { return APIInstr_Alloc(*_CI,FAM,ALLOCATE|DEVICE_HEAP); }
+      [this](auto CI, auto FAM) -> bool { return APIInstr_Alloc(*CI,ALLOCATE|DEVICE_HEAP); }
     },
     {
       "hipHostAlloc", 
-      [this](auto _CI, auto FAM) -> bool { return APIInstr_Alloc(*_CI,FAM,ALLOCATE|HOST_HEAP); }
+      [this](auto CI, auto FAM) -> bool { return APIInstr_Alloc(*CI,ALLOCATE|HOST_HEAP); }
     },
     {
       "hipHostMalloc", 
-      [this](auto _CI, auto FAM) -> bool { return APIInstr_Alloc(*_CI,FAM,ALLOCATE|HOST_HEAP); }
+      [this](auto CI, auto FAM) -> bool { return APIInstr_Alloc(*CI,ALLOCATE|HOST_HEAP); }
     },
     {
       "hipMallocManaged", 
-      [this](auto _CI, auto FAM) -> bool { return APIInstr_Alloc(*_CI,FAM,ALLOCATE|MANAGED_MEM); }
+      [this](auto CI, auto FAM) -> bool { return APIInstr_Alloc(*CI,ALLOCATE|MANAGED_MEM); }
     },
     {
       "hipHostRegister", 
-      [this](auto _CI, auto FAM) -> bool {
-        return CreateRTLCallEx(*_CI, InstrData::ALLOCATE | InstrData::HOST_HEAP,
-                              _CI->getArgOperand(0ull), _CI->getArgOperand(1ull), false) ? true : false;
+      [this](auto CI, auto FAM) -> bool {
+        return CreateRTLCallEx(*CI, InstrData::ALLOCATE | InstrData::HOST_HEAP,
+                              CI->getArgOperand(0ull), CI->getArgOperand(1ull), false) ? true : false;
       }
     },
     {
       "hipFree",
-      [this](auto _CI, auto FAM) -> bool {
-        return CreateRTLCall(*_CI, InstrData::FREE_EVENT | InstrData::UNKNOWN_HEAP,
-                              _CI->getArgOperand(0ull), true) ? true : false;
+      [this](auto CI, auto FAM) -> bool {
+        return CreateRTLCall(*CI, InstrData::FREE_EVENT | InstrData::UNKNOWN_HEAP,
+                              CI->getArgOperand(0ull), true) ? true : false;
       }
     },
     {
       "hipFreeHost",
-      [this](auto _CI, auto FAM) -> bool {
-        return CreateRTLCall(*_CI, InstrData::FREE_EVENT | InstrData::HOST_HEAP,
-                              _CI->getArgOperand(0ull), true) ? true : false;
+      [this](auto CI, auto FAM) -> bool {
+        return CreateRTLCall(*CI, InstrData::FREE_EVENT | InstrData::HOST_HEAP,
+                              CI->getArgOperand(0ull), true) ? true : false;
       }
+    },
+    {
+      "hipMemcpy",
+      [this](auto CI, auto FAM) -> bool {
+        if (auto* CpyDir = dyn_cast<ConstantInt>(CI->getArgOperand(3ull))) {
+          return APIInstr_Memcpy(*CI, FAM, CpyDir->getSExtValue()); 
+        }
+        errs() << "\n[scabbard.instr.host.amdhip:WARN] hipMemcpyKind was not a const value"
+                  " --unsupported by scabbard-- ("
+               << IScabbardHostPass::getLocStr(CI->getArgOperand(3ull)) << ")\n";
+        return false;
+      }
+    },
+    {
+      "hipMemcpyWithStream",
+      [this](auto CI, auto FAM) -> bool {
+        if (auto* CpyDir = dyn_cast<ConstantInt>(CI->getArgOperand(3ull))) {
+          return APIInstr_Memcpy(*CI, FAM, CpyDir->getSExtValue(), CI->getArgOperand(4ull)); 
+        }
+        errs() << "\n[scabbard.instr.host.amdhip:WARN] hipMemcpyKind was not a const value"
+                  " --unsupported by scabbard-- ("
+               << IScabbardHostPass::getLocStr(CI->getArgOperand(3ull)) << ")\n";
+        return false;
+      }
+    },
+    {
+      "hipMemcpyHtoD",
+      [this](auto CI, auto FAM) -> bool { return APIInstr_Memcpy(*CI,FAM,1u); }
+    },
+    {
+      "hipMemcpyDtoH",
+      [this](auto CI, auto FAM) -> bool { return APIInstr_Memcpy(*CI,FAM,2u); }
+    },
+    {
+      "hipMemcpyDtoD",
+      [this](auto CI, auto FAM) -> bool { return APIInstr_Memcpy(*CI,FAM,3u); }
+    },
+    {
+      "hipMemcpyAsync",
+      [this](auto CI, auto FAM) -> bool {
+        if (auto* CpyDir = dyn_cast<ConstantInt>(CI->getArgOperand(3ull))) {
+          return APIInstr_Memcpy(*CI,FAM, CpyDir->getSExtValue(), CI->getArgOperand(4ull), true);
+        }
+        errs() << "\n[scabbard.instr.host.amdhip:WARN] hipMemcpyKind was not a const value"
+                  " --unsupported by scabbard-- ("
+               << IScabbardHostPass::getLocStr(CI->getArgOperand(3ull)) << ")\n";
+        return false;
+      }
+    },
+    {
+      "hipMemcpyHtoDAsync",
+      [this](auto CI, auto FAM) -> bool { return APIInstr_Memcpy(*CI,FAM,1u,CI->getArgOperand(3ull),true); }
+    },
+    {
+      "hipMemcpyDtoHAsync",
+      [this](auto CI, auto FAM) -> bool { return APIInstr_Memcpy(*CI,FAM,2u,CI->getArgOperand(3ull),true); }
+    },
+    {
+      "hipMemcpyDtoDAsync",
+      [this](auto CI, auto FAM) -> bool { return APIInstr_Memcpy(*CI,FAM,3u,CI->getArgOperand(3ull),true); }
     },
   };
 }
