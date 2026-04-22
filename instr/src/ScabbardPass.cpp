@@ -181,6 +181,10 @@ protected:
   IntegerType* const LocDataTy = null;
   /// @brief a handy pointer to the oft used IR Integer Type for the RTL's exta info (size_t/uint64_t) type.
   IntegerType* const ExtraDataTy = null;
+  /// @brief a handy pointer to the oft used IR Integer Type unsigned 64-bit.
+  IntegerType* const u64Ty = null;
+  /// @brief a handy pointer to the oft used IR Integer Type unsigned 32-bit.
+  IntegerType* const u32Ty = null;
 public:
   IRHelper() = delete;
   IRHelper(Module& M) :
@@ -189,7 +193,9 @@ public:
     PtrTy(PointerType::get(M.getContext(), 0ull)),
     TraceDataTy(IntegerType::get(M.getContext(), sizeof(InstrData)*8)),
     LocDataTy(IntegerType::get(M.getContext(), 64u)),
-    ExtraDataTy(IntegerType::get(M.getContext(), 64u))
+    ExtraDataTy(IntegerType::get(M.getContext(), 64u)),
+    u64Ty(IntegerType::get(M.getContext(), 64u)),
+    u32Ty(IntegerType::get(M.getContext(), 64u))
     {}
   
   // ConstantInt* getConstInt(const IntegerType* Ty, uint64_t val) const {
@@ -447,6 +453,8 @@ protected:
   bool APIInstr_Memcpy(CallInst& CI, FunctionAnalysisManager& FAM, const uint CopyDir,
                       const Value* Stream=nullptr, const bool IsAsync) const;
   bool APIInstr_Unsupported(const CallInst& CI, const StringRef APIName) const;
+  bool APIInstr_LaunchKernel(CallInst& CI) const;
+  GetElementPtrInst* expand_param_args_alloc(AllocaInst& alloc) const;
 public:
   ScabbardHostPassHip() = delete;
   ScabbardHostPassHip(Module& M_, const Triple& T_) :
@@ -813,7 +821,7 @@ public:
 
     // if it appears as though instrumentation occurred output the metadata object for the module
     if (changed)
-      scabbard.Metadata.outputMetadata(M);
+      ScabbardRTL.Metadata.outputMetadata(M);
 
     return changed;
   }
@@ -1484,6 +1492,103 @@ bool ScabbardHostPassHip::APIInstr_Memcpy(CallInst& CI, FunctionAnalysisManager&
   return SyncCall || ReadCall || WriteCall;
 }
 
+GetElementPtrInst* ScabbardHostPassHip::expand_param_args_alloc(AllocaInst& alloc)  {
+  auto oldAllocTy = alloc.getAllocatedType();
+  size_t old_size = 0ul;
+  if (auto arrTy = dyn_cast<ArrayType>(oldAllocTy)) { // case: alloc array type
+    old_size = arrTy->getNumElements();
+  } else if (auto C = dyn_cast<ConstantInt>(alloc.getArraySize())) { // case: built in alloc array concept
+    old_size = C->getSExtValue();
+  } else {  // case: unknown size 
+    LLVM_DEBUG(errs() << "\n[scabbard.instr.host.amdhip:ERROR] could not determine size of alloc instr!\n";);
+    old_size = 1;
+  }
+  auto PtrTy = PointerType::get(alloc.getContext(),0ul);
+  // auto newAllocTy = ArrayType::get(PtrTy, old_size+1);
+  auto newAlloc = new AllocaInst(
+                          PtrTy,
+                          0u,
+                          ConstantInt::get(u32ty, APInt(32u, old_size+1)),
+                          Twine("scabbard.instrParamAlloc.") + alloc.getName(),
+                          &alloc
+                        );
+  newAlloc->setDebugLoc(alloc.getDebugLoc()); //might cause issues after alloc is deleted
+  auto memLoc = GetElementPtrInst::Create(
+                    PtrTy,
+                    newAlloc, 
+                    std::array<Value*,1>{ConstantInt::get(u64ty, APInt(64u, 0u))}
+                  );
+  memLoc->insertAfter(newAlloc);
+  memLoc->setDebugLoc(alloc.getDebugLoc()); //might cause issues after alloc is deleted
+  alloc.replaceAllUsesWith(memLoc); //DBG: does not seem to be working
+  alloc.eraseFromParent();
+  return GetElementPtrInst::Create(
+            PtrTy,
+            newAlloc, 
+            std::array<Value*,1>{ConstantInt::get(u64ty, APInt(64u, old_size))}
+          );
+}
+
+bool ScabbardHostPassHip::APIInstr_LaunchKernel(CallInst& CI) const {
+  // instrument in `scabbard.trace.register_job` before this function and instrument in `scabbard.trace.register_job_callback` after this function call
+  auto regFn = CallInst::Create(
+      host.register_job.getFunctionType(),
+      host.register_job.getCallee(),
+      std::array<Value*,1ull>{CI.getArgOperand(7ull)}
+    );
+  regFn->insertBefore(&CI);
+  regFn->setDebugLoc(CI.getDebugLoc()); //might cause issues if in a device stub
+  auto [locID, is_inserted] = ScabbardRTL.Metadata.insert(CI);
+  if (not is_inserted && locID == 0ull)
+    errs() << "\n[scabbard.instr.host.metadata.amdhip:WARN] Failed to insert instruction into the metadata system!"
+              "\n[scabbard.instr.host.metadata.amdhip:WARN]   -> make sure debug info is turned on (`-g`)\n";
+  // auto loc = ((CI.getDebugLoc()) // hip generated device stubs have no debug location data so must accommodate
+  //               ? metadata.trace(F, CI.getDebugLoc(), ModuleType::HOST) 
+  //               : MetadataHandler::get_hipAPI_loc());
+  auto regCbFn = CallInst::Create(
+      ScabbardRTL.register_job_callback.getFunctionType(),
+      ScabbardRTL.register_job_callback.getCallee(),
+      std::array<Value*,3ull>{
+          regFn,
+          CI.getArgOperand(7ull),
+          ConstantInt::get(LocDataTy, APInt(sizeof(size_t)*8, locID)),
+        }
+    );
+  regCbFn->insertAfter(&CI);
+  regCbFn->setDebugLoc(CI.getDebugLoc()); //might cause issues if in a device stub
+  //TODO? modify the type of the last operand (should be a global or function pass)
+  // trace back args var and expand it to include the pointer to the DeviceTracker that is returned as the result of `scabbard.trace.register_job` as the last parameter
+  GetElementPtrInst* paramPtr = nullptr;
+  if (auto argElmPtr = dyn_cast<GetElementPtrInst>(CI.getArgOperand(5ull))) { // case: >=2 function parameter length
+    if (auto argAlloc = dyn_cast<AllocaInst>(argElmPtr->getPointerOperand())) {
+      paramPtr = expand_param_args_alloc(*argAlloc);
+      if (paramPtr != nullptr)
+        argElmPtr->replaceAllUsesWith(paramPtr);
+    } else {
+      errs() << "\n[scabbard.instr.host.amdhip:ERROR] kernel launch user args could not be traced to param args construct allocation\n";
+    }
+  } else if (auto argAlloc = dyn_cast<AllocaInst>(CI.getArgOperand(5ull))) { // case: single or zero function parameter length
+    paramPtr = expand_param_args_alloc(*argAlloc);
+  } else {
+    errs() << "\n[scabbard.instr.host.amdhip:DBG] kernel launch user args are not loaded from local frame\n```\n";
+    CI.getArgOperand(5ull)->print(errs());
+    errs() << "\n```\n\n";
+  }
+  if (paramPtr == nullptr) {
+    errs() << "\n[scabbard.instr.host.amdhip:ERROR] could not instrument kernel call (instrumentation failed)\n";
+    return true;
+  }
+  auto dtAlloc = new AllocaInst(PtrTy, 0u, "dtPtr", regFn);
+  dtAlloc->setDebugLoc(CI.getDebugLoc()); //might cause issues if in a device stub
+  paramPtr->insertAfter(regFn);
+  paramPtr->setDebugLoc(CI.getDebugLoc()); //might cause issues if in a device stub
+  auto dtStore = new StoreInst(regFn, dtAlloc, paramPtr);
+  dtStore->setDebugLoc(CI.getDebugLoc()); //might cause issues if in a device stub
+  auto dtParamStore = new StoreInst(dtAlloc, paramPtr, &CI);
+  dtParamStore->setDebugLoc(CI.getDebugLoc()); //might cause issues if in a device stub
+  return true;
+}
+
 
 bool ScabbardHostPassHip::APIInstr_Unsupported(const CallInst& CI, const StringRef APIName) const {
   errs() << "\n[scabbard.instr.host.amdhip:WARN] WARNING: Scabbard does not support the following HIP API: `" 
@@ -1612,6 +1717,14 @@ void ScabbardHostPassHip::registerAPIInstrumenters() {
     {
       "hipMemcpyDtoDAsync",
       [this](auto CI, auto FAM) -> bool { return APIInstr_Memcpy(*CI,FAM,3u,CI->getArgOperand(3ull),true); }
+    },
+    {
+      "hipLaunchKernel",
+      [this](auto CI, auto FAM) -> bool { return APIInstr_LaunchKernel(*CI); }
+    },
+    {
+      "hipExtLaunchKernel",
+      [this](auto CI, auto FAM) -> bool { return APIInstr_LaunchKernel(*CI); }
     },
   };
 }
