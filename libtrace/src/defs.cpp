@@ -231,15 +231,16 @@ namespace scabbard {
       {
         hipPointerAttribute_t attrs;
         const auto status = hipPointerGetAttributes(&attrs,PTR);
+        InstrData _data = (InstrData) (data & ((~InstrData::NONE) ^ InstrData::UNKNOWN_HEAP));
         if (status == hipSuccess) {
           if (attrs.isManaged) {
-            data |= InstrData::MANAGED_MEM;
+            _data |= InstrData::MANAGED_MEM;
           } else if (attrs.devicePointer == nullptr) {
-            data |= InstrData::HOST_HEAP;
+            _data |= InstrData::HOST_HEAP;
           } else {
-            data |= InstrData::DEVICE_HEAP;
+            _data |= InstrData::DEVICE_HEAP;
           }
-          trace_append$mem(data, PTR, SRC_ID);
+          trace_append$mem(_data, PTR, SRC_ID);
         } else {
           std::cerr << "\n[scabbard::trace::cond::ERROR] could not get the properties of a pointer with `hipPointerGetAttributes()`!\n"
                     << std::endl;
@@ -264,6 +265,29 @@ namespace scabbard {
                 SIZE
               )
           );
+      }
+
+      void trace_append$alloc$cond(const InstrData data, const void* PTR, const std::uint64_t SRC_ID, const std::size_t SIZE)
+      {
+        hipPointerAttribute_t attrs;
+        const auto status = hipPointerGetAttributes(&attrs,PTR);
+        InstrData _data = (InstrData)(data & ((~InstrData::NONE) ^ InstrData::UNKNOWN_HEAP));
+        if (status == hipSuccess) {
+          if (attrs.isManaged) {
+            _data |= InstrData::MANAGED_MEM;
+          } else if (attrs.devicePointer == nullptr) {
+            _data |= InstrData::HOST_HEAP;
+          } else {
+            _data |= InstrData::DEVICE_HEAP;
+          }
+          trace_append$alloc(_data, PTR, SRC_ID, SIZE);
+        } else {
+          std::cerr << "\n[scabbard::trace::cond::ERROR] could not get the properties of a pointer with `hipPointerGetAttributes()`!\n"
+                    << std::endl;
+#         ifdef DEBUG
+            exit(EXIT_FAILURE);
+#         endif
+        }
       }
       
     } // namespace host

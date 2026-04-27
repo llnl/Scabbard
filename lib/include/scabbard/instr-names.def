@@ -33,6 +33,7 @@
 #define SCABBARD_HOST_CALLBACK_APPEND_MEM_NAME "scabbard.trace.host.trace_append$mem"
 #define SCABBARD_HOST_CALLBACK_APPEND_MEM_COND_NAME "scabbard.trace.host.trace_append$mem$cond"
 #define SCABBARD_HOST_CALLBACK_APPEND_ALLOC_NAME "scabbard.trace.host.trace_append$alloc"
+#define SCABBARD_HOST_CALLBACK_APPEND_ALLOC_COND_NAME "scabbard.trace.host.trace_append$alloc$cond"
 
 
 #define SCABBARD_METADATA_INSTR_srcId_VAR_HOST_PREFIX "scabbard.metadata.host.srcId$"

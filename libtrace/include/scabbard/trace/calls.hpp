@@ -62,6 +62,9 @@ namespace scabbard {
       __host__ 
       void trace_append$alloc(const InstrData data, const void* PTR, const std::uint64_t SRC_ID, const std::size_t SIZE) 
         asm (SCABBARD_HOST_CALLBACK_APPEND_ALLOC_NAME);
+      __host__ 
+      void trace_append$alloc$cond(const InstrData data, const void* PTR, const std::uint64_t SRC_ID, const std::size_t SIZE) 
+        asm (SCABBARD_HOST_CALLBACK_APPEND_ALLOC_COND_NAME);
       
     } // namespace host
 
