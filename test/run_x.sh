@@ -64,6 +64,18 @@ rm $SCABBARD_METADATA_FILE 1> /dev/null 2> /dev/null
 rm ./anon.scabbard.meta 1> /dev/null 2> /dev/null
 rm ./anon.scabbard.meta.lock 1> /dev/null 2> /dev/null
 
+if [ -z "$TEST_IR" ]; then
+  echo "" &> /dev/null
+else
+  echo "TEST_IR: TRUE"
+  echo -e "\n\n===== BUILDING IR with Instrumentation ====\n\n"
+  echo "scabbard instr --meta-file=$SCABBARD_METADATA_FILE $HIP_EXE $CXX_ARGS_EXTRA -std=c++17 -x hip -g -O2 -S -emit-llvm -o$FILE_BASE.ll $FILE"
+  scabbard instr --meta-file=$SCABBARD_METADATA_FILE $HIP_EXE $CXX_ARGS_EXTRA -std=c++17 -x hip -g -O2 -o$FILE_BASE.ll $FILE || \
+    { printf "\n\e[31m[run_x.sh] ERROR: during NON-instrumented build\e[0m\n"; rm $FILE_BASE.ll 1> /dev/null 2> /dev/null; exit -1; }
+  echo -e "\n\n===== DONE ====\nSee... $FILE_BASE.ll\n\n"
+  exit 0
+fi
+
 # determine if this should be compiled as a manual or instrumented test
 if [[ $FILE_BASE == *".man" ]]; then # this is a manual file
 

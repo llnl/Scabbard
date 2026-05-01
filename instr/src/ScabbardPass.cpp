@@ -51,7 +51,25 @@
 namespace llvm {
 namespace /*<anon>*/ {
 
+namespace _DBG {
+  
+    auto write_module_to_file(const llvm::Module& M, const std::string file_name_mod="") -> std::string {
+      std::error_code EC;
+      std::string filename = M.getSourceFileName() + "." + file_name_mod + ".ll";
+      llvm::raw_fd_ostream OS(filename, EC);
+      if (EC) {
+          return "<file-not-found>";
+      }
+      M.print(OS, nullptr);
+      return filename;
+    }
+  } //?namespace _DBG
+
+inline raw_ostream& operator << (raw_ostream& out, const scabbard::InstrData& data);
+
 using namespace scabbard;
+
+class IRHelper;
 
 // << ========================================================================================== >>
 // <<                                     METADATA HANDLER                                       >>
@@ -70,16 +88,20 @@ using namespace scabbard;
 ///        - a way to register when in fn's even if they have been inlined (might require an earlier pass)
 class MetadataHandler {
   DenseMap<const Instruction*, size_t> Instructions;
-  // SmallPtrSet<const Instruction, 16ul> Instructions;
-  DenseMap<const StringRef, size_t> UniqueStrings;
+  StringMap<size_t> UniqueStrings;
   std::string ConcatenatedString;
   size_t UniqueStringId = 0ul;
+  StructType* EntryTy = nullptr;
+  /// @brief Global that contains the metadata info
+  ///        \em NOTE: this variable is only a temp value that will be replaced durring the finalize step
+  ///        with the actual contents, so it will not contain any useful info at runtime.
+  GlobalVariable* MetadataVar = nullptr;
 
 public:
   /// @brief Insert the metadata associated with an instruction into the set of all
   ///        instructions of interest. (set kept unique)
   /// @param I the instruction to try to insert
-  /// @return \c std::pair<size_t,bool> - size_t is the metadata id for the instruction
+  /// @return \c std::pair<Constant*,bool> - a constant ptr to the metadata entry for the instruction
   ///         bool is \c true if the insertion takes place,
   ///         and \c false if it fails to occur because of an issue or it already
   ///         existed in the metadata set
@@ -89,10 +111,31 @@ public:
   /// @param M the module to inject the metadata object into
   /// @param AddrSpace the integer value associated with the global address space for
   ///        the target architecture (0 for CPU/HOST, 1 for most GPUs/DEVICES)
+  /// @param IRH the IRHelper containing common types used to construct the metadata 
   /// @return \c llvm::GlobalVariable* - pointer to the module global created holding the metadata.
-  GlobalVariable* initializeMetadata(Module& M, unsigned AddrSpace);
+  GlobalVariable* initializeMetadata(Module& M, unsigned AddrSpace, IRHelper* IRH);
+
+  /// @brief connect and fill the remaining metadata information.
+  /// @param M the module to inject the metadata object into
+  void finalizeMetadata(Module& M);
 
 private:
+  /// @brief Insert the metadata associated with an instruction into the set of all
+  ///        instructions of interest. (set kept unique)
+  /// @param I the instruction to try to insert
+  /// @return \c std::pair<size_t,bool> - size_t is the metadata id for the instruction
+  ///         bool is \c true if the insertion takes place,
+  ///         and \c false if it fails to occur because of an issue or it already
+  ///         existed in the metadata set
+  inline std::pair<uint64_t, bool> _insert(const Instruction* I);
+
+  /// @brief Helper Fn to quickly create \c getelementptr \c ConstantExpr 's for use in
+  ///         creating references to things.
+  /// @param GV \c GlobalVariable to get the element ptr from
+  /// @param Index the post referencing global location index
+  /// @return \c Constant* - ptr to a GEP constant expression
+  Constant* getGEP(GlobalVariable* GV, size_t Index) const;
+
   /// @brief Add a string to the set of unique strings that will be
   ///        exported as a concatenated array into the module separated with \c \\0
   ///        that will be called \c scabbard_device_strings for use with the RTL.
@@ -115,9 +158,8 @@ private:
   ///        \c registerString, and return the offset to the desired string in
   ///        the global string array as a constant int.
   /// @param File the metadata object containing the file and directory components
-  /// @param C (required for generating constants for the module)
-  /// @return a constant int of the offset in the global string array to the file name.
-  inline ConstantInt* getSourceFile(const DIFile* File, LLVMContext& C);
+  /// @return \c size_t - offset into the combined string to the start of the function name.
+  inline size_t getSourceFile(const DIFile* File);
 
   /// @brief Get the line number from the source file
   ///        of the instruction in question as a constant.
@@ -138,9 +180,8 @@ private:
   ///        as a constant int.
   /// @param FnName the name of the function that originally contained the instruction in question
   ///        (usually stored in the as Subprogram linkage name)
-  /// @param C (required for generating constants for the module)
-  /// @return a constant int of the the offset in the global string array to the function name
-  inline ConstantInt* getCalledFn(const StringRef& FnName, LLVMContext& C);
+  /// @return \c size_t - offset into the combined string to the start of the function name.
+  inline size_t getCalledFn(const StringRef& FnName);
 };
 
 
@@ -153,6 +194,12 @@ public:
   /// @param I instruction to get the location for
   /// @return \c std::string - the formatted location string for log/error messages
   static inline Twine getLocStr(const Instruction& I);
+
+  /// @brief Produce a string for log/error messages that gives the source file and location in 
+  ///        \c `\"<filepath>\":<line>,<col>` format
+  /// @param V possible instruction to get the location for but still referenced as a \c Value
+  /// @return \c std::string - the formatted location string for log/error messages
+  static inline Twine getLocStr(const Value* V);
 
   /// @brief The general kind of memory space of a pointer type in a AMD Device.
   using PtrOrigin = scabbard::InstrData;
@@ -192,6 +239,8 @@ public:
     u64Ty(IntegerType::get(M.getContext(), 64u)),
     u32Ty(IntegerType::get(M.getContext(), 64u))
     {}
+
+  friend class MetadataHandler;
   
   // ConstantInt* getConstInt(const IntegerType* Ty, uint64_t val) const {
   //   return ConstantInt::get((Type*)Ty, APInt(val,Ty->getBitWidth()));
@@ -274,9 +323,10 @@ protected:
   /// @param F the function to examine
   /// @return \c bool - if \param F should be instrumented or skipped.
   virtual inline bool isInstrumentableFn(const Function& F) const {
-    return (not F.isDeclaration()                        // exclude any functions not defined
-            && not F.getName().starts_with("llvm.")      // exclude intrinsics
-            && not F.getName().starts_with("scabbard.")  // exclude name mangled scabbard rtl functions
+    return (not F.isDeclaration()                           // exclude any functions not defined
+            && not F.getName().starts_with("llvm.")         // exclude intrinsics
+            && not F.getName().starts_with("scabbard.")     // exclude name mangled scabbard rtl functions
+            && not F.getName().contains("__device_stub__")  // exclude device stubFn's from regular instruction instr
             && not F.hasFnAttribute("disable_sanitizer_instrumentation")); // any fn marked as not to be instrumented
   }
 
@@ -414,9 +464,14 @@ public:
   /// @param MAM the analysis manager for above module.
   /// @return \c bool - if the module was modified.
   virtual bool run(Module& M, ModuleAnalysisManager& MAM) final {
+    errs() << "\n[scabbard.instr.host:INFO] Instrumenting: \"" << M.getSourceFileName() << "\"\n"; //DEBUG
+
+    // initialize metadata object and get a copy of the temp global variable for storing the metadata in.
+    GlobalVariable* MetadataVar = ScabbardRTL.Metadata.initializeMetadata(M, 0ull, this);
     
     // run the actual implementation that might be modified in inherited classes
     bool changed = runImpl(M, MAM);
+
 
     // notate all global variables that are known to be in Unified memory at some point (in this module/TU)
     registerGlobalVarsInUnifiedMemory(M);
@@ -433,8 +488,12 @@ public:
     changed |= handleAPICalls(M, FAM);
     
     if (changed) //NOTE: this method of metadata will need to be altered to work with instrumenting durring compilation instead of LTO.
-      GlobalVariable* MetadataStringVar = ScabbardRTL.Metadata.initializeMetadata(M, 0ull);
-    
+      ScabbardRTL.Metadata.finalizeMetadata(M);
+    else
+      MetadataVar->removeFromParent();    // remove metadata global if no instrumentation occurred
+
+    // errs() << "\n\n[scabbard.instr.host:DBG] Module written to: \"" << _DBG::write_module_to_file(M,"host.postInstr") << "\"\n\n"; //DEBUG
+
     return changed;
   }
 
@@ -786,7 +845,10 @@ public:
   /// @param MAM the analysis manager for above module
   /// @return \c bool - if the Module was changed at all
   virtual bool run(Module& M, ModuleAnalysisManager& MAM) final {
+    errs() << "\n[scabbard.instr.device:INFO] Instrumenting: \"" << M.getSourceFileName() << "\"\n"; //DEBUG
     bool changed = false;
+    // initialize metadata object and get a copy of the temp global variable for storing the metadata in.
+    GlobalVariable* MetadataVar = ScabbardRTL.Metadata.initializeMetadata(M, 0ull, this);
     // determine if any local allocations are made in this module
     HasAllocas = [&]() {
       for (const Function& Fn : M)
@@ -803,7 +865,7 @@ public:
     // TODO handle conversions of globals
     // TODO any additional prereq work...
     // run the actual implementation that might be modified in inherited classes
-    changed |= expandFnParams(M);
+    bool alt_changed = expandFnParams(M);
     // create and insert the ctor and dtor
 
     FunctionAnalysisManager& FAM = MAM.getResult<FunctionAnalysisManagerModuleProxy>(M)
@@ -821,11 +883,14 @@ public:
     // }
     // TODO handle ambagious calls
 
-    // if it appears as though instrumentation occurred output the metadata object for the module
-    if (changed)
-      ScabbardRTL.Metadata.initializeMetadata(M, 0u);
+    if (changed) //NOTE: this method of metadata will need to be altered to work with instrumenting durring compilation instead of LTO.
+      ScabbardRTL.Metadata.finalizeMetadata(M);
+    else
+      MetadataVar->removeFromParent();    // remove metadata global if no instrumentation occurred
 
-    return changed;
+    // errs() << "\n\n[scabbard.instr.device:DBG] Module written to: \"" << _DBG::write_module_to_file(M,"device.postInstr") << "\"\n\n"; //DEBUG
+
+    return changed || alt_changed;
   }
 };
 
@@ -962,6 +1027,13 @@ inline Twine IScabbardInstrPass::getLocStr(const Instruction& I) {
         + (Twine) DLoc.getColumn();
 }
 
+inline Twine IScabbardInstrPass::getLocStr(const Value* V) {
+  if (const Instruction* I = dyn_cast<Instruction>(V)) {
+    return IScabbardInstrPass::getLocStr(*I);
+  }
+  return Twine(V->getName());
+}
+
 // << ================================= HOST PASS DEFINITIONS ================================== >> 
 
 void IScabbardHostPass::registerRTL(Module& M) {
@@ -1074,19 +1146,19 @@ inline void IScabbardHostPass::registerGlobalVarsInUnifiedMemory(const Module& M
       }
   };
 
-  if (const auto* hFn = dyn_cast<Function>(M.getFunction("hipHostRegister"))) {
+  if (const auto* hFn = M.getFunction("hipHostRegister")) {
     checkFn(hFn, HOST_HEAP);
   }
-  if (const auto* hFn = dyn_cast<Function>(M.getFunction("hipHostMalloc"))) {
+  if (const auto* hFn = M.getFunction("hipHostMalloc")) {
     checkFn(hFn, HOST_HEAP);
   }
-  if (const auto* hFn = dyn_cast<Function>(M.getFunction("hipHostAlloc"))) {
+  if (const auto* hFn = M.getFunction("hipHostAlloc")) {
     checkFn(hFn, HOST_HEAP);
   }
-  if (const auto* dFn = dyn_cast<Function>(M.getFunction("__hipRegisterVar"))) {
+  if (const auto* dFn = M.getFunction("__hipRegisterVar")) {
     checkFn(dFn, DEVICE_HEAP);
   }
-  if (const auto* mFn = dyn_cast<Function>(M.getFunction("__hipRegisterManagedVar"))) {
+  if (const auto* mFn = M.getFunction("__hipRegisterManagedVar")) {
     checkFn(mFn, MANAGED_MEM);
   }
 } 
@@ -1339,7 +1411,7 @@ bool IScabbardHostPass::instrumentInScabbardFunc(LoopInfo& LI, Instruction& I, V
         std::array<Value*, 3ull>{
             ConstantInt::get(TraceDataTy, APInt(sizeof(InstrData)*8, InstrContext | PO)),
             Ptr,
-            LocID
+            locID
           },
         "ScabbardRTL." + I.getName(), 
         /* insertBefore= */ &I
@@ -1350,7 +1422,7 @@ bool IScabbardHostPass::instrumentInScabbardFunc(LoopInfo& LI, Instruction& I, V
         std::array<Value*, 4ull>{
             ConstantInt::get(TraceDataTy, APInt(sizeof(InstrData)*8, InstrContext | PO)),
             Ptr,
-            LocID,
+            locID,
             ExtraData
           },
         "ScabbardRTL." + I.getName(), 
@@ -1373,7 +1445,7 @@ CallInst* ScabbardHostPassHip::CreateRTLCall(CallInst& CI, const InstrData Data,
             ConstantInt::get(TraceDataTy, APInt(sizeof(InstrData)*8, 
                               InstrData::ON_HOST | Data)),
             Ptr,
-            LocID
+            locID
           },
         Twine("scabbard.") + (InsertBefore ? "pre." : "post.") + CI.getName()
       );
@@ -1397,7 +1469,8 @@ CallInst* ScabbardHostPassHip::CreateRTLCallEx(CallInst& CI, const InstrData Dat
             ConstantInt::get(TraceDataTy, APInt(sizeof(InstrData)*8, 
                               InstrData::ON_HOST | Data | InstrData::_OPT_USED)),
             Ptr,
-            LocID
+            locID,
+            Extra
           },
         Twine("scabbard.") + (InsertBefore ? "pre." : "post.") + CI.getName()
       );
@@ -1482,7 +1555,7 @@ bool ScabbardHostPassHip::APIInstr_Memcpy(CallInst& CI, FunctionAnalysisManager&
                                                           ReadData | ON_HOST | READ_EVENT | _OPT_DATA
                                                           | ((IsAsync) ? InstrData::ASYNC : InstrData::NONE))),
                       CI.getArgOperand(1ull),
-                      LocID,
+                      locID,
                       CI.getArgOperand(2ull)
                     },
                   Twine("scabbard.") + CI.getName() + ".read"
@@ -1498,7 +1571,7 @@ bool ScabbardHostPassHip::APIInstr_Memcpy(CallInst& CI, FunctionAnalysisManager&
                                                           WriteData | ON_HOST | WRITE_EVENT | _OPT_DATA
                                                           | ((IsAsync) ? InstrData::ASYNC : InstrData::NONE))),
                       CI.getArgOperand(0ull),
-                      LocID,
+                      locID,
                       CI.getArgOperand(2ull)
                     },
                   Twine("scabbard.") + CI.getName() + ".write"
@@ -1568,7 +1641,7 @@ bool ScabbardHostPassHip::APIInstr_LaunchKernel(CallInst& CI) {
       std::array<Value*,3ull>{
           regFn,
           CI.getArgOperand(7ull),
-          LocID,
+          locID,
         }
     );
   regCbFn->insertAfter(&CI);
@@ -1684,7 +1757,7 @@ void ScabbardHostPassHip::registerAPIInstrumenters() {
         }
         errs() << "\n[scabbard.instr.host.amdhip:WARN] hipMemcpyKind was not a const value"
                   " --unsupported by scabbard-- ("
-               << IScabbardHostPass::getLocStr(&CI.getArgOperand(3ull)) << ")\n";
+               << IScabbardHostPass::getLocStr(CI.getArgOperand(3ull)) << ")\n";
         return false;
       }
     },
@@ -1696,7 +1769,7 @@ void ScabbardHostPassHip::registerAPIInstrumenters() {
         }
         errs() << "\n[scabbard.instr.host.amdhip:WARN] hipMemcpyKind was not a const value"
                   " --unsupported by scabbard-- ("
-               << IScabbardHostPass::getLocStr(&CI.getArgOperand(3ull)) << ")\n";
+               << IScabbardHostPass::getLocStr(CI.getArgOperand(3ull)) << ")\n";
         return false;
       }
     },
@@ -1720,7 +1793,7 @@ void ScabbardHostPassHip::registerAPIInstrumenters() {
         }
         errs() << "\n[scabbard.instr.host.amdhip:WARN] hipMemcpyKind was not a const value"
                   " --unsupported by scabbard-- ("
-               << IScabbardHostPass::getLocStr(&CI.getArgOperand(3ull)) << ")\n";
+               << IScabbardHostPass::getLocStr(CI.getArgOperand(3ull)) << ")\n";
         return false;
       }
     },
@@ -1765,7 +1838,7 @@ void IScabbardDevicePass::registerRTL(Module& M) {
           std::array<Type*,4ull>{
               PtrTy,
               TraceDataTy,
-              PtrTy, //WARN: This constant 0u might need to be dynamicly decided for host modules
+              PtrTy,
               LocDataTy
             },
           false
@@ -1884,36 +1957,38 @@ inline bool IScabbardDevicePass::expandFnParams(Module& M) const {
   // expand the signatures of all relevant fn's
   // (this requires cloning and RAUW since llvm ir fn sigs are immutable)
   bool changed = false;
+  SmallVector<Function*,8ul> to_expand;
+  for (auto& Fn : M)
+    if (isInstrumentableFn(Fn)) // only expand instrumentable fn's
+      to_expand.push_back(&Fn);
   SmallVector<std::pair<Function*, Function*>, 8ul> to_replace;
-  for (auto& OldFn : M.functions()) {
-    if (not isInstrumentableFn(OldFn)) // skip fn's that shouldn't be instrumented
-      continue;
-    std::string old_name = OldFn.getName().str();
-    OldFn.setName(old_name + "__old__scabbard_instr_replaced__old__");
-    auto oldParamTys = OldFn.getFunctionType()->params();
+  for (auto* OldFn : to_expand) {
+    std::string old_name = OldFn->getName().str();
+    OldFn->setName(old_name + "__old__scabbard_instr_replaced__old__");
+    auto oldParamTys = OldFn->getFunctionType()->params();
     std::vector<Type*> paramTys(oldParamTys.begin(), oldParamTys.end());
     paramTys.push_back((Type*)PtrTy);
     auto fn_callee =
         M.getOrInsertFunction(old_name,
-                              FunctionType::get(OldFn.getFunctionType()->getReturnType(), ArrayRef<Type*>(paramTys),
-                                                OldFn.getFunctionType()->isVarArg()),
-                              OldFn.getAttributes());
+                              FunctionType::get(OldFn->getFunctionType()->getReturnType(), ArrayRef<Type*>(paramTys),
+                                                OldFn->getFunctionType()->isVarArg()),
+                              OldFn->getAttributes());
     Function* NewFn = dyn_cast<Function>(fn_callee.getCallee()); // new function (OldFn is old function)
-    NewFn->setCallingConv(OldFn.getCallingConv());
-    NewFn->setLinkage(OldFn.getLinkage());
+    NewFn->setCallingConv(OldFn->getCallingConv());
+    NewFn->setLinkage(OldFn->getLinkage());
 
-    to_replace.push_back({&OldFn, NewFn});
+    to_replace.push_back({OldFn, NewFn});
     changed |= true;
-    // if (OldFn.isDeclaration())
+    // if (OldFn->isDeclaration())
     //   return NewFn;
 
     ValueToValueMapTy vMap;
-    for (size_t i = 0; i < OldFn.arg_size(); ++i)
-      vMap[OldFn.getArg(i)] = NewFn->getArg(i);
+    for (size_t i = 0; i < OldFn->arg_size(); ++i)
+      vMap[OldFn->getArg(i)] = NewFn->getArg(i);
     SmallVector<ReturnInst*, 8> rets;
     //?NOTE: this might be used wrong.  Double check results in testing to make sure it works correctly
     //?     if wrong likely due to not creating vMap properly
-    CloneFunctionInto(NewFn, &OldFn, vMap, CloneFunctionChangeType::LocalChangesOnly, rets);
+    CloneFunctionInto(NewFn, OldFn, vMap, CloneFunctionChangeType::LocalChangesOnly, rets);
     // provide metadata for the added argument
     // if (NewFn->isDeclaration()) return NewFn; //skip this for external functions
     // auto* subPMD = NewFn->getSubprogram();
@@ -2011,14 +2086,14 @@ IScabbardDevicePass::PtrOrigin IScabbardDevicePass::getPtrOrigin(LoopInfo& LI, V
     *Object = Objects.front();
   PtrOrigin PO = NONE;
   for (auto* Obj : Objects) {
-    PtrOrigin ObjPO = HasAllocas ? LOCAL : UNKNOWN_HEAP; //TODO investigate what this means
+    PtrOrigin ObjPO = HasAllocas ? LOCAL : UNKNOWN_HEAP;
     switch (Obj->getValueID()) {
       case Value::GlobalVariableVal:
-        ObjPO = isSharedGlobal(*((GlobalVariable*) Obj)) ? MANAGED_MEM : DEVICE_HEAP;
+        ObjPO = DEVICE_HEAP;
         break;
       case Value::ArgumentVal: {
         Argument* Arg = (Argument*) Obj;
-        if (Arg->getParent()->hasFnAttribute("kernel"))
+        if (Arg->getType()->isPointerTy())
           ObjPO = UNKNOWN_HEAP;
         break;
       }
@@ -2039,11 +2114,11 @@ IScabbardDevicePass::PtrOrigin IScabbardDevicePass::getPtrOrigin(LoopInfo& LI, V
       }
       case Instruction::Call + Value::InstructionVal: {
         CallInst* CI = (CallInst*) Obj;
-        if (auto* II = dyn_cast<IntrinsicInst>(CI)) { // check if call to intrinsic fn
-          if (II->getIntrinsicID() == Intrinsic::amdgcn_implicitarg_ptr ||
-            II->getIntrinsicID() == Intrinsic::amdgcn_dispatch_ptr)
-          return NEVER; //SYSTEM;
-        }
+        // if (auto* II = dyn_cast<IntrinsicInst>(CI)) { // check if call to intrinsic fn
+        //   if (II->getIntrinsicID() == Intrinsic::amdgcn_implicitarg_ptr ||
+        //     II->getIntrinsicID() == Intrinsic::amdgcn_dispatch_ptr)
+        //   return NEVER; //SYSTEM;
+        // }
         if (auto* Callee = CI->getCalledFunction())
           if (Callee->getName().starts_with("ompx_")) {
             if (Callee->getName().ends_with("_global"))
@@ -2058,7 +2133,7 @@ IScabbardDevicePass::PtrOrigin IScabbardDevicePass::getPtrOrigin(LoopInfo& LI, V
       default:
         break;
     }
-    if (PO == NONE || (PO == UNKNOWN_HEAP && ObjPO > UNKNOWN_HEAP))
+    if (PO == NONE || (PO <= UNKNOWN_HEAP && ObjPO >= UNKNOWN_HEAP))
       PO = ObjPO;
   }
   return PO;
@@ -2095,7 +2170,7 @@ bool IScabbardDevicePass::instrumentInScabbardFunc(LoopInfo& LI, Instruction& I,
             kernelDeviceTracker,
             ConstantInt::get(TraceDataTy, APInt(sizeof(InstrData)*8, InstrContext | PO)),
             (castInst ? castInst : Ptr),
-            LocID
+            locID
           },
         "scabbard." + I.getName(), 
         /* insertBefore= */ &I
@@ -2106,38 +2181,100 @@ bool IScabbardDevicePass::instrumentInScabbardFunc(LoopInfo& LI, Instruction& I,
 // << ========================== Metadata Handler Extra Definitions ============================ >>
 
 inline std::pair<Constant*, bool> MetadataHandler::insert(const Instruction* I) {
+  auto [locID, is_new] = _insert(I);
+  return std::make_pair(getGEP(MetadataVar,locID), is_new);
+}
+
+inline std::pair<uint64_t, bool> MetadataHandler::_insert(const Instruction* I) {
   auto res = Instructions.insert(std::make_pair(I, Instructions.size()));
   return std::make_pair(res.first->second, res.second);
 }
 
-inline Constant* MetadataHandler::getId(const Instruction* I) {
-  auto res = Instructions.insert(std::make_pair(I, Instructions.size()));
-  if (not res.second && res.first != Instructions.end()) // case failed to insert
-    return nullptr;
-  return Constant::getIntegerValue(Type::getInt64Ty(I->getContext()), APInt(res.first->second, 64ul));
+Constant* MetadataHandler::getGEP(GlobalVariable* GV, size_t Index) const {
+  return ConstantExpr::getGetElementPtr(GV->getValueType(), GV, //NOTE: replace inbounds if necessary
+                        std::array<Constant*,2u>{
+                          ConstantInt::get(EntryTy->getTypeAtIndex(2u), //u64
+                                            APInt(64u, 0ul)),  //index through global var ptr
+                          ConstantInt::get(EntryTy->getTypeAtIndex(2u), //u64
+                                            APInt(64u, Index))  //index into the array
+                        }, /*isInbounds=*/false);
 }
 
-GlobalVariable* MetadataHandler::initializeMetadata(Module& M, unsigned AddrSpace) {
-  const auto EntryTy = StructType::get(M.getContext(), {}, false);
+// inline Constant* MetadataHandler::getId(const Instruction* I) {
+//   auto res = Instructions.insert(std::make_pair(I, Instructions.size()));
+//   if (not res.second && res.first != Instructions.end()) // case failed to insert
+//     return nullptr;
+//   return Constant::getIntegerValue(Type::getInt64Ty(I->getContext()), APInt(res.first->second, 64ul));
+// }
+
+GlobalVariable* MetadataHandler::initializeMetadata(Module& M, unsigned AddrSpace, IRHelper* IRH) {
+  EntryTy = StructType::create(std::array<Type*,4>{
+                                  IRH->PtrTy, IRH->PtrTy, IRH->u64Ty, IRH->u32Ty
+                                }, "scabbard.metadata.entryTy", false);
+  const auto ArrTy = ArrayType::get(EntryTy, UINT32_MAX); // temp type
+  const auto Arr = ConstantArray::get(ArrTy, {});         // temp contents
+  MetadataVar = new GlobalVariable(M, cast<Type>(ArrTy), /*IsConstant=*/true, GlobalValue::InternalLinkage, Arr,
+                                    "scabbard.metadata.tmp", nullptr, GlobalValue::NotThreadLocal, AddrSpace);
+  return MetadataVar;
+}
+
+void MetadataHandler::finalizeMetadata(Module& M) {
   SmallVector<Constant*, 16ul> Contents(Instructions.size());
+  auto arr = ConstantDataArray::getString(M.getContext(), "<unknownFile>:<unknownFn>");
+  auto stringsVar = new GlobalVariable(M, ArrayType::get(IntegerType::get(M.getContext(),8u), UINT32_MAX), 
+                                        /*IsConstant=*/true, GlobalValue::InternalLinkage,
+                                        arr, "scabbard.metadata.strings.tmp", nullptr, GlobalValue::NotThreadLocal, 
+                                        MetadataVar->getAddressSpace());
   for (const auto& [I, ID] : Instructions) {
-    const DILocation* dLoc = I->getDebugLoc().get();
-    const DIFile* dFile = dLoc->getScope()->getFile();
-    Contents[ID] = ConstantStruct::get(
-        EntryTy, {getSourceFile(dFile, M.getContext()), getCalledFn(dLoc->getSubprogramLinkageName(), M.getContext()),
-                  getSourceLine(dLoc, M.getContext()), getSourceCol(dLoc, M.getContext())});
+    const DebugLoc& dLoc = I->getDebugLoc();
+    const DILocalScope* dScope = (dLoc) ? dLoc->getScope() : nullptr;
+    if (dScope) {
+      const DISubprogram* dSubPro = dScope->getSubprogram();
+      if (dSubPro) {
+        const DIFile* dFile = dScope->getFile();
+        if (dFile) {
+          Contents[ID] = ConstantStruct::get(
+                          EntryTy, {getGEP(stringsVar, getSourceFile(dFile)), 
+                                    getGEP(stringsVar, getCalledFn(dSubPro->getName())),
+                                    getSourceLine(dLoc.get(), M.getContext()), getSourceCol(dLoc.get(), M.getContext())});
+        } else
+          Contents[ID] = ConstantStruct::get(
+                          EntryTy, {getGEP(stringsVar, registerString(Twine("<UNKNOWN_SRC_FILE>{LLVM_IR_Module=\"")
+                                                                      + M.getSourceFileName() + "\"}")), 
+                                    getGEP(stringsVar, getCalledFn(dSubPro->getName())),
+                                    getSourceLine(dLoc.get(), M.getContext()), getSourceCol(dLoc.get(), M.getContext())});
+        
+      } else
+        Contents[ID] = ConstantStruct::get(
+                          EntryTy, {getGEP(stringsVar, registerString(Twine("<UNKNOWN_SRC_FILE>{LLVM_IR_Module=\"")
+                                                                      + M.getSourceFileName() + "\"}")), 
+                                    getGEP(stringsVar, registerString(Twine("<UNKNOWN_SRC_FN>{LLVM_IR_SCOPE=\"")
+                                                                        + dScope->getName() + "\"}")),
+                                    getSourceLine(dLoc.get(), M.getContext()), getSourceCol(dLoc.get(), M.getContext())});
+    } else 
+      Contents[ID] = ConstantStruct::get(
+                      EntryTy, {getGEP(stringsVar, registerString(Twine("<UNKNOWN_SRC_FILE>{Module=\"")
+                                                                  + M.getSourceFileName() + "\"}")), 
+                                getGEP(stringsVar, registerString(Twine("<UNKNOWN_SRC_FN>{LLVM_IR_Fn=\"")
+                                                                    + I->getFunction()->getName() + "\"}")),
+                                Constant::getIntegerValue(EntryTy->getTypeAtIndex(2ul), APInt(64ul, 0ul)), 
+                                Constant::getIntegerValue(EntryTy->getTypeAtIndex(3ul), APInt(64ul, 0ul))});
   }
 
-  outputStrings(M);
+  stringsVar->replaceAllUsesWith(outputStrings(M, MetadataVar->getAddressSpace()));
+  stringsVar->eraseFromParent();
 
   const auto ArrTy = ArrayType::get(EntryTy, Instructions.size());
   const auto Arr = ConstantArray::get(ArrTy, Contents);
-  return new GlobalVariable(M, cast<Type>(ArrTy), /*IsConstant=*/true, GlobalValue::ExternalLinkage, Arr,
-                            "scabbard.metadata", nullptr, GlobalValue::NotThreadLocal, AddrSpace);
+  auto _MetadataVar = new GlobalVariable(M, cast<Type>(ArrTy), /*IsConstant=*/true, GlobalValue::InternalLinkage, Arr,
+                                          "scabbard.metadata", nullptr, GlobalValue::NotThreadLocal, 
+                                          MetadataVar->getAddressSpace());
+  MetadataVar->replaceAllUsesWith(_MetadataVar);  // replace with completed version
+  MetadataVar->eraseFromParent();                // cleanup old temp
 }
 
 uint64_t MetadataHandler::registerString(const Twine& Str) {
-  const auto& It = UniqueStrings.insert({Str, ConcatenatedString.size()});
+  const auto& It = UniqueStrings.insert({Str.str(), ConcatenatedString.size()});
   if (It.second) {
     ConcatenatedString += Str.str();
     ConcatenatedString.push_back('\0');
@@ -2146,31 +2283,54 @@ uint64_t MetadataHandler::registerString(const Twine& Str) {
 }
 
 GlobalVariable* MetadataHandler::outputStrings(Module& M, unsigned AddrSpace) const {
-  const auto Arr = ConstantDataArray::getString(M.getContext(), ConcatenatedString);
-  return new GlobalVariable(M, cast<Type>(Arr->getType()), /*IsConstant=*/true, GlobalValue::ExternalLinkage, Arr,
-                            "scabbard.device.metadata_strings", nullptr, GlobalValue::NotThreadLocal, AddrSpace);
+  auto Arr = ConstantDataArray::getString(M.getContext(), ConcatenatedString);
+  return new GlobalVariable(M, cast<Type>(Arr->getType()), /*IsConstant=*/true, GlobalValue::InternalLinkage, Arr,
+                            "scabbard.metadata.strings", nullptr, GlobalValue::NotThreadLocal, AddrSpace);
 }
 
-ConstantInt* MetadataHandler::getSourceFile(const DIFile* File, LLVMContext& C) {
+inline size_t MetadataHandler::getSourceFile(const DIFile* File/* , LLVMContext& C */) {
   auto dir = File->getDirectory();
   auto localPath = File->getFilename();
 
-  uint64_t offset = registerString((dir.ends_with("/")) ? dir + localPath : dir + "/" + localPath);
+  // size_t offset = 
+  return registerString((dir.ends_with("/")) ? dir + localPath : dir + "/" + localPath);
 
-  return cast<ConstantInt>(Constant::getIntegerValue(IntegerType::get(C, 64ul), APInt(offset, 64ul)));
+  // return cast<ConstantInt>(Constant::getIntegerValue(IntegerType::get(C,64ul), APInt(64ul,offset)));
 }
 
-ConstantInt* MetadataHandler::getSourceLine(const DILocation* Loc, LLVMContext& C) const {
-  return cast<ConstantInt>(Constant::getIntegerValue(IntegerType::get(C, 64ul), APInt(Loc->getLine(), 64ul)));
+inline ConstantInt* MetadataHandler::getSourceLine(const DILocation* Loc, LLVMContext& C) const {
+  return cast<ConstantInt>(Constant::getIntegerValue(EntryTy->getTypeAtIndex(2ul), APInt(64ul,Loc->getLine())));
 }
 
-ConstantInt* MetadataHandler::getSourceCol(const DILocation* Loc, LLVMContext& C) const {
-  return cast<ConstantInt>(Constant::getIntegerValue(IntegerType::get(C, 64ul), APInt(Loc->getColumn(), 64ul)));
+inline ConstantInt* MetadataHandler::getSourceCol(const DILocation* Loc, LLVMContext& C) const {
+  return cast<ConstantInt>(Constant::getIntegerValue(EntryTy->getTypeAtIndex(3ul), APInt(64ul,Loc->getColumn())));
 }
 
-ConstantInt* MetadataHandler::getCalledFn(const StringRef& FnName, LLVMContext& C) {
-  uint64_t offset = registerString(FnName);
-  return cast<ConstantInt>(Constant::getIntegerValue(IntegerType::get(C, 64ul), APInt(offset, 64ul)));
+inline size_t MetadataHandler::getCalledFn(const StringRef& FnName/* , LLVMContext& C */) {
+  // uint64_t offset = 
+  return registerString(FnName);
+  // return cast<Constant>(Constant::getIntegerValue(IntegerType::get(C,64ul), APInt(64ul,offset)));
+}
+
+inline raw_ostream& operator << (raw_ostream& out, const scabbard::InstrData& data) {
+  std::bitset<16> bs(data);
+    return (out << std::string((data & InstrData::_RUNTIME_CONDITIONAL) ? "RT_COND, " : "")
+                << std::string((data & InstrData::ON_DEVICE) ? "ON_DEVICE, " : "")
+                << std::string((data & InstrData::ON_HOST) ? "ON_HOST, " : "")
+                << std::string((data & InstrData::UNKNOWN_HEAP) ? "UNKNOWN_HEAP, " : "")
+                << std::string((data & InstrData::DEVICE_HEAP) ? "DEVICE_HEAP, " : "")
+                << std::string((data & InstrData::HOST_HEAP) ? "HOST_HEAP, " : "")
+                << std::string((data & InstrData::ATOMIC) ? "ATOMIC, " : "")
+                << std::string((data & InstrData::MANAGED_MEM) ? "MANAGED_MEM, " : "")
+                << std::string((data & InstrData::READ) ? "READ, " : "")
+                << std::string((data & InstrData::WRITE) ? "WRITE, " : "")
+                << std::string((data & InstrData::ALLOCATE) ? "ALLOCATE, " : "")
+                << std::string((data & InstrData::FREE) ? "FREE, " : "")
+                << std::string((data & InstrData::LAUNCH_EVENT) ? "KERNEL_LAUNCH, " : "")
+                << std::string((data & InstrData::SYNC_EVENT) ? "SYNC_EVENT, " : "")
+                << std::string((data & InstrData::FREE) ? "FREE, " : "")
+                << std::string((data & InstrData::_OPT_USED) ? "OPT_DATA, " : "")
+                << std::string((data & InstrData::ASYNC) ? "ASYNC_OP, " : ""));
 }
 
 } // namespace <anon>

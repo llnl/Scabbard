@@ -19,8 +19,8 @@ namespace scabbard {
   {
     std::bitset<16> bs(data);
     return (out << std::string((data & InstrData::_RUNTIME_CONDITIONAL) ? "RT_COND, " : "")
-         << std::string((data & InstrData::ON_DEVICE) ? "INSTR_ON_DEVICE, " : "")
-         << std::string((data & InstrData::ON_HOST) ? "INSTR_ON_HOST, " : "")
+         << std::string((data & InstrData::ON_DEVICE) ? "ON_DEVICE, " : "")
+         << std::string((data & InstrData::ON_HOST) ? "ON_HOST, " : "")
          << std::string((data & InstrData::UNKNOWN_HEAP) ? "UNKNOWN_HEAP, " : "")
          << std::string((data & InstrData::DEVICE_HEAP) ? "DEVICE_HEAP, " : "")
          << std::string((data & InstrData::HOST_HEAP) ? "HOST_HEAP, " : "")
@@ -34,6 +34,7 @@ namespace scabbard {
          << std::string((data & InstrData::SYNC_EVENT) ? "SYNC_EVENT, " : "")
          << std::string((data & InstrData::FREE) ? "FREE, " : "")
          << std::string((data & InstrData::_OPT_USED) ? "OPT_DATA, " : "")
+         << std::string((data & InstrData::ASYNC) ? "ASYNC_OP, " : "")
          << "(0b" << bs << ")");
   }
 
