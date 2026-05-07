@@ -123,7 +123,7 @@ add_subdirectory(lib)
 add_subdirectory(libtrace)
 add_subdirectory(instr)
 add_subdirectory(verif)
-add_subdirectory(interception)
+add_subdirectory(cli)
 
 install(TARGETS scabbard instr trace trace.device
         DESTINATION  ${CMAKE_INSTALL_PREFIX}/

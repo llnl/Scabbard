@@ -154,7 +154,7 @@ struct TraceData {
   std::uintptr_t      ptr         = 0ull;               //  8B ( 64b)  8B ( 64b)
   const SrcMetadata*  metadata    = nullptr;            //  8B ( 64b)  8B ( 64b)
   std::size_t         _OPT_DATA   = 0ull;               //  8B ( 64b)  8B ( 64b)
-  //                                                   TOTALS: 58B (464b) 64B (512b)
+  //                                               TOTALS: 58B (464b) 64B (512b)
   //                                           DATA OCCUPANCY: 90.06%
   // Constructors
   [[clang::disable_sanitizer_instrumentation, gnu::flatten, gnu::always_inline]] 

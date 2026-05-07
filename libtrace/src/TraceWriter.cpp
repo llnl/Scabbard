@@ -125,38 +125,6 @@ namespace scabbard {
       write(reinterpret_cast<const char*>(&EXE_PATH_LEN), sizeof(uint64_t));
       write(executable_path.c_str(), EXE_PATH_LEN);
       write(BUF, EXE_PATH_LEN % WORD_LEN); // string end buffer
-
-      // // write links to metadata table and end of trace table (recorded in finalize)
-      // const auto& srcs = *metadata.get_srcs();
-      // std::cerr << "\n[scabbard:trace:dbg] src's registered at this point: " << srcs.size() << std::endl;
-      // // record number of entries in the table
-      // uint64_t num_buf = srcs.size();
-      // write(reinterpret_cast<const char*>(&num_buf), sizeof(uint64_t));
-      // for (auto src : srcs) {
-      //   num_buf = src.size()+1;
-      //   write(reinterpret_cast<const char*>(&num_buf), sizeof(uint64_t));
-      //   write(src.c_str(), src.size());
-      //   write(BUF, 1ul); // write null at end of string for separation
-      // }
-      // write(BUF, ((std::streamoff)out.tellp()) % WORD_LEN); // word align for next section
-
-      // // record the jump table for the source files
-      // assert((sizeof(std::streamoff) == WORD_LEN) && "stream offset is the right size to be written");
-      // std::streamoff pos = ((std::streamoff)out.tellp()) + (std::streamoff)(WORD_LEN*(srcs.size()+1));
-      // write(reinterpret_cast<const char*>(&pos), WORD_LEN);
-      // for (const auto& src : srcs) {
-      //   pos += (std::streamoff)src.size();
-      //   write(reinterpret_cast<const char*>(&pos), WORD_LEN);
-      // }
-      // write(BUF,WORD_LEN); // write end of table null
-      // // record the actual src strings
-      // for (const auto& src : srcs) {
-      //   write(src.c_str(), src.size());
-      //   std::cerr << "\n[scabbard:trace:dbg] encoding src file: `" << src << "`\n";
-      // }
-      // std::cerr << std::endl;
-      // write(BUF, ((std::streamoff)out.tellp()) % WORD_LEN); // word align for next section
-      
     }
 
     [[clang::disable_sanitizer_instrumentation, gnu::used, gnu::retain]] 
@@ -171,7 +139,6 @@ namespace scabbard {
         out.write(TraceWriter::BUF, sizeof(TraceData) % TraceWriter::WORD_LEN);
       return out;
     }
-    
   
   } //?namespace trace
 } //?namespace scabbard
