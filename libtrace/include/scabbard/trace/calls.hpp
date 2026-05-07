@@ -42,10 +42,10 @@ namespace scabbard {
     namespace device {
       
       __device__
-      void trace_append$mem(void* deviceTracker, const InstrData data, const void* PTR, const std::uint64_t SRC_ID) 
+      void trace_append$mem(void* deviceTracker, const InstrData data, const void*const PTR, const void*const SRC_ID) 
         asm (SCABBARD_DEVICE_CALLBACK_APPEND_MEM_NAME);
       __device__ 
-      void trace_append$alloc(void* deviceTracker, const InstrData data, const void* PTR, const std::uint64_t SRC_ID, const std::size_t SIZE) 
+      void trace_append$alloc(void* deviceTracker, const InstrData data, const void*const PTR, const void*const SRC_ID, const std::size_t SIZE) 
         asm (SCABBARD_DEVICE_CALLBACK_APPEND_ALLOC_NAME);
 
 
@@ -54,16 +54,16 @@ namespace scabbard {
     namespace host {
 
       __host__ 
-      void trace_append$mem(const InstrData data, const void* PTR, const std::uint64_t SRC_ID) 
+      void trace_append$mem(const InstrData data, const void*const PTR, const void* const SRC_ID) 
         asm (SCABBARD_HOST_CALLBACK_APPEND_MEM_NAME);
       __host__ 
-      void trace_append$mem$cond(InstrData data, const void* PTR, const std::uint64_t SRC_ID) 
+      void trace_append$mem$cond(InstrData data, const void*const PTR, const void* const SRC_ID) 
         asm (SCABBARD_HOST_CALLBACK_APPEND_MEM_COND_NAME);
       __host__ 
-      void trace_append$alloc(const InstrData data, const void* PTR, const std::uint64_t SRC_ID, const std::size_t SIZE) 
+      void trace_append$alloc(const InstrData data, const void*const PTR, const void* const SRC_ID, const std::size_t SIZE) 
         asm (SCABBARD_HOST_CALLBACK_APPEND_ALLOC_NAME);
       __host__ 
-      void trace_append$alloc$cond(const InstrData data, const void* PTR, const std::uint64_t SRC_ID, const std::size_t SIZE) 
+      void trace_append$alloc$cond(const InstrData data, const void*const PTR, const void* const SRC_ID, const std::size_t SIZE) 
         asm (SCABBARD_HOST_CALLBACK_APPEND_ALLOC_COND_NAME);
       
     } // namespace host
@@ -85,7 +85,7 @@ namespace scabbard {
      *        and rebalance the logical vector clock.
      */
     __host__
-    void register_job_callback(void* dt, hipStream_t stream, const std::uint64_t SRC_ID)
+    void register_job_callback(void* dt, hipStream_t stream, const void*const SRC_ID)
       asm (SCABBARD_CALLBACK_REGISTER_JOB_CALLBACK);
 
 

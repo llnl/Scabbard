@@ -15,12 +15,9 @@
 #include "Enums.hpp"
 #include "Metadata.hpp"
 
-#ifdef __scabbard_hip_compile
 # include <hip/hip_ext.h>
 # include <hip/hip_runtime_api.h>
-#else
-# include <scabbard/dim3.hpp>
-#endif
+
 
 #include <cstdint>
 #include <cstring>
@@ -37,13 +34,9 @@ struct blockId_t {
   uint32_t x = 0u;
   uint16_t y = 0u;
   uint16_t z = 0u;
-# ifdef __scabbard_hip_compile
-    [[clang::disable_sanitizer_instrumentation, gnu::flatten, gnu::always_inline]] 
-    __host__ __device__ 
-    inline blockId_t(const dim3& blockId)
-# else
-    inline blockId_t(const scabbard::dim3& blockId)
-# endif
+  [[clang::disable_sanitizer_instrumentation, gnu::flatten, gnu::always_inline]] 
+  __host__ __device__ 
+  inline blockId_t(const dim3& blockId)
     : x(blockId.x),  
       y(blockId.y),
       z(blockId.z)
@@ -57,13 +50,10 @@ struct threadId_t {
   uint16_t x;
   uint16_t y;
   uint8_t z;
-# ifdef __scabbard_hip_compile
-    [[clang::disable_sanitizer_instrumentation, gnu::flatten, gnu::always_inline]] 
-    __host__ __device__ 
-    inline threadId_t(const dim3& threadId)
-# else
-    inline threadId_t(const scabbard::dim3& threadId)
-# endif
+
+  [[clang::disable_sanitizer_instrumentation, gnu::flatten, gnu::always_inline]] 
+  __host__ __device__ 
+  inline threadId_t(const dim3& threadId)
     : x(threadId.x),  
       y(threadId.y),
       z(threadId.z)
@@ -76,7 +66,7 @@ static_assert(sizeof(threadId_t) <= __WORDSIZE, "threadId_t is of the correct si
 struct jobId_t {
   uint16_t JOB = 0u;
   uint16_t STREAM = 0u;
-# ifdef __scabbard_hip_compile
+
   [[clang::disable_sanitizer_instrumentation, gnu::flatten, gnu::always_inline]] 
   __host__
   jobId_t(uint16_t JOB_, const hipStream_t STREAM_)
@@ -85,9 +75,6 @@ struct jobId_t {
   [[clang::disable_sanitizer_instrumentation, gnu::flatten, gnu::always_inline]] 
   __host__
   static inline uint16_t hash_stream_ptr(const hipStream_t STREAM) 
-# else
-  static inline uint16_t hash_stream_ptr(const std::size_t STREAM) 
-# endif
   {
     if (not STREAM) return 0u;
     return (((std::uint64_t)STREAM) % (UINT16_MAX-1u)) + 1u;
@@ -132,14 +119,13 @@ union ThreadId {
   HostThreadId host;
   DeviceThreadId device;
   void* _NONE_;
-# ifdef __scabbard_hip_compile
+  [[clang::disable_sanitizer_instrumentation, gnu::flatten, gnu::always_inline]]
   __device__ inline ThreadId(const jobId_t& job_, const dim3& blockId_, const dim3& threadId_) { device = DeviceThreadId(job_, blockId_, threadId_); }
   [[clang::disable_sanitizer_instrumentation, gnu::flatten, gnu::always_inline]] 
   __host__
   ThreadId() { std::memset(this,0,sizeof(ThreadId)); this->host = ::std::this_thread::get_id(); }
   [[clang::disable_sanitizer_instrumentation, gnu::flatten, gnu::always_inline]] 
   __host__ __device__
-# endif
   ThreadId(void* _) { std::memset(this,0,sizeof(ThreadId)); }
   // [[clang::disable_sanitizer_instrumentation, gnu::flatten, gnu::always_inline]] 
   // __host__ __device__ bool ok() const { return this->_NONE_ != nullptr; } 
@@ -161,88 +147,54 @@ inline const T& reading_cast(const char* buffer, const std::size_t index, const 
 
 struct TraceData {
 
-# ifdef __scabbard_hip_compile
-  //DATA TYPE   NAME          DEFAULT VALUE          SIZE       W/PADDING (64b arch)
-  std::size_t   time_stamp  = 0ul;                //  8B ( 64b)  8B ( 64b)
-  InstrData     data        = InstrData::NEVER;   //  2B ( 16b)  8B ( 64b)
-  ThreadId      threadId    = ((void*)nullptr);   // 24B (192b) 24B (192b)
-  const void*   ptr         = nullptr;            //  8B ( 64b)  8B ( 64b)
-  std::uint64_t metadata    = 0ul;                //  8B ( 64b)  8B ( 64b)
-  std::size_t   _OPT_DATA   = 0ul;                //  8B ( 64b)  8B ( 64b)
-  //                                        TOTALS:  58B (464b) 64B (512b) (90.06% data occupancy)
-# else
-  std::size_t   time_stamp  = 0ul;
-  InstrData     data        = InstrData::NEVER;
-  ThreadId      threadId    = ((void*)nullptr);
-  std::size_t   ptr         = 0ul;
-  std::uint64_t metadata    = 0ul;
-  std::size_t   _OPT_DATA   = 0ul;
-#endif
+  //DATA TYPE         NAME          DEFAULT VALUE          SIZE       W/PADDING (64b arch)
+  std::size_t         time_stamp  = 0ull;               //  8B ( 64b)  8B ( 64b)
+  InstrData           data        = InstrData::NEVER;   //  2B ( 16b)  8B ( 64b)
+  ThreadId            threadId    = ((void*)nullptr);   // 24B (192b) 24B (192b)
+  std::uintptr_t      ptr         = 0ull;               //  8B ( 64b)  8B ( 64b)
+  const SrcMetadata*  metadata    = nullptr;            //  8B ( 64b)  8B ( 64b)
+  std::size_t         _OPT_DATA   = 0ull;               //  8B ( 64b)  8B ( 64b)
+  //                                                   TOTALS: 58B (464b) 64B (512b)
+  //                                           DATA OCCUPANCY: 90.06%
   // Constructors
-# ifdef __scabbard_hip_compile
-    [[clang::disable_sanitizer_instrumentation, gnu::flatten, gnu::always_inline]] 
-    __host__ __device__ 
-# endif
+  [[clang::disable_sanitizer_instrumentation, gnu::flatten, gnu::always_inline]] 
+  __host__ __device__ 
   TraceData() = default;
-# ifdef __scabbard_hip_compile
-    [[clang::disable_sanitizer_instrumentation, gnu::flatten, gnu::always_inline]] 
-    __host__ __device__ 
-# endif
+
+  [[clang::disable_sanitizer_instrumentation, gnu::flatten, gnu::always_inline]] 
+  __host__ __device__
   TraceData(const TraceData& other) { std::memcpy(this, &other, sizeof(TraceData)); }
-# ifndef __scabbard_hip_compile
-  TraceData(const void* src_ptr) { std::memcpy(this, src_ptr, sizeof(TraceData)); }
-  // TraceData(const char* buffer) : TraceData(reinterpret_cast<void*>(buffer)) {}
-  // only use this constructor if WORD_LEN in file trace file is different from system __WORDSIZE
-  TraceData(const char* buffer, const size_t WORD_LEN);
-# else
+
   [[clang::disable_sanitizer_instrumentation, gnu::flatten, gnu::always_inline]]
-  __device__ TraceData(const std::size_t time_stamp_, InstrData data_, 
-                        const jobId_t& JOB_ID, const dim3& blockId_, const dim3 threadId_,
-                        const void* ptr_, 
-                        const std::uint64_t metadata_,
-                        const std::size_t size_=0ul)
+  __device__ 
+  TraceData(const std::size_t time_stamp_, InstrData data_, 
+            const jobId_t& JOB_ID, const dim3& blockId_, const dim3 threadId_,
+            const std::uintptr_t ptr_, const void*const metadata_, 
+            const std::size_t size_=0ull)
     : time_stamp(time_stamp_), data(data_), threadId(JOB_ID, blockId_, threadId_),
-      ptr(ptr_), metadata(metadata_), _OPT_DATA(size_)
+      ptr(ptr_), metadata((SrcMetadata*)metadata_), _OPT_DATA(size_)
     {}
-  // [[clang::disable_sanitizer_instrumentation, gnu::flatten, gnu::always_inline]] 
-  // __host__
-  // TraceData(InstrData data_, const void* ptr_, const LocMData_t& metadata_, std::size_t opt_data=0ul)
-  //   : time_stamp(std::chrono::high_resolution_clock::now().time_since_epoch().count()),
-  //     data(data_), threadId(), ptr(ptr_), metadata(metadata_), _OPT_DATA(opt_data)
-  // {}
+
   [[clang::disable_sanitizer_instrumentation, gnu::flatten, gnu::always_inline]]
   __host__
-  TraceData(size_t time_stamp_, InstrData data_, const ThreadId& threadId_,
-                    const void* ptr_, const size_t metadata_, std::size_t opt_data)
+  TraceData(const size_t time_stamp_, const InstrData data_, const ThreadId& threadId_,
+                    const std::uintptr_t ptr_, const SrcMetadata*const metadata_, 
+                    const std::size_t opt_data)
     : time_stamp(time_stamp_), data(data_), threadId(threadId_),
       ptr(ptr_), metadata(metadata_), _OPT_DATA(opt_data)
   {}
-# endif
-# ifdef __scabbard_hip_compile
-    [[clang::disable_sanitizer_instrumentation, gnu::flatten, gnu::always_inline]] 
-    __host__ __device__ 
-# endif 
-  inline bool empty() const { return data == InstrData::NEVER; }
-  // Explicit operators
-# ifdef __scabbard_hip_compile
-  [[clang::disable_sanitizer_instrumentation, gnu::flatten, gnu::always_inline]] 
-  __device__ __host__
-  inline TraceData& operator = (const TraceData& other) = default; /* { 
-    this->time_stamp = other.time_stamp; 
-    this->data = other.data; 
-    this->threadId = other.threadId;
-    this->ptr = other.ptr;
-    this->metadata = other.metadata;
-    this->_OPT_DATA = other._OPT_DATA;
-    return *this; 
-  } */
-# else
-  inline TraceData& operator = (const TraceData& other) { std::memcpy(this, &other, sizeof(TraceData)); return *this; }
-# endif
-# ifdef __scabbard_hip_compile
+
   [[clang::disable_sanitizer_instrumentation, gnu::flatten, gnu::always_inline]] 
   __host__ __device__ 
-# endif 
+  inline bool empty() const { return data == InstrData::NEVER; }
+
+  // Explicit operators
+  [[clang::disable_sanitizer_instrumentation, gnu::flatten, gnu::always_inline]] 
+  __device__ __host__
+  inline TraceData& operator = (const TraceData& other) = default; 
+
+  [[clang::disable_sanitizer_instrumentation, gnu::flatten, gnu::always_inline]] 
+  __host__ __device__ 
   inline operator bool () const { return data != InstrData::NEVER; }
 };
 

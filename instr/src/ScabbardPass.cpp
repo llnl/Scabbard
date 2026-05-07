@@ -187,7 +187,24 @@ private:
 
 /// @brief Class for standard design decisions common to all Scabbard Instrumentation passes
 class IScabbardInstrPass {
+
+  /// @brief get the ctor's or dtors from the specifed global variable
+  /// @param G_torArr global variable containing the array to extract global ctors or dtors from.
+  void collect_tors(const GlobalVariable* G_torArr) {
+    if (const auto* val = dyn_cast_or_null<ConstantArray>(G_torArr->getInitializer())) {
+      for (const auto& _entry : val->operands()) 
+        if (const auto* entry = dyn_cast_or_null<ConstantStruct>(_entry.get())) {
+          if (const auto _torFn = dyn_cast_or_null<Function>(entry->getAggregateElement(1u))) {
+            Module_tors.insert(_torFn);
+          }
+      }
+    }
+  }
+
 protected:
+  /// @brief set of all ctors and dtors in the module for quick reference
+  std::set<const Function*> Module_tors;
+
 public:
   /// @brief Produce a string for log/error messages that gives the source file and location in 
   ///        \c `\"<filepath>\":<line>,<col>` format
@@ -203,6 +220,12 @@ public:
 
   /// @brief The general kind of memory space of a pointer type in a AMD Device.
   using PtrOrigin = scabbard::InstrData;
+
+  IScabbardInstrPass(Module& M) {
+    if (const auto ctors = M.getGlobalVariable("llvm.global_ctors")) { collect_tors(ctors); }
+    if (const auto dtors = M.getGlobalVariable("llvm.global_dtors")) { collect_tors(dtors); }
+  }
+  IScabbardInstrPass() = delete;
 
 };
 
@@ -220,7 +243,7 @@ protected:
   /// @brief a handy pointer to the oft used IR Integer Type for the RTL's TraceData
   IntegerType* const TraceDataTy = nullptr;
   /// @brief a handy pointer to the oft used IR Integer Type for the RTL's source code location metadata ID
-  IntegerType* const LocDataTy = nullptr;
+  PointerType* const LocDataTy = nullptr;
   /// @brief a handy pointer to the oft used IR Integer Type for the RTL's exta info (size_t/uint64_t) type.
   IntegerType* const ExtraDataTy = nullptr;
   /// @brief a handy pointer to the oft used IR Integer Type unsigned 64-bit.
@@ -234,7 +257,7 @@ public:
     VoidTy(Type::getVoidTy(M.getContext())),
     PtrTy(PointerType::get(M.getContext(), 0ull)),
     TraceDataTy(IntegerType::get(M.getContext(), sizeof(InstrData)*8)),
-    LocDataTy(IntegerType::get(M.getContext(), 64u)),
+    LocDataTy(PointerType::get(M.getContext(), 0ull)),
     ExtraDataTy(IntegerType::get(M.getContext(), 64u)),
     u64Ty(IntegerType::get(M.getContext(), 64u)),
     u32Ty(IntegerType::get(M.getContext(), 64u))
@@ -323,7 +346,8 @@ protected:
   /// @param F the function to examine
   /// @return \c bool - if \param F should be instrumented or skipped.
   virtual inline bool isInstrumentableFn(const Function& F) const {
-    return (not F.isDeclaration()                           // exclude any functions not defined
+    return (Module_tors.count(&F) == 0                      // exclude any module ctor or dtor
+            && not F.isDeclaration()                        // exclude any functions not defined
             && not F.getName().starts_with("llvm.")         // exclude intrinsics
             && not F.getName().starts_with("scabbard.")     // exclude name mangled scabbard rtl functions
             && not F.getName().contains("__device_stub__")  // exclude device stubFn's from regular instruction instr
@@ -449,7 +473,7 @@ public:
 
   IScabbardHostPass() = delete;
   IScabbardHostPass(Module& M, const Triple& Triple_) : 
-    IRHelper(M), 
+    IScabbardInstrPass(M), IRHelper(M), 
     _Triple(Triple_) 
     {}
     
@@ -486,11 +510,19 @@ public:
 
     // instrument the GPU driver API calls as appropriate for the specific API suite.
     changed |= handleAPICalls(M, FAM);
+
+    // add in RTL initializer and de-initializer
+    if (auto mainFn = dyn_cast_or_null<Function>(M.getFunction("main"))) {
+      auto CI = llvm::CallInst::Create(ScabbardRTL.scabbard_init, "");
+      auto firstInst = &(*(mainFn->getEntryBlock().getFirstInsertionPt()));
+      CI->insertBefore(firstInst);
+      CI->setDebugLoc(firstInst->getDebugLoc());
+    }
     
     if (changed) //NOTE: this method of metadata will need to be altered to work with instrumenting durring compilation instead of LTO.
       ScabbardRTL.Metadata.finalizeMetadata(M);
     else
-      MetadataVar->removeFromParent();    // remove metadata global if no instrumentation occurred
+      MetadataVar->eraseFromParent();    // remove metadata global if no instrumentation occurred
 
     // errs() << "\n\n[scabbard.instr.host:DBG] Module written to: \"" << _DBG::write_module_to_file(M,"host.postInstr") << "\"\n\n"; //DEBUG
 
@@ -594,7 +626,7 @@ protected:
 
 public:
   IScabbardDevicePass() = delete;
-  IScabbardDevicePass(Module& M) : IRHelper(M) {}
+  IScabbardDevicePass(Module& M) : IScabbardInstrPass(M), IRHelper(M) {}
 
 private:
   /// @brief Expand all defined functions to accept a pointer to a \c JobState object.
@@ -621,9 +653,10 @@ protected:
   /// @param F the \c llvm::Function to check
   /// @return \c bool - true if it's appropriate to instrument the fn.
   virtual bool isInstrumentableFn(const Function& F) const final {
-    return (not F.isDeclaration()                        // exclude any functions not defined
+    return (Module_tors.count(&F) == 0                   // exclude any module ctor or dtor
+            && not F.isDeclaration()                     // exclude any functions not defined
             && not F.getName().starts_with("llvm.")      // exclude intrinsics
-            && not F.getName().starts_with("scabbard.")     // exclude name mangled scabbard rtl functions
+            && not F.getName().starts_with("scabbard.")  // exclude name mangled scabbard rtl functions
             && not NO_INSTR_FNS.count(F.getName().str()) // a manually excluded function (usually c++ builtin)
             && not isDeviceVendorBuiltin(F)              // a device/vendor specific function. (should be intrinsics
             // and -> undeclared)
@@ -886,7 +919,7 @@ public:
     if (changed) //NOTE: this method of metadata will need to be altered to work with instrumenting durring compilation instead of LTO.
       ScabbardRTL.Metadata.finalizeMetadata(M);
     else
-      MetadataVar->removeFromParent();    // remove metadata global if no instrumentation occurred
+      MetadataVar->eraseFromParent();    // remove metadata global if no instrumentation occurred
 
     // errs() << "\n\n[scabbard.instr.device:DBG] Module written to: \"" << _DBG::write_module_to_file(M,"device.postInstr") << "\"\n\n"; //DEBUG
 
@@ -1405,8 +1438,9 @@ bool IScabbardHostPass::instrumentInScabbardFunc(LoopInfo& LI, Instruction& I, V
     errs() << "\n[scabbard.instr.host.metadata:WARN] Failed to insert instruction into the metadata system!"
               "\n[scabbard.instr.host.metadata:WARN]   -> make sure debug info is turned on (`-g`)\n";
 
+  CallInst* ci = nullptr;
   if (ExtraData == nullptr)
-    auto _ = CallInst::Create(
+    ci = CallInst::Create(
         (PO & UNKNOWN_HEAP) ? ScabbardRTL.trace_append$mem$cond : ScabbardRTL.trace_append$mem,
         std::array<Value*, 3ull>{
             ConstantInt::get(TraceDataTy, APInt(sizeof(InstrData)*8, InstrContext | PO)),
@@ -1417,7 +1451,7 @@ bool IScabbardHostPass::instrumentInScabbardFunc(LoopInfo& LI, Instruction& I, V
         /* insertBefore= */ &I
       );
   else 
-    auto _ = CallInst::Create(
+    ci = CallInst::Create(
         (PO & UNKNOWN_HEAP) ? ScabbardRTL.trace_append$alloc$cond : ScabbardRTL.trace_append$alloc,
         std::array<Value*, 4ull>{
             ConstantInt::get(TraceDataTy, APInt(sizeof(InstrData)*8, InstrContext | PO)),
@@ -1428,7 +1462,8 @@ bool IScabbardHostPass::instrumentInScabbardFunc(LoopInfo& LI, Instruction& I, V
         "ScabbardRTL." + I.getName(), 
         /* insertBefore= */ &I
       );
-
+  
+  ci->setDebugLoc(I.getDebugLoc());
   
   return true;
 }
@@ -2164,17 +2199,18 @@ bool IScabbardDevicePass::instrumentInScabbardFunc(LoopInfo& LI, Instruction& I,
 
     Function& fn = *I.getFunction();
     Value* kernelDeviceTracker = fn.getArg(fn.arg_size() - 1ul);
-    CallInst::Create(
-        ScabbardFn,
-        std::array<Value*, 4u>{
-            kernelDeviceTracker,
-            ConstantInt::get(TraceDataTy, APInt(sizeof(InstrData)*8, InstrContext | PO)),
-            (castInst ? castInst : Ptr),
-            locID
-          },
-        "scabbard." + I.getName(), 
-        /* insertBefore= */ &I
-      );
+    auto ci = CallInst::Create(
+                  ScabbardFn,
+                  std::array<Value*, 4u>{
+                      kernelDeviceTracker,
+                      ConstantInt::get(TraceDataTy, APInt(sizeof(InstrData)*8, InstrContext | PO)),
+                      (castInst ? castInst : Ptr),
+                      locID
+                    },
+                  "scabbard." + I.getName(), 
+                  /* insertBefore= */ &I
+                );
+    ci->setDebugLoc(I.getDebugLoc());
     return true;
   }
 
@@ -2194,7 +2230,7 @@ Constant* MetadataHandler::getGEP(GlobalVariable* GV, size_t Index) const {
   return ConstantExpr::getGetElementPtr(GV->getValueType(), GV, //NOTE: replace inbounds if necessary
                         std::array<Constant*,2u>{
                           ConstantInt::get(EntryTy->getTypeAtIndex(2u), //u64
-                                            APInt(64u, 0ul)),  //index through global var ptr
+                                            APInt(64u, 0ull)),  //index through global var ptr
                           ConstantInt::get(EntryTy->getTypeAtIndex(2u), //u64
                                             APInt(64u, Index))  //index into the array
                         }, /*isInbounds=*/false);
@@ -2213,7 +2249,7 @@ GlobalVariable* MetadataHandler::initializeMetadata(Module& M, unsigned AddrSpac
                                 }, "scabbard.metadata.entryTy", false);
   const auto ArrTy = ArrayType::get(EntryTy, UINT32_MAX); // temp type
   const auto Arr = ConstantArray::get(ArrTy, {});         // temp contents
-  MetadataVar = new GlobalVariable(M, cast<Type>(ArrTy), /*IsConstant=*/true, GlobalValue::InternalLinkage, Arr,
+  MetadataVar = new GlobalVariable(M, cast<Type>(ArrTy), /*IsConstant=*/true, GlobalValue::ExternalLinkage, Arr,
                                     "scabbard.metadata.tmp", nullptr, GlobalValue::NotThreadLocal, AddrSpace);
   return MetadataVar;
 }
@@ -2222,7 +2258,7 @@ void MetadataHandler::finalizeMetadata(Module& M) {
   SmallVector<Constant*, 16ul> Contents(Instructions.size());
   auto arr = ConstantDataArray::getString(M.getContext(), "<unknownFile>:<unknownFn>");
   auto stringsVar = new GlobalVariable(M, ArrayType::get(IntegerType::get(M.getContext(),8u), UINT32_MAX), 
-                                        /*IsConstant=*/true, GlobalValue::InternalLinkage,
+                                        /*IsConstant=*/true, GlobalValue::ExternalLinkage,
                                         arr, "scabbard.metadata.strings.tmp", nullptr, GlobalValue::NotThreadLocal, 
                                         MetadataVar->getAddressSpace());
   for (const auto& [I, ID] : Instructions) {
@@ -2261,16 +2297,18 @@ void MetadataHandler::finalizeMetadata(Module& M) {
                                 Constant::getIntegerValue(EntryTy->getTypeAtIndex(3ul), APInt(64ul, 0ul))});
   }
 
-  stringsVar->replaceAllUsesWith(outputStrings(M, MetadataVar->getAddressSpace()));
-  stringsVar->eraseFromParent();
-
+  auto _strVar = outputStrings(M, MetadataVar->getAddressSpace());
+  stringsVar->replaceAllUsesWith(_strVar);  // replace with completed variable
+  stringsVar->eraseFromParent();            // cleanup old temp
+  
   const auto ArrTy = ArrayType::get(EntryTy, Instructions.size());
   const auto Arr = ConstantArray::get(ArrTy, Contents);
-  auto _MetadataVar = new GlobalVariable(M, cast<Type>(ArrTy), /*IsConstant=*/true, GlobalValue::InternalLinkage, Arr,
-                                          "scabbard.metadata", nullptr, GlobalValue::NotThreadLocal, 
-                                          MetadataVar->getAddressSpace());
+  auto _MetadataVar = new GlobalVariable(M, cast<Type>(ArrTy), /*IsConstant=*/true,  GlobalValue::ExternalLinkage, // GlobalValue::AvailableExternallyLinkage,
+                                          Arr, "scabbard.metadata", nullptr,
+                                          GlobalValue::NotThreadLocal, MetadataVar->getAddressSpace());
   MetadataVar->replaceAllUsesWith(_MetadataVar);  // replace with completed version
   MetadataVar->eraseFromParent();                // cleanup old temp
+  appendToUsed(M, {_MetadataVar,_strVar});       // register them as used variables
 }
 
 uint64_t MetadataHandler::registerString(const Twine& Str) {
@@ -2284,7 +2322,7 @@ uint64_t MetadataHandler::registerString(const Twine& Str) {
 
 GlobalVariable* MetadataHandler::outputStrings(Module& M, unsigned AddrSpace) const {
   auto Arr = ConstantDataArray::getString(M.getContext(), ConcatenatedString);
-  return new GlobalVariable(M, cast<Type>(Arr->getType()), /*IsConstant=*/true, GlobalValue::InternalLinkage, Arr,
+  return new GlobalVariable(M, cast<Type>(Arr->getType()), /*IsConstant=*/true, GlobalValue::ExternalLinkage, Arr,
                             "scabbard.metadata.strings", nullptr, GlobalValue::NotThreadLocal, AddrSpace);
 }
 

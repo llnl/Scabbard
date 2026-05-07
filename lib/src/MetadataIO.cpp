@@ -23,7 +23,7 @@ namespace scabbard {
 std::string to_string(const SrcMetadata& meta)
 {
   std::stringstream out;
-  out << '[' << meta.modType << "] \"" << meta.srcFile << ':' << meta.line << ',' << meta.col << "\"";
+  out << '[' << meta.fnName << "] \"" << meta.srcFile << ':' << meta.line << ',' << meta.col << "\"";
   return out.str();
 }
 
@@ -31,11 +31,10 @@ std::string repr(const SrcMetadata& meta)
 {
   std::stringstream out;
   out << "(SrcMetadata){"
-         "srcID=" << meta.srcID << ", "
          "srcFile=\"" << meta.srcFile << "\", "
+         "fnName=\"" << meta.fnName << "\", "
          "line=" << meta.line << ", "
-         "col=" << meta.col << ", "
-         "modType=" << meta.modType
+         "col=" << meta.col
       << '}';
   return out.str();
 }

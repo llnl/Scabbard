@@ -45,7 +45,7 @@ namespace scabbard {
       for (auto dt : device_trackers)
         if (dt != nullptr)
           if (hipFree(dt) != hipSuccess)
-            std::cerr << "\n[scabbard::trace::dtor::ERROR] could not deallocate device side buffer!\n" 
+            std::cerr << "\n[scabbard.trace.dtor:ERROR] could not deallocate device side buffer!\n" 
                       << std::endl;
       if (tw != nullptr) {
         tw->finalize();
@@ -134,7 +134,7 @@ namespace scabbard {
     //     return;
     //   if (deviceQ != nullptr)
     //     if (hipFree(deviceQ) != hipSuccess) {
-    //       std::cerr << "\n[scabbard::trace::AsyncQueue::ERROR] could not properly deallocate device side buffer!\n"
+    //       std::cerr << "\n[scabbard.trace.AsyncQueue:ERROR] could not properly deallocate device side buffer!\n"
     //                 << std::endl;
     //       exit(EXIT_FAILURE);
     //     }
@@ -188,16 +188,17 @@ namespace scabbard {
     void AsyncQueue::process_device(TraceWriter& tw)
     {
       mx_device.lock();
-      for (auto& dt : device_trackers) {
+      for (auto dt : device_trackers) {
         if (dt == nullptr) continue;
         const size_t NEXT = dt->next; // get copy of atomic value to skip atomic reads since the buffer is frozen
-        const size_t TRUE_SPAN = NEXT - dt->next_read;  //DEBUG
-        const size_t SPAN = (TRUE_SPAN < SCABBARD_DEVICE_TRACKER_BUFF_LENGTH) ? TRUE_SPAN : SCABBARD_DEVICE_TRACKER_BUFF_LENGTH; //DEBUG
-        std::cerr << "[scabbard.trace:DBG] reading " << SPAN << '/' << TRUE_SPAN << " data points from GPU s:" << dt->JOB_ID.STREAM << " j:" << dt->JOB_ID.JOB << std::endl;  //DEBUG
+        const size_t TRUE_SPAN = NEXT - dt->next_read;
+        const size_t SPAN = (TRUE_SPAN < SCABBARD_DEVICE_TRACKER_BUFF_LENGTH) ? TRUE_SPAN : SCABBARD_DEVICE_TRACKER_BUFF_LENGTH;
         const size_t MAX = dt->next_read + SCABBARD_DEVICE_TRACKER_BUFF_LENGTH;
         for (size_t i = dt->next_read; i < MAX && i < NEXT; ++i)
-            tw << dt->buffer[i%SCABBARD_DEVICE_TRACKER_BUFF_LENGTH];
+        tw << dt->buffer[i%SCABBARD_DEVICE_TRACKER_BUFF_LENGTH];
         dt->next_read = NEXT;
+        if (TRUE_SPAN)
+          std::cerr << "[scabbard.trace:INFO] reading " << SPAN << '/' << TRUE_SPAN << " data points from GPU s:" << dt->JOB_ID.STREAM << " j:" << dt->JOB_ID.JOB << std::endl;
         if (dt->finished) { // deal with a device tracker that is done with it's job
           auto hipRes = hipFree(dt);
           if (hipRes != hipSuccess)

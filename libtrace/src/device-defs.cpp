@@ -43,27 +43,28 @@ namespace scabbard {
       // }
       
       // __device__ __noinline__
-      [[clang::disable_sanitizer_instrumentation, gnu::flatten, gnu::always_inline,
-        gnu::used, gnu::retain]] __device__
-      void trace_append$mem(void* deviceTracker, const InstrData data, const void* PTR, const std::uint64_t SRC_ID)
+      [[clang::disable_sanitizer_instrumentation, gnu::flatten, gnu::always_inline, gnu::used, gnu::retain]] 
+      __device__
+      void trace_append$mem(void* deviceTracker, const InstrData data, const void*const PTR, const void*const SRC_ID)
       {
         DeviceTracker& DT = *((DeviceTracker*) deviceTracker);
         DT.buffer[(DT.next++) % SCABBARD_DEVICE_TRACKER_BUFF_LENGTH] = TraceData(DT.vClk++, data,
                                                                                   DT.JOB_ID, blockIdx, threadIdx,
-                                                                                  PTR, 
+                                                                                  (std::uint64_t)PTR, 
                                                                                   SRC_ID, 
-                                                                                  0ul);
+                                                                                  0ull);
       }
 
       // __device__ __noinline__
-      [[clang::disable_sanitizer_instrumentation, gnu::flatten, gnu::always_inline,
-        gnu::used, gnu::retain]] __device__
-      void trace_append$alloc(void* deviceTracker, const InstrData data, const void* PTR, const std::uint64_t SRC_ID, const std::size_t size)
+      [[clang::disable_sanitizer_instrumentation, gnu::flatten, gnu::always_inline, gnu::used, gnu::retain]] 
+      __device__
+      void trace_append$alloc(void* deviceTracker, const InstrData data, const void*const PTR, 
+                              const void*const SRC_ID, const std::size_t size)
       {
         DeviceTracker& DT = *((DeviceTracker*) deviceTracker);
         DT.buffer[(DT.next++) % SCABBARD_DEVICE_TRACKER_BUFF_LENGTH] = TraceData(DT.vClk++, (InstrData)(data | InstrData::_OPT_USED),
                                                                                   DT.JOB_ID, blockIdx, threadIdx,
-                                                                                  PTR, 
+                                                                                  (std::uint64_t)PTR, 
                                                                                   SRC_ID, 
                                                                                   size);
       }

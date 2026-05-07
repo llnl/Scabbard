@@ -59,18 +59,18 @@ else
 fi
 alias scabbard="$SCABBARD_PATH/scabbard"
 
-export SCABBARD_METADATA_FILE="$FILE_BASE.scabbard.meta"
-rm $SCABBARD_METADATA_FILE 1> /dev/null 2> /dev/null
-rm ./anon.scabbard.meta 1> /dev/null 2> /dev/null
-rm ./anon.scabbard.meta.lock 1> /dev/null 2> /dev/null
+# export SCABBARD_METADATA_FILE="$FILE_BASE.scabbard.meta"
+# rm $SCABBARD_METADATA_FILE 1> /dev/null 2> /dev/null
+# rm ./anon.scabbard.meta 1> /dev/null 2> /dev/null
+# rm ./anon.scabbard.meta.lock 1> /dev/null 2> /dev/null
 
 if [ -z "$TEST_IR" ]; then
   echo "" &> /dev/null
 else
   echo "TEST_IR: TRUE"
   echo -e "\n\n===== BUILDING IR with Instrumentation ====\n\n"
-  echo "scabbard instr --meta-file=$SCABBARD_METADATA_FILE $HIP_EXE $CXX_ARGS_EXTRA -std=c++17 -x hip -g -O2 -S -emit-llvm -o$FILE_BASE.ll $FILE"
-  scabbard instr --meta-file=$SCABBARD_METADATA_FILE $HIP_EXE $CXX_ARGS_EXTRA -std=c++17 -x hip -g -O2 -o$FILE_BASE.ll $FILE || \
+  echo "scabbard instr $HIP_EXE $CXX_ARGS_EXTRA -std=c++17 -x hip -g -O2 -S -emit-llvm -o$FILE_BASE.ll $FILE"
+  scabbard instr $HIP_EXE $CXX_ARGS_EXTRA -std=c++17 -x hip -g -O2 -S -emit-llvm -o$FILE_BASE.ll $FILE || \
     { printf "\n\e[31m[run_x.sh] ERROR: during NON-instrumented build\e[0m\n"; rm $FILE_BASE.ll 1> /dev/null 2> /dev/null; exit -1; }
   echo -e "\n\n===== DONE ====\nSee... $FILE_BASE.ll\n\n"
   exit 0
@@ -98,15 +98,15 @@ else # this is a file that needs to be instrumented
   # $HIP_EXE -fpass-plugin=$SCABBARD_PATH/libinstr.so -L$SCABBARD_PATH -ltrace -lpthread -std=c++17 -x hip -g -O2 -o$FILE_BASE.instr.out $FILE || \
   #   { printf "\n\e[31m[run_x.sh] ERROR: during instrumented build\e[0m\n"; rm $SCABBARD_METADATA_FILE.lock 1> /dev/null 2> /dev/null; exit -1; }
 
-  echo "scabbard instr --meta-file=$SCABBARD_METADATA_FILE $HIP_EXE $CXX_ARGS_EXTRA -std=c++17 -x hip -g -O2 -o$FILE_BASE.instr.out $FILE"
-  scabbard instr --meta-file=$SCABBARD_METADATA_FILE $HIP_EXE $CXX_ARGS_EXTRA -std=c++17 -x hip -g -O2 -o$FILE_BASE.instr.out $FILE || \
+  echo "scabbard instr $HIP_EXE $CXX_ARGS_EXTRA -std=c++17 -x hip -g -O2 -o$FILE_BASE.instr.out $FILE"
+  scabbard instr $HIP_EXE $CXX_ARGS_EXTRA -std=c++17 -x hip -g -O2 -o$FILE_BASE.instr.out $FILE || \
     { printf "\n\e[31m[run_x.sh] ERROR: during instrumented build\e[0m\n"; rm $SCABBARD_METADATA_FILE.lock 1> /dev/null 2> /dev/null; exit -1; }
 
-  # remove lock file regardless of the outcome
-  rm $SCABBARD_METADATA_FILE.lock 1> /dev/null 2> /dev/null
-  # make sure that a metadata file exists after instrumentation
-  test -f $SCABBARD_METADATA_FILE || 
-    { printf "\n\e[31m[run_x.sh] ERROR: metadata file \"$SCABBARD_METADATA_FILE\" was not created durring the instrumentation/build process\e[0m\n"; exit -1; }
+  # # remove lock file regardless of the outcome
+  # rm $SCABBARD_METADATA_FILE.lock 1> /dev/null 2> /dev/null
+  # # make sure that a metadata file exists after instrumentation
+  # test -f $SCABBARD_METADATA_FILE || 
+  #   { printf "\n\e[31m[run_x.sh] ERROR: metadata file \"$SCABBARD_METADATA_FILE\" was not created during the instrumentation/build process\e[0m\n"; exit -1; }
 
 fi
 
@@ -123,16 +123,17 @@ scabbard trace --trace-file=$SCABBARD_TRACE_FILE $SCABBARD_INSTRUMENTED_EXE_NAME
 
 # $ROCM_PATH/bin/rocgdb $SCABBARD_INSTRUMENTED_EXE_NAME
 
+# <<< removed -> moved to an online approach >>>
 # make sure that a trace file exists after instrumentation
 # test -e $SCABBARD_TRACE_FILE || \ 
 #   { printf "\n\e[31m[run_x.sh] ERROR: the trace file \"$SCABBARD_TRACE_FILE\" was not created during the trace/running step\e[0m\n"; exit -1; }
 
-
+# <<< removed -> moved to an online approach >>>
 # run the verifier
-echo -e "\n\n==== VERIFYING generated trace file ====\n\n"
-echo "scabbard verif $SCABBARD_METADATA_FILE $SCABBARD_TRACE_FILE"
-scabbard verif $SCABBARD_METADATA_FILE $SCABBARD_TRACE_FILE || \
-  { printf "\n\e[31m[run_x.sh] ERROR: during verify\e[0m\n"; exit -1; }
+# echo -e "\n\n==== VERIFYING generated trace file ====\n\n"
+# echo "scabbard verif $SCABBARD_METADATA_FILE $SCABBARD_TRACE_FILE"
+# scabbard verif $SCABBARD_METADATA_FILE $SCABBARD_TRACE_FILE || \
+#   { printf "\n\e[31m[run_x.sh] ERROR: during verify\e[0m\n"; exit -1; }
 
 
 echo -e "\n\n==== END ====\n\n"

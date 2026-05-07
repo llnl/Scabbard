@@ -11,10 +11,6 @@
 
 #pragma once
 
-// trun on hip components when importing from libscabbard
-#ifndef __scabbard_hip_compile
-# define __scabbard_hip_compile (1u)
-#endif
 
 #include "TraceWriter.hpp"
 // #include "MetadataStrore.hpp"

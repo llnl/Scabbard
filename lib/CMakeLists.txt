@@ -4,7 +4,7 @@ project(libscabbard VERSION 0.1)
 add_library(scabbard SHARED
     src/Enums.cpp
     # src/TraceData.cpp
-    src/MetadataIO.cpp
+    # src/MetadataIO.cpp
   )
 
 target_include_directories(scabbard

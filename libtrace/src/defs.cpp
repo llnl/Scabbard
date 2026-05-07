@@ -173,7 +173,7 @@ namespace scabbard {
 
     [[clang::disable_sanitizer_instrumentation, gnu::used, gnu::retain, gnu::noinline]] 
     __host__
-    void register_job_callback(void* dt_, hipStream_t stream, const std::uint64_t SRC_ID)
+    void register_job_callback(void* dt_, hipStream_t stream, const void* const SRC_ID)
     {
       //TODO amend this to pass in instrumented src id, line and col metadata
       device::DeviceTracker* dt = (device::DeviceTracker*) dt_;
@@ -211,38 +211,40 @@ namespace scabbard {
 
       [[clang::disable_sanitizer_instrumentation, gnu::used, gnu::retain, gnu::noinline]]
       __host__
-      void trace_append$mem(const InstrData data, const void* PTR, const std::uint64_t SRC_ID)
+      void trace_append$mem(const InstrData data, const void*const PTR, const void* const SRC_ID)
       {
         TRACE_LOGGER.append(
             TraceData(
                 TRACE_LOGGER.vClk++,
                 data,
                 ThreadId(), 
-                PTR, 
-                SRC_ID,
-                0ul
+                (std::uintptr_t)PTR,
+                (SrcMetadata*)SRC_ID,
+                0ull
               )
           );
       }
 
       [[clang::disable_sanitizer_instrumentation, gnu::used, gnu::retain, gnu::noinline]] 
       __host__
-      void trace_append$mem$cond(InstrData data, const void* PTR, const std::uint64_t SRC_ID)
+      void trace_append$mem$cond(InstrData data, const void*const PTR, const void* const SRC_ID)
       {
         hipPointerAttribute_t attrs;
         const auto status = hipPointerGetAttributes(&attrs,PTR);
-        InstrData _data = (InstrData) (data & ((~InstrData::NONE) ^ InstrData::UNKNOWN_HEAP));
         if (status == hipSuccess) {
-          if (attrs.isManaged) {
-            _data |= InstrData::MANAGED_MEM;
-          } else if (attrs.devicePointer == nullptr) {
-            _data |= InstrData::HOST_HEAP;
-          } else {
-            _data |= InstrData::DEVICE_HEAP;
-          }
-          trace_append$mem(_data, PTR, SRC_ID);
+          switch (attrs.type) {
+            case hipMemoryTypeUnregistered:
+            case hipMemoryTypeHost:
+            case hipMemoryTypeArray:
+              return;
+            case hipMemoryTypeDevice:
+            case hipMemoryTypeManaged:
+            case hipMemoryTypeUnified:
+              trace_append$mem(data, PTR, SRC_ID);
+              return;
+            }
         } else {
-          std::cerr << "\n[scabbard::trace::cond::ERROR] could not get the properties of a pointer with `hipPointerGetAttributes()`!\n"
+          std::cerr << "\n[scabbard.trace.cond:ERROR] could not get the properties of a pointer with `hipPointerGetAttributes()`!\n"
                     << std::endl;
 #         ifdef DEBUG
             exit(EXIT_FAILURE);
@@ -252,37 +254,38 @@ namespace scabbard {
 
       [[clang::disable_sanitizer_instrumentation, gnu::used, gnu::retain, gnu::noinline]]
       __host__
-      void trace_append$alloc(const InstrData data, const void* PTR, const std::uint64_t SRC_ID, const std::size_t SIZE)
+      void trace_append$alloc(const InstrData data, const void*const PTR, const void* const SRC_ID, const std::size_t SIZE)
       {
         TRACE_LOGGER.append(
             TraceData(
                 TRACE_LOGGER.vClk++,
-                // std::chrono::high_resolution_clock::now().time_since_epoch().count(),
                 (data | InstrData::_OPT_USED),
                 ThreadId(),
-                PTR,
-                SRC_ID,
+                (std::uintptr_t)PTR,
+                (SrcMetadata*)SRC_ID,
                 SIZE
               )
           );
       }
 
-      void trace_append$alloc$cond(const InstrData data, const void* PTR, const std::uint64_t SRC_ID, const std::size_t SIZE)
+      void trace_append$alloc$cond(const InstrData data, const void*const PTR, const void* const SRC_ID, const std::size_t SIZE)
       {
         hipPointerAttribute_t attrs;
         const auto status = hipPointerGetAttributes(&attrs,PTR);
-        InstrData _data = (InstrData)(data & ((~InstrData::NONE) ^ InstrData::UNKNOWN_HEAP));
         if (status == hipSuccess) {
-          if (attrs.isManaged) {
-            _data |= InstrData::MANAGED_MEM;
-          } else if (attrs.devicePointer == nullptr) {
-            _data |= InstrData::HOST_HEAP;
-          } else {
-            _data |= InstrData::DEVICE_HEAP;
-          }
-          trace_append$alloc(_data, PTR, SRC_ID, SIZE);
+          switch (attrs.type) {
+            case hipMemoryTypeUnregistered:
+            case hipMemoryTypeHost:
+            case hipMemoryTypeArray:
+              return;
+            case hipMemoryTypeDevice:
+            case hipMemoryTypeManaged:
+            case hipMemoryTypeUnified:
+              trace_append$alloc(data, PTR, SRC_ID, SIZE);
+              return;
+            }
         } else {
-          std::cerr << "\n[scabbard::trace::cond::ERROR] could not get the properties of a pointer with `hipPointerGetAttributes()`!\n"
+          std::cerr << "\n[scabbard.trace.cond:ERROR] could not get the properties of a pointer with `hipPointerGetAttributes()`!\n"
                     << std::endl;
 #         ifdef DEBUG
             exit(EXIT_FAILURE);
