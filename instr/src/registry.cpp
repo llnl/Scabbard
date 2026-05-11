@@ -11,8 +11,6 @@
  */
 
 #include "ScabbardPass.hpp"
-// #include "ScabbardPostPass.hpp"
-#include "MetadataHandler.hpp"
 
 #include <llvm/Pass.h>
 #include <llvm/Passes/PassBuilder.h>

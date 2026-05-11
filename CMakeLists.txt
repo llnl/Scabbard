@@ -102,30 +102,16 @@ option(SCABBARD_USE_COMPRESSION
         "set compression level of trace files using zlib file notation i.e. /[1-9][hf]?/ in SCABBARD_COMPRESSION_LEVEL var" 
         ON)
 
-if(SCABBARD_USE_COMPRESSION)
-find_package(ZLIB 1.2 REQUIRED)
-set(SCABBARD_ZLIB_LIBRARIES "-L${ZLIB_LIBRARIES}")
-set(SCABBARD_LINK_ZLIB "-lz")
-if(NOT DEFINED SCABBARD_COMPRESSION_LEVEL)
-set(SCABBARD_COMPRESSION_LEVEL "6" CACHE STRING "compression level of trace files using zlib file notation i.e. /[1-9][hf]?/")
-endif()
-message(NOTICE "[NOTE] building lib trace to use compression (level=${SCABBARD_COMPRESSION_LEVEL})")
-else()
-set(SCABBARD_ZLIB_LIBRARIES "")
-set(SCABBARD_LINK_ZLIB "")
-endif()
-
 configure_file(${CMAKE_SOURCE_DIR}/scabbard.cmake ${SCABBARD_PATH}/scabbard.cmake @ONLY)
 # configure_file(${CMAKE_SOURCE_DIR}/scabbard.cmake ${SCABBARD_PATH}/cmake/scabbard.cmake @ONLY)
 
 
 add_subdirectory(lib)
-add_subdirectory(libtrace)
+add_subdirectory(rtl)
 add_subdirectory(instr)
-add_subdirectory(verif)
 add_subdirectory(cli)
 
-install(TARGETS scabbard instr trace trace.device
+install(TARGETS instr rtl rtl.device
         DESTINATION  ${CMAKE_INSTALL_PREFIX}/
         PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_WRITE GROUP_EXECUTE WORLD_READ WORLD_EXECUTE
         )

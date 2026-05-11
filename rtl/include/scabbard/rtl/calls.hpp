@@ -19,7 +19,7 @@
 
 
 namespace scabbard {
-  namespace trace {
+  namespace rtl {
   
     /**
      * @brief setup the scabbard system.
@@ -71,7 +71,7 @@ namespace scabbard {
 
     /**
      * @brief during runtime this call gets instrumented befor a kernel launch function
-     *        it returns a pointer to a scabbard::trace::DeviceTracker object in device memory.
+     *        it returns a pointer to a scabbard::rtl::DeviceTracker object in device memory.
      *        That will be passed into the kernel and through all user defined kernel functions.
      */
     __host__
@@ -124,5 +124,5 @@ namespace scabbard {
 
 
 
-  } //?namespace trace
+  } //?namespace rtl
 } //?namespace scabbard

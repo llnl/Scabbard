@@ -22,12 +22,12 @@
 
 
 namespace scabbard {
-namespace trace {
+namespace rtl {
 namespace device {
 
   /// @brief A object to pass into a device kernel to bring in relevant information about 
   ///        the stream, job, and logical time.  As well as implement a cycle buffer to 
-  ///        store the trace data from the kernel job it belongs too. \n
+  ///        store the rtl data from the kernel job it belongs too. \n
   ///        It is expected to allocate the memory for this object using \c hipMallocManaged()
   ///        The size of the allocation should be retrieved using the static
   ///        fn \c DeviceTracker::getAllocSizeBytes() so that additional 
@@ -81,5 +81,5 @@ namespace device {
 
 
 } //?namespace device
-} //?namespace trace
+} //?namespace rtl
 } //?namespace scabbard

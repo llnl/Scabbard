@@ -18,6 +18,7 @@
 #include "DeviceTracker.hpp"
 
 #include <scabbard/TraceData.hpp>
+#include <scabbard/GroupedPtr.hpp>
 
 #include <hip/hip_ext.h>
 #include <hip/hip_runtime.h>
@@ -33,43 +34,11 @@
 #include <chrono>
 #include <cinttypes>
 
-// #define WARP_SIZE (size_t(32ul))
-
-// #define SCABBARD_DEVICE_CYCLE_BUFFER_LANE_LENGTH ((size_t)64ul)
-// #define SCABBARD_DEVICE_CYCLE_BUFFER_LANE_COUNT_MODIFIER ((size_t)2ul)
-// #define SCABBARD_DEVICE_CYCLE_BUFFER_LANE_COUNT ((size_t)SCABBARD_DEVICE_CYCLE_BUFFER_LANE_COUNT_MODIFIER * WARP_SIZE)
 
 
 namespace scabbard {
-  namespace trace {
+  namespace rtl {
 
-    // /**
-    //  * @brief Just a lazy holder of reference pointers that will be handled with 
-    //  *        external functions.
-    //  */
-    // struct DeviceAsyncQueue {
-    //   struct Lane {
-    //     _Atomic(size_t) next = 0ul;
-    //     TraceData data[SCABBARD_DEVICE_CYCLE_BUFFER_LANE_LENGTH];
-    //     __host__ Lane();
-    //     // __device__ inline TraceData& operator [] (size_t j);
-    //     __host__ inline const TraceData& operator [] (size_t j) const;
-    //     friend class AsyncQueue;
-    //   };
-    //
-    //   Lane data[SCABBARD_DEVICE_CYCLE_BUFFER_LANE_COUNT];
-    //
-    //   // __device__ inline void append(TraceData tData);
-    //   __host__ DeviceAsyncQueue();
-    //   // __host__ __device__ inline DeviceAsyncQueue& operator += (const TraceData& tData);
-    //   // __device__ inline Lane& operator [] (size_t i);
-    //   __host__ inline const Lane& operator [] (size_t i) const;
-    // protected:
-    //   // __device__ static inline size_t getLaneId(); // const;
-    //   friend class AsyncQueue;
-    //   friend __device__ void scabbard::trace::device::trace_append$mem(InstrData data, const void* PTR, const std::uint64_t* src_id, std::uint32_t line, std::uint32_t col);
-    //   friend __device__ void scabbard::trace::device::trace_append$alloc(InstrData data, const void* PTR, const std::uint64_t* src_id, std::uint32_t line, std::uint32_t col, std::size_t size);
-    // };
   
 
     /**
@@ -99,10 +68,8 @@ namespace scabbard {
 
       /// @brief the owning list of device trackers
       std::vector<device::DeviceTracker*> device_trackers;
-      
-      // typedef std::vector<DeviceTracker*>::iterator DTRef;
 
-      /// @brief a map connecting counters to each streams jobs
+      /// @brief a map connecting counters to each stream's jobs
       std::map<hipStream_t,uint16_t> stream_job_counters;
 
       // /// @brief a map connecting device trackers to their GPU device (non-owning)
@@ -117,9 +84,6 @@ namespace scabbard {
 
       /// @brief the mutex protecting the host side buffer (if I can find an easily imported lock free queue this will replace it)
       std::mutex mx_hostQ;
-
-      /// @brief the output of the async queue (has ownership of the pointer)
-      TraceWriter* tw = nullptr;
 
       /// @brief the worker thread for the async queue
       std::thread* worker_thread = nullptr;
@@ -151,8 +115,8 @@ namespace scabbard {
 
 
       /**
-       * @brief how the host will append its traces data to the trace.
-       * @param tData the trace data to append
+       * @brief how the host will append its traces data to the rtl.
+       * @param tData the rtl data to append
        */
       __host__ void append(TraceData tData);
 
@@ -181,15 +145,15 @@ namespace scabbard {
       __host__ device::DeviceTracker* add_job(const hipStream_t STREAM);
       
       /**
-       * @brief Set the trace writer object
+       * @brief Set the rtl writer object
        * @param file_path the filepath of where the tracefile will be setup
-       * @param exe_path path to the instrumented executable generating the trace
+       * @param exe_path path to the instrumented executable generating the rtl
        * @param start_time unix timestamp of \em roughly when this executable started running
        */
       __host__ void set_trace_writer(const std::string& file_path, const std::string& exe_path, const std::time_t start_time);
 
       /**
-       * @brief how to trigger a single round of processing of the trace data buffered from 
+       * @brief how to trigger a single round of processing of the rtl data buffered from 
        *        the device then from the host out to the TraceWriter set with \c set_trace_writer() method.
        */
       __host__ void async_process();
@@ -217,5 +181,5 @@ namespace scabbard {
     // };
   
     
-  } //?namespace trace
+  } //?namespace rtl
 } //?namespace scabbard

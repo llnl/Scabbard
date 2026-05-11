@@ -1,8 +1,8 @@
 /**
  * @file calls.cpp
  * @author osterhoutan (osterhoutan+scabbard@gmail.com)
- * @brief implementation of the scabbard/trace/calls.hpp 
- *        and the scabbard/trace/globals.hpp include files
+ * @brief implementation of the scabbard/rtl/calls.hpp 
+ *        and the scabbard/rtl/globals.hpp include files
  * @version alpha 0.0.1
  * @date 2023-05-30
  * 
@@ -10,10 +10,10 @@
  * 
  */
 
-#include <scabbard/trace/calls.hpp>
-#include <scabbard/trace/globals.hpp>
-#include <scabbard/trace/AsyncQueue.hpp>
-#include <scabbard/trace/TraceWriter.hpp>
+#include <scabbard/rtl/calls.hpp>
+#include <scabbard/rtl/globals.hpp>
+#include <scabbard/rtl/AsyncQueue.hpp>
+#include <scabbard/rtl/TraceWriter.hpp>
 #include <scabbard/Metadata.hpp>
 
 #include <hip/hip_ext.h>
@@ -29,7 +29,7 @@
 
 
 namespace scabbard {
-  namespace trace {
+  namespace rtl {
 
 
     // << ========================================================================================== >> 
@@ -116,7 +116,7 @@ namespace scabbard {
       device::DeviceTracker* dt = (device::DeviceTracker*) dt_;
       auto hipRes = hipStreamAddCallback(stream, scabbard_stream_callback, dt, 0);
       if (hipRes != hipSuccess) {
-        std::cerr << "\n[scabbard.trace:ERROR] failed to register callback on "
+        std::cerr << "\n[scabbard.rtl:ERROR] failed to register callback on "
                      "{stream: "<< dt->JOB_ID.STREAM<< ", "
                       "job: " << dt->JOB_ID.JOB  << "}\n" << std::endl;
       }
@@ -231,5 +231,5 @@ namespace scabbard {
     } // namespace host
 
 
-  } //?namespace trace
+  } //?namespace rtl
 } //?namespace scabbard

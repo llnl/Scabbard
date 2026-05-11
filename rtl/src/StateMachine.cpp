@@ -9,7 +9,7 @@
  * 
  */
 
-#include "StateMachine.hpp"
+#include <scabbard/rtl/StateMachine.hpp>
 
 namespace scabbard {
 namespace verif {

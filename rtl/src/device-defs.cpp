@@ -9,9 +9,9 @@
  * 
  */
 
-#include <scabbard/trace/calls.hpp>
-#include <scabbard/trace/globals.hpp>
-#include <scabbard/trace/DeviceTracker.hpp>
+#include <scabbard/rtl/calls.hpp>
+#include <scabbard/rtl/globals.hpp>
+#include <scabbard/rtl/DeviceTracker.hpp>
 #include <scabbard/instr-names.def>
 
 #include <hip/hip_ext.h>
@@ -19,7 +19,7 @@
 
 
 namespace scabbard {
-  namespace trace {
+  namespace rtl {
 
 
     // << ========================================================================================== >> 
@@ -61,7 +61,7 @@ namespace scabbard {
     } //?namespace device
   
   
-  } //?namespace trace
+  } //?namespace rtl
 } //?namespace scabbard
 
 

@@ -29,12 +29,6 @@ endif()
 option(ENABLE_SCABBARD "instrument specified targets with scabbard" On)
 option(SCABBARD_USE_COMPRESSION "was compression enabled in your scabbard build?" @SCABBARD_USE_COMPRESSION@)
 
-if(SCABBARD_USE_COMPRESSION)
-list(APPEND SCABBARD_ZLIB_LINK_OPTIONS @SCABBARD_ZLIB_LIBRARIES@ @SCABBARD_LINK_ZLIB@)
-else()
-set(SCABBARD_ZLIB_LINK_OPTIONS "")
-endif()
-
 
 function(scabbard_instrument_target target)
     # set(test_var "test_var")
@@ -50,8 +44,7 @@ function(scabbard_instrument_target target)
                 -fgpu-rdc
                 -foffload-lto=full
                 -Wl,--load-pass-plugin=${SCABBARD_PATH}/libinstr.so 
-                -Xoffload-linker "--load-pass-plugin=${SCABBARD_PATH}/libinstr.so" 
-                ${SCABBARD_ZLIB_LINK_OPTIONS}
+                -Xoffload-linker "--load-pass-plugin=${SCABBARD_PATH}/libinstr.so"
                 -L${SCABBARD_PATH} -ltrace -ltrace.device -lpthread
                 )
             target_compile_options(${target} 

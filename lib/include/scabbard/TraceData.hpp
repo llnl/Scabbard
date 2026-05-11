@@ -1,7 +1,7 @@
 /**
  * @file TraceData.hpp
  * @author osterhoutan (osterhoutan+scabbard@gmail.com)
- * @brief The data object that holds all of the data pertaining to a trace entry 
+ * @brief The data object that holds all of the data pertaining to a rtl entry 
  *        (plus some read and write operations)
  * @version alpha 0.0.1
  * @date 2023-06-02
@@ -27,7 +27,7 @@
 
 
 namespace scabbard {
-  // namespace trace {
+  // namespace rtl {
 
 #pragma pack(1)
 struct blockId_t {
@@ -199,5 +199,5 @@ struct TraceData {
 };
 
 
-// } //?namespace trace
+// } //?namespace rtl
 } //?namespace scabbard
