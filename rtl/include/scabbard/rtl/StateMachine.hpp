@@ -20,7 +20,7 @@
 #include <tuple>
 
 namespace scabbard {
-namespace verif {
+namespace rtl {
 
   class StateMachine {
 
@@ -69,15 +69,15 @@ namespace verif {
 
   std::ostream& operator << (std::ostream& out, const StateMachine::ResultStatus& status);
 
-} //?namespace verif
+} //?namespace rtl
 } //?namespace scabbard
 
 
 // namespace std {
 
 // template<>
-// struct hash<scabbard::verif::StateMachine::Result> {
-//   uint64_t operator () (const scabbard::verif::StateMachine::Result& res) const
+// struct hash<scabbard::rtl::StateMachine::Result> {
+//   uint64_t operator () (const scabbard::rtl::StateMachine::Result& res) const
 //   {
 //     return ((
 //             std::hash<int>()(res.status)

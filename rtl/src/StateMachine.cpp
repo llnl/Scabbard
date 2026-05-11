@@ -12,7 +12,7 @@
 #include <scabbard/rtl/StateMachine.hpp>
 
 namespace scabbard {
-namespace verif {
+namespace rtl {
 
   StateMachine::StateMachine(const std::multiset<TraceData>& trace_)
     : trace(trace_)
@@ -108,10 +108,10 @@ namespace verif {
         case InstrData::FREE: {
           auto r = allocs.find(td.ptr);
           if (r == allocs.end()) {
-            add_result(results,{INTERNAL_ERROR, nullptr, nullptr, "\n[scabbard.verif:ERR] bad alloc data (could not find hipMalloc associated with hipFree in trace history)"}); //DEBUG
+            add_result(results,{INTERNAL_ERROR, nullptr, nullptr, "\n[scabbard.rtl:ERR] bad alloc data (could not find hipMalloc associated with hipFree in trace history)"}); //DEBUG
             last_global_sync = td.time_stamp; //DEBUG
             break; //DEBUG
-            // return {{{INTERNAL_ERROR, nullptr, nullptr, "\n[scabbard.verif:ERR] bad alloc data (could not find hipMalloc associated with hipFree in trace history)"}, 1ul}};
+            // return {{{INTERNAL_ERROR, nullptr, nullptr, "\n[scabbard.rtl:ERR] bad alloc data (could not find hipMalloc associated with hipFree in trace history)"}, 1ul}};
           }
           for (it = mem.find(td.ptr); it != mem.end() && it->second->ptr < td.ptr+r->second; ++it)
             it = mem.erase(it);
@@ -177,7 +177,7 @@ namespace verif {
       case StateMachine::ResultStatus::GOOD:
         return (out << "NO data races detected");
       case StateMachine::ResultStatus::INTERNAL_ERROR:
-        return (out << "Internal ERROR occurred in scabbard verif");
+        return (out << "Internal ERROR occurred in scabbard rtl");
       default:
         return (out << "<UNKNOWN>");
     }
@@ -201,5 +201,5 @@ namespace verif {
       );
   }
 
-} //?namespace verif
+} //?namespace rtl
 } //?namespace scabbard

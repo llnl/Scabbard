@@ -20,10 +20,10 @@
 void printResult(std::ostream& out,
                   const scabbard::MetadataJSONFile_t& MF,
                   const scabbard::TraceFile& TF, 
-                  const scabbard::verif::StateMachine::Result& res);
+                  const scabbard::rtl::StateMachine::Result& res);
 
 int main(int argc, char *argv[]) {
-  using namespace ::scabbard::verif;
+  using namespace ::scabbard::rtl;
   if (argc != 3) {
     std::cerr << "incorrect input provided, please provide a file path to a scabbard metadata file "
                  "AND to a scabbard trace file (in that order)"
@@ -32,9 +32,9 @@ int main(int argc, char *argv[]) {
   }
 
   auto mf = scabbard::read_metadata_file(std::string(argv[1]));
-  auto tf = scabbard::verif::readTraceFile(std::string(argv[2]));
+  auto tf = scabbard::rtl::readTraceFile(std::string(argv[2]));
 
-  scabbard::verif::StateMachine sm(tf.trace_data);
+  scabbard::rtl::StateMachine sm(tf.trace_data);
   auto results = sm.run();
 
   std::string sep = "";
@@ -72,9 +72,9 @@ int main(int argc, char *argv[]) {
 void printResult(std::ostream& out, 
                   const scabbard::MetadataJSONFile_t& MF,
                   const scabbard::TraceFile& TF,
-                  const scabbard::verif::StateMachine::Result& res)
+                  const scabbard::rtl::StateMachine::Result& res)
 {
-  using namespace ::scabbard::verif;
+  using namespace ::scabbard::rtl;
   if (res.status == StateMachine::ResultStatus::GOOD) {
     out << res.status;
     return;
