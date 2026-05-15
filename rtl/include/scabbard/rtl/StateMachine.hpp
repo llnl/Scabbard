@@ -12,7 +12,7 @@
 #pragma once
 
 #include <scabbard/TraceData.hpp>
-#include <scabbard/less.hpp>
+#include <scabbard/rtl/GroupedPtr.hpp>
 
 #include <unordered_set>
 #include <set>
@@ -24,26 +24,35 @@ namespace rtl {
 
   class StateMachine {
 
-    const std::multiset<TraceData>& trace;
-    std::map<size_t,const TraceData*> mem;
-    std::map<size_t,size_t> allocs;
+  public:
+    using Trace_t = std::multiset<GroupedPtr<const TraceData>, GroupedPtr<const TraceData>::less>;
+    using MemTable_t = std::map<std::uintptr_t, GroupedPtr<const TraceData>>;
+    using AllocTable_t = std::map<std::uintptr_t, std::size_t>;
+    using SyncTable_t = std::map<std::uintptr_t, std::size_t>;
+    
+  private:
+    Trace_t& trace;
+    MemTable_t mem;
+    AllocTable_t allocs;
     size_t last_global_sync = __UINT64_MAX__;
-    std::map<size_t,size_t> last_stream_sync;
+    SyncTable_t last_stream_sync;
 
   public:
-    StateMachine(const std::multiset<TraceData>& trace_);
+    StateMachine(const Trace_t& trace_);
     
-    enum ResultStatus { GOOD=0, ERROR=2, WARNING=1, INTERNAL_ERROR=-1 };
     struct Result {
-      ResultStatus status;
-      const TraceData* read = nullptr; 
-      const TraceData* write = nullptr;
+      enum Status { GOOD=0, ERROR=2, WARNING=1, INTERNAL_ERROR=-1 };
+      Status status;
+      GroupedPtr<const TraceData> read = nullptr; 
+      GroupedPtr<const TraceData> write = nullptr;
       std::string err_msg = "";
       friend inline bool operator == (const Result& L, const Result& R);
       inline bool operator < (const Result& other) const;
     };
 
-    std::map<StateMachine::Result, std::size_t> run();
+    using ResultList_t = std::map<StateMachine::Result, std::size_t>;
+
+    ResultList_t run();
 
     void reset();
 
@@ -55,7 +64,7 @@ namespace rtl {
      * @param o  - the other trace data from the mem object (known to exist)
      * @return \c const ResultStatus - the resulting condition
      */
-    const ResultStatus check_race_read(const TraceData& r, const TraceData& o);
+    const Result::Status check_race_read(const TraceData& r, const TraceData& o);
 
     // /**
     //  * @brief check if a race has occurred if the current trace is a write event

@@ -99,6 +99,15 @@ def run_instrumented_exe_mode(scabbard_args, args) -> None:
     if ('device_buf_size' in scabbard_args or "device-buf-size" in scabbard_args or "--device-buff-size" in scabbard_args) \
             and scabbard_args.device_buf_size is not None and len(scabbard_args.device_buf_size) > 0:
         env.update({'SCABBARD_DEVICE_BUFFER_SIZE':scabbard_args.device_buf_size[0]})
+    if ('rtl_alloc_len' in scabbard_args or "rtl-alloc-len" in scabbard_args or "--rtl-alloc-len" in scabbard_args) \
+            and scabbard_args.rtl_alloc_len is not None and len(scabbard_args.rtl_alloc_len) > 0:
+        env.update({'SCABBARD_RTL_MEM_CHUNK_LEN':scabbard_args.rtl_alloc_len[0]})
+    if ('stdout' in scabbard_args or "stdout" in scabbard_args or "--stdout" in scabbard_args) \
+            and scabbard_args.stdout is not None and len(scabbard_args.stdout) > 0:
+        env.update({'SCABBARD_RTL_STDOUT':scabbard_args.stdout[0]})
+    if ('stderr' in scabbard_args or "stderr" in scabbard_args or "--stderr" in scabbard_args) \
+            and scabbard_args.stderr is not None and len(scabbard_args.stderr) > 0:
+        env.update({'SCABBARD_RTL_STDERR':scabbard_args.stderr[0]})
     if len(args) < 1:
         prRed("[scabbard.run:ERR] provide a command to run a trace on (must eventually run an executable instrumented by scabbard)")
         exit(-1)

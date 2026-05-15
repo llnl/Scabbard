@@ -20,12 +20,12 @@ ScabbardArgParser: ArgumentParser = ArgumentParser(
           
         Using scabbard is a three step process:
           (1) build your code using scabbards instrumentation tool.
-          (2) run your code using the scabbard trace tool.
-          (3) analyse the trace file produced with the scabbard verify tool.
+          (2) run your instrumented code.
+          (3) read and interpret the results.
           
         Use:   <>-data-type  {}-optional   []-required   ...-multiple accepted
           $ scabbard [mode] -h 
-          Use -h on a subprogram/mode to leran more on how to use it.
+          Use -h on a subprogram/mode to learn more on how to use it.
         """,
         epilog="""
         no support information yet provided. (TODO)
@@ -127,9 +127,36 @@ RunArgParser.add_argument('--device-buff-size','-b',
         metavar='<uint64>',
         required=False,
         help= "Size of the device cycle buffer--in number of event entires--"
-              "generated for every kernel launch."
-              "(default: 65536) "
+              "generated for every kernel launch "
+              "(default: 65536; min: 4096; max: 4294967296). "
               "[decrease if memory balloons; increase if data loss occurs]"
+    )
+RunArgParser.add_argument('--rtl-alloc-len','-l',
+        nargs=1,
+        default=None,
+        metavar='<uint64>',
+        required=False,
+        help= "Number of trace points in each allocation chunk "
+              "(default: 64; min: 8; max: 4096). "
+              "Increasing this MIGHT improve runtime, and decreasing MIGHT improve memory usage. "
+              "[decrease if memory usage balloons; "
+              "increase if runtime is more than 8x-10x slower than w/out Scabbard]"
+    )
+RunArgParser.add_argument('--stdout','-o',
+        nargs=1,
+        default=None,
+        metavar='<filepath>',
+        required=False,
+        help= "File to write scabbard output to (default: stdout). "
+              "Scabbard RTL writes it's final results to this pipe."
+    )
+RunArgParser.add_argument('--stderr','-e',
+        nargs=1,
+        default=None,
+        metavar='<filepath>',
+        required=False,
+        help= "File to write scabbard error messages (default: stderr). "
+              "Scabbard RTL writes status updates and error messages to this pipe."
     )
 
 def parseScabbardArgs(argv:List[str]) -> tuple:

@@ -194,8 +194,32 @@ struct TraceData {
   inline TraceData& operator = (const TraceData& other) = default; 
 
   [[clang::disable_sanitizer_instrumentation, gnu::flatten, gnu::always_inline]] 
-  __host__ __device__ 
-  inline operator bool () const { return data != InstrData::NEVER; }
+  __host__
+  explicit operator bool () const { return data != InstrData::NEVER; }
+
+  [[clang::disable_sanitizer_instrumentation, gnu::flatten, gnu::always_inline]]
+  __host__
+  inline bool operator < (const TraceData& other) const {
+    if (time_stamp < other.time_stamp)
+      return true;
+    else if ((time_stamp == other.time_stamp) // if they are equal in time
+              && ((data & scabbard::InstrData::ON_CPU) // only true if l is on cpu and r is on gpu
+                  && (other.data & scabbard::InstrData::ON_GPU))) 
+        return true;
+    return false;
+  }
+
+  [[clang::disable_sanitizer_instrumentation, gnu::flatten, gnu::always_inline]]
+  __host__
+  inline friend bool operator < (const TraceData& l, const TraceData& r) {
+    if (l.time_stamp < r.time_stamp)
+      return true;
+    else if ((l.time_stamp == r.time_stamp) // if they are equal in time
+              && ((l.data & scabbard::InstrData::ON_CPU) // only true if l is on cpu and r is on gpu
+                  && (r.data & scabbard::InstrData::ON_GPU))) 
+        return true;
+    return false;
+  }
 };
 
 

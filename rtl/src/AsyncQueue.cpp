@@ -41,7 +41,7 @@ namespace scabbard {
       for (auto dt : device_trackers)
         if (dt != nullptr)
           if (hipFree(dt) != hipSuccess)
-            std::cerr << "\n[scabbard.rtl.dtor:ERROR] could not deallocate device side buffer!\n" 
+            SCAB_SERR << "\n[scabbard.rtl.dtor:ERROR] could not deallocate device side buffer!\n" 
                       << std::endl;
       if (tw != nullptr) {
         tw->finalize();
@@ -97,12 +97,12 @@ namespace scabbard {
       try {
         tw = new TraceWriter(file_path);
       } catch (std::exception ex) {
-        std::cerr << "\n[scabbard.rtl:ERR] Could not open rtl file!"
+        SCAB_SERR << "\n[scabbard.rtl:ERR] Could not open rtl file!"
                      "\n[scabbard.rtl:ERR]          error: \"" << ex.what() << "\"" 
                      "\n[scabbard.rtl:ERR]     rtl file: \"" << file_path << "\"\n";
         exit(EXIT_FAILURE);
       } catch (...) {
-        std::cerr << "\n[scabbard.rtl:ERR] Could not open rtl file!"
+        SCAB_SERR << "\n[scabbard.rtl:ERR] Could not open rtl file!"
                      "\n[scabbard.rtl:ERR]          error: \"<UNKNOWN_ERROR>\"" 
                      "\n[scabbard.rtl:ERR]     rtl file: \"" << file_path << "\"\n";
         exit(EXIT_FAILURE);
@@ -110,12 +110,12 @@ namespace scabbard {
       try {
         tw->init(exe_path, start_time);
       } catch (std::exception ex) {
-        std::cerr << "\n[scabbard.rtl:ERR] Could not write header for rtl file!"
+        SCAB_SERR << "\n[scabbard.rtl:ERR] Could not write header for rtl file!"
                      "\n[scabbard.rtl:ERR]          error: \"" << ex.what() << "\"" 
                      "\n[scabbard.rtl:ERR]     rtl file: \"" << file_path << "\"\n";
         exit(EXIT_FAILURE);
       } catch (...) {
-        std::cerr << "\n[scabbard.rtl:ERR] Could not write header for rtl file!"
+        SCAB_SERR << "\n[scabbard.rtl:ERR] Could not write header for rtl file!"
                      "\n[scabbard.rtl:ERR]          error: \"<UNKNOWN_ERROR>\"" 
                      "\n[scabbard.rtl:ERR]     rtl file: \"" << file_path << "\"\n";
         exit(EXIT_FAILURE);
@@ -133,7 +133,7 @@ namespace scabbard {
                                           hipMemAttachGlobal);
       // hipError_t hipRes = hipHostMalloc(&dt, sizeof(device::DeviceTracker), hipHostMallocPortable);
       if (hipRes != hipSuccess) {
-        std::cerr << "\n[scabbard.rtl:ERROR] failed to allocate managed memory before kernel launch!\n" << std::endl;
+        SCAB_SERR << "\n[scabbard.rtl:ERROR] failed to allocate managed memory before kernel launch!\n" << std::endl;
         exit(EXIT_FAILURE);
       }
       mx_device.lock();
@@ -183,11 +183,11 @@ namespace scabbard {
           tw << dt->buffer[i%DeviceTracker::BUFFER_SIZE];
         dt->next_read = NEXT;
         if (TRUE_SPAN)
-          std::cerr << "[scabbard.rtl:INFO] reading " << SPAN << '/' << TRUE_SPAN << " data points from GPU s:" << dt->JOB_ID.STREAM << " j:" << dt->JOB_ID.JOB << std::endl;
+          SCAB_SERR << "[scabbard.rtl:INFO] reading " << SPAN << '/' << TRUE_SPAN << " data points from GPU s:" << dt->JOB_ID.STREAM << " j:" << dt->JOB_ID.JOB << std::endl;
         if (dt->finished) { // deal with a device tracker that is done with it's job
           auto hipRes = hipFree(dt);
           if (hipRes != hipSuccess)
-            std::cerr << "\n[scabbard.rtl:ERR] failed to free a device tracker from managed memory! (errcode: " << hipRes << ")\n";
+            SCAB_SERR << "\n[scabbard.rtl:ERR] failed to free a device tracker from managed memory! (errcode: " << hipRes << ")\n";
           dt = nullptr;
         }
       }

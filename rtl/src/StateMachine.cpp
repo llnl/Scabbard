@@ -14,12 +14,12 @@
 namespace scabbard {
 namespace rtl {
 
-  StateMachine::StateMachine(const std::multiset<TraceData>& trace_)
+  StateMachine::StateMachine(StateMachine::Trace_t& trace_)
     : trace(trace_)
   {}
 
 
-  inline void add_result(std::map<StateMachine::Result, std::size_t>& results, const StateMachine::Result& res)
+  inline void add_result(StateMachine::ResultList_t& results, const StateMachine::Result& res)
   {
     auto it = results.find(res);
     if (it == results.end()) // case not encountered yet

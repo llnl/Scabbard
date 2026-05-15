@@ -400,7 +400,8 @@ protected:
   /// @return \c bool - if any changes were made to the instruction, parent fn, or module.
   virtual bool instrumentLoadInst(LoopInfo& LI, LoadInst& Load) {
     return instrumentInScabbardFunc(LI, Load, Load.getPointerOperand(), 
-                                    InstrData::ON_CPU | InstrData::READ | (Load.isAtomic() ? InstrData::ATOMIC : InstrData::NO));
+                                    InstrData::ON_CPU | InstrData::READ 
+                                    | (Load.isAtomic() ? InstrData::ATOMIC : InstrData::NO));
   }
 
   /// @brief When a store instruction is found in a fn this is called.
@@ -411,7 +412,8 @@ protected:
   /// @return \c bool - if any changes were made to the instruction, parent fn, or module.
   virtual bool instrumentStoreInst(LoopInfo& LI, StoreInst& Store) {
     return instrumentInScabbardFunc(LI, Store, Store.getPointerOperand(),
-                                    InstrData::ON_CPU | InstrData::WRITE | (Store.isAtomic() ? InstrData::ATOMIC : InstrData::NO));
+                                    InstrData::ON_CPU | InstrData::WRITE 
+                                    | (Store.isAtomic() ? InstrData::ATOMIC : InstrData::NO));
   }
 
   /// @brief When a atomicrmw instruction is found in a fn this is called.
@@ -422,7 +424,8 @@ protected:
   /// @return \c bool - if any changes were made to the instruction, parent fn, or module.
   virtual bool instrumentAtomicRMWInst(LoopInfo& LI, AtomicRMWInst& RMW) {
     return instrumentInScabbardFunc(LI, RMW, RMW.getPointerOperand(), 
-                                    InstrData::ON_CPU | InstrData::READ | InstrData::WRITE | InstrData::ATOMIC);
+                                    InstrData::ON_CPU | InstrData::READ 
+                                    | InstrData::WRITE | InstrData::ATOMIC);
   }
 
   /// @brief When a cmpxchg instruction is found in a fn this is called.
@@ -433,7 +436,8 @@ protected:
   /// @return \c bool - if any changes were made to the instruction, parent fn, or module.
   virtual bool instrumentCmpXChgInst(LoopInfo& LI, AtomicCmpXchgInst& CXC) {
     return instrumentInScabbardFunc(LI, CXC, CXC.getPointerOperand(),
-                                    InstrData::ON_CPU | InstrData::WRITE | InstrData::ATOMIC);
+                                    InstrData::ON_CPU | InstrData::WRITE 
+                                    | InstrData::READ | InstrData::ATOMIC);
   }
 
   /// @brief When a fence instruction is found in a fn this is called.
@@ -1021,7 +1025,8 @@ protected:
   bool instrumentCmpXChgInst(LoopInfo& LI, AtomicCmpXchgInst& CXC) override {
     return instrumentInScabbardFunc(LI, CXC, CXC.getPointerOperand(), 
                                     ScabbardRTL.trace_append$mem, 
-                                    InstrData::ON_GPU | InstrData::WRITE | InstrData::ATOMIC);
+                                    InstrData::ON_GPU | InstrData::WRITE 
+                                    | InstrData::READ | InstrData::ATOMIC);
   }
 
   /// @brief When a fence instruction is found in a fn this is called.

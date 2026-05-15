@@ -12,13 +12,22 @@
 #pragma once
 
 #include <scabbard/rtl/AsyncQueue.hpp>
+#include <scabbard/rtl/StateMachine.hpp>
+#include <scabbard/rtl/osteam.hpp>
 
 namespace scabbard {
   namespace rtl {
 
-    extern AsyncQueue TRACE_LOGGER;
-    // __device__ DeviceAsyncQueue* DEVICE_TRACE_LOGGER = nullptr;
-    // extern MetadataStore METADATA_STORE;
+    /// @brief Scabbard RTL's version of \c std::cout
+    ///        Used so that env variables can redirect
+    ///        the output to go to a separate place from the
+    ///        output form the instrumented program--if desired.
+    extern scabbard::rtl::ostream SCAB_SOUT;
+    /// @brief Scabbard RTL's version of \c std::cerr .
+    ///        Used so that env variables can redirect
+    ///        the output to go to a separate place from the
+    ///        output form the instrumented program--if desired.
+    extern scabbard::rtl::ostream SCAB_SERR;
   
   } //?namespace rtl
 } //?namespace scabbard

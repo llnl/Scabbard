@@ -1,5 +1,20 @@
 cmake_minimum_required(VERSION 3.16)
 
+# -- Safety Pass -- used to mark all functions as not instrumentable to scabbard
+add_library(safety_pass MODULE src/SafetyPass.cpp)
+target_link_libraries(safety_pass PUBLIC LLVMSupport)
+target_compile_features(safety_pass PRIVATE cxx_range_for cxx_auto_type)
+# LLVM is (typically) built with no C++ RTTI. We need to match that;
+# otherwise, we'll get linker errors about missing RTTI data.
+set_target_properties(safety_pass PROPERTIES COMPILE_FLAGS "-fno-rtti")
+# Get proper shared-library behavior (where symbols are not necessarily
+# resolved when the shared library is linked) on OS X.
+if(APPLE)
+    set_target_properties(safety_pass PROPERTIES LINK_FLAGS "-undefined dynamic_lookup")
+endif(APPLE)
+# -- end Safety Pass --
+
+
 find_package(hip REQUIRED)
 # include(${HIP_PATH}/cmake/)
 
@@ -15,6 +30,7 @@ add_library(rtl STATIC
     src/StateMachine.cpp
     src/ReportWriter.cpp
   )
+add_dependencies(rtl safety_pass)
 set_property(TARGET rtl PROPERTY LANGUAGE CXX)
 set_property(TARGET rtl PROPERTY CXX_STANDARD 17)
 
@@ -37,7 +53,10 @@ target_link_libraries(rtl
     # libscabbard
   )
 
-target_compile_options(rtl PRIVATE -fgpu-rdc -flto -foffload-lto=full )
+target_compile_options(rtl PRIVATE 
+        -fgpu-rdc -flto -foffload-lto=full 
+        -fpass-plugin=${SCABBARD_PATH}/libsafety_pass.so #use safety pass to mark all fn's as not to be instrumented.
+      )
 target_link_options(rtl PRIVATE -fgpu-rdc -flto -foffload-lto=full )
 
 if(SCABBARD_USE_COMPRESSION)

@@ -9,10 +9,7 @@
  * 
  */
 
-#include "TraceReader.hpp"
-#include "StateMachine.hpp"
-
-#include <scabbard/MetadataIO.hpp>
+#include<scabbard/rtl/ReportWriter.hpp>
 
 #include <iostream>
 
@@ -22,20 +19,7 @@ void printResult(std::ostream& out,
                   const scabbard::TraceFile& TF, 
                   const scabbard::rtl::StateMachine::Result& res);
 
-int main(int argc, char *argv[]) {
-  using namespace ::scabbard::rtl;
-  if (argc != 3) {
-    std::cerr << "incorrect input provided, please provide a file path to a scabbard metadata file "
-                 "AND to a scabbard trace file (in that order)"
-              << std::endl;
-    exit(EXIT_FAILURE);
-  }
-
-  auto mf = scabbard::read_metadata_file(std::string(argv[1]));
-  auto tf = scabbard::rtl::readTraceFile(std::string(argv[2]));
-
-  scabbard::rtl::StateMachine sm(tf.trace_data);
-  auto results = sm.run();
+void print_report(StateMachine::ResultList_t& results) {
 
   std::string sep = "";
   for (auto result : results) {
