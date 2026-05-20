@@ -116,7 +116,7 @@ VerifArgParser = _SubArgParser.add_parser('verif',
         """,
         epilog="""
         [LEGACY/]
-        """ 
+        """
     )
 VerifArgParser.set_defaults(mode='verif')
 

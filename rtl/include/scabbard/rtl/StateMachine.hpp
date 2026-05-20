@@ -15,7 +15,7 @@
 #include <scabbard/rtl/GroupedPtr.hpp>
 
 #include <unordered_set>
-#include <set>
+#include <queue>
 #include <map>
 #include <tuple>
 
@@ -25,57 +25,86 @@ namespace rtl {
   class StateMachine {
 
   public:
-    using Trace_t = std::multiset<GroupedPtr<const TraceData>, GroupedPtr<const TraceData>::less>;
-    using MemTable_t = std::map<std::uintptr_t, GroupedPtr<const TraceData>>;
+    using Data_t = TraceData;
+    using DataPtr_t = GroupedPtr<const Data_t>;
+    using Trace_t = std::priority_queue<DataPtr_t, 
+                                        std::vector<DataPtr_t>,
+                                        DataPtr_t::priority_less>;
+    using MemTable_t = std::map<std::uintptr_t, DataPtr_t>;
     using AllocTable_t = std::map<std::uintptr_t, std::size_t>;
     using SyncTable_t = std::map<std::uintptr_t, std::size_t>;
-    
-  private:
-    Trace_t trace;
-    MemTable_t mem;
-    AllocTable_t allocs;
-    size_t last_global_sync = __UINT64_MAX__;
-    SyncTable_t last_stream_sync;
 
-  public:
-    StateMachine() = default;
-    
     struct Result {
       enum Status { GOOD=0, ERROR=2, WARNING=1, INTERNAL_ERROR=-1 };
       Status status;
-      GroupedPtr<const TraceData> read = nullptr; 
-      GroupedPtr<const TraceData> write = nullptr;
+      DataPtr_t read = nullptr; 
+      DataPtr_t write = nullptr;
       std::string err_msg = "";
       friend inline bool operator == (const Result& L, const Result& R);
-      inline bool operator < (const Result& other) const;
+      friend inline bool operator < (const Result& L, const Result& R);
     };
 
     using ResultList_t = std::map<StateMachine::Result, std::size_t>;
+    
+  private:
+    Trace_t trace;
+    MemTable_t mem_dh;
+    MemTable_t mem_hd;
+    AllocTable_t allocs;
+    size_t last_global_sync = __UINT64_MAX__;
+    SyncTable_t last_stream_sync;
+    size_t last_global_launch = __UINT64_MAX__;
+    SyncTable_t last_stream_launch;
+    ResultList_t results;
 
-    ResultList_t run();
+  public:
+    StateMachine() = default;
+
+
+    /**
+     * @brief Run the StateMachine on the trace data.
+     * @param remainder_proportion how much of the trace to leave unprocessed,
+     *                             so that timings left in the buffers can be sorted appropriately. \n 
+     *                             Value is expressed in a left bit-shift format ( \c >> ),
+     *                             Such that \c 0 will process all of the current trace;
+     *                             \c 1 will leave 1/2 of the current trace un-processed;
+     *                             \c 2 will leave 1/4 of the current trace un-processed;
+     *                             and so on with the form (1/(x+1)). 
+     */
+    void run(std::uint64_t remainder_proportion=0);
 
     void reset();
+
+    inline const ResultList_t& get_results() const { return results; }
 
   private:
 
     /**
-     * @brief check if a race has occurred if the current trace is a read event
+     * @brief check if a race has occurred if the current trace is a read event (for d->h races)
      * @param r - the current trace data being processed that is known to be a read event
-     * @param o  - the other trace data from the mem object (known to exist)
+     * @param o  - the other trace data from the mem_dh object (known to exist)
      * @return \c const ResultStatus - the resulting condition
      */
-    const Result::Status check_race_read(const TraceData& r, const TraceData& o);
+    Result::Status check_race_read_dh(const DataPtr_t& r, const DataPtr_t& o);
+
+    /**
+     * @brief check if a race has occurred if the current trace is a read event (for h->d races)
+     * @param r - the current trace data being processed that is known to be a read event
+     * @param o  - the other trace data from the mem_dh object (known to exist)
+     * @return \c const ResultStatus - the resulting condition
+     */
+    Result::Status check_race_read_hd(const DataPtr_t& r, const DataPtr_t& o);
 
     // /**
     //  * @brief check if a race has occurred if the current trace is a write event
     //  * @param w - the current trace data being processed that is known to be a write event
-    //  * @param o - the other trace data from the mem object (known to exist)
+    //  * @param o - the other trace data from the mem_dh object (known to exist)
     //  * @return \c const ResultStatus - the resulting condition
     //  */
     // const ResultStatus check_race_write(const TraceData& w, const TraceData& o);
 
-    friend inline StateMachine& operator << (StateMachine& SM, GroupedPtr<const TraceData>& Ptr);
-    friend inline StateMachine& operator << (StateMachine& SM, GroupedPtr<const TraceData>&& __Ptr);
+    friend inline StateMachine& operator << (StateMachine& SM, DataPtr_t& Ptr);
+    friend inline StateMachine& operator << (StateMachine& SM, DataPtr_t&& __Ptr);
 
   };
 

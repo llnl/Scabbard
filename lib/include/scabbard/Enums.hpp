@@ -95,7 +95,7 @@ namespace scabbard {
     ASYNC                 = 1<<15
   };
 
-  inline InstrData operator | (InstrData l, InstrData r) 
+  inline constexpr InstrData operator | (const InstrData l, const InstrData r) 
   {
     return (InstrData)(static_cast<std::uint16_t>(l) | static_cast<std::uint16_t>(r));
   }
@@ -103,7 +103,7 @@ namespace scabbard {
   {
     return (l = (InstrData)(static_cast<std::uint16_t>(l) | static_cast<std::uint16_t>(r)));
   }
-  inline InstrData operator & (InstrData l, InstrData r) 
+  inline constexpr InstrData operator & (const InstrData l, const InstrData r) 
   {
     return (InstrData)(static_cast<std::uint16_t>(l) & static_cast<std::uint16_t>(r));
   }
@@ -114,7 +114,7 @@ namespace scabbard {
 
   std::ostream& operator << (std::ostream& out, const InstrData& data) noexcept
   {
-    std::bitset<16> bs(data);
+    std::bitset<16u> bs(data);
     return (out << std::string((data & InstrData::_RUNTIME_CONDITIONAL) ? "RT_COND, " : "")
          << std::string((data & InstrData::ON_DEVICE) ? "ON_DEVICE, " : "")
          << std::string((data & InstrData::ON_HOST) ? "ON_HOST, " : "")

@@ -119,6 +119,10 @@ public:
   /// @param M the module to inject the metadata object into
   void finalizeMetadata(Module& M);
 
+  /// @brief remove the named globals created by this object.
+  ///        (called if no instrumentation occurred in this module)
+  void clean();
+
 private:
   /// @brief Insert the metadata associated with an instruction into the set of all
   ///        instructions of interest. (set kept unique)
@@ -314,6 +318,8 @@ protected:
   struct ScabbardHostRTL {
     llvm::FunctionCallee scabbard_init;
     const std::string scabbard_init_name = SCABBARD_CALLBACK_INIT_NAME;
+    llvm::FunctionCallee scabbard_close;
+    const std::string scabbard_close_name = SCABBARD_CALLBACK_CLOSE_NAME;
     llvm::FunctionCallee trace_append$mem;
     const std::string trace_append$mem_name = SCABBARD_HOST_CALLBACK_APPEND_MEM_NAME;
     llvm::FunctionCallee trace_append$mem$cond; 
@@ -472,6 +478,55 @@ protected:
     return changed;
   }
 
+  /// @brief Instrument in the calls to scabbard.init to occur at the entry point of the program.
+  ///        According to the conventions of the Target system.
+  ///        For POSIX systems (default) this is the \c main() function. \n
+  ///        Create virtual overrides for other Target Arch OS configs.
+  /// @param M the module to work in.
+  /// @return \c bool - if any changes were made to \param M
+  virtual bool instrumentScabbardInit(Module& M) const {
+    if (auto mainFn = dyn_cast_or_null<Function>(M.getFunction("main"))) {
+      auto firstInst = &(*(mainFn->getEntryBlock().getFirstInsertionPt()));
+      auto ci = llvm::CallInst::Create(ScabbardRTL.scabbard_init, "", firstInst);
+      ci->setDebugLoc(firstInst->getDebugLoc());
+      return true;
+    }
+    return false;
+  }
+
+  /// @brief Instrument in the calls to scabbard.close to occur before all exit points of the program.
+  ///        For POSIX systems \em (default) this is at calls to \c exit()
+  ///        and any return instructions in the \c main() function. \n
+  ///        Create virtual overrides for other Target Arch OS configs.
+  /// @param M the module to work in.
+  /// @return \c bool - if any changes were made to \param M
+  virtual bool instrumentScabbardClose(Module& M) const {
+    bool changed = false;
+    if (Function* exitFn = M.getFunction("exit")) {
+        for (auto user : exitFn->users())
+          if (auto _CI = dyn_cast<CallInst>(user))
+            if (exitFn == _CI->getCalledFunction()) {
+              auto ci = CallInst::Create(ScabbardRTL.scabbard_close, "", _CI);
+              ci->setDebugLoc(_CI->getDebugLoc());
+              changed = true;
+            }
+    }
+    if (auto mainFn = dyn_cast_or_null<Function>(M.getFunction("main"))) {
+      SmallVector<ReturnInst*> Returns;
+      for (auto& I : instructions(mainFn))
+        if (auto* RI = dyn_cast<ReturnInst>(&I)) {
+          Returns.push_back(RI);
+        }
+      for (auto* RI : Returns) {
+        auto ci = CallInst::Create(ScabbardRTL.scabbard_close, "", RI);
+        ci->setDebugLoc(RI->getDebugLoc());
+      }
+      if (not Returns.empty())
+        changed = true;
+    }
+    return changed;
+  }
+
 
 public:
 
@@ -514,19 +569,21 @@ public:
 
     // instrument the GPU driver API calls as appropriate for the specific API suite.
     changed |= handleAPICalls(M, FAM);
-
-    // add in RTL initializer and de-initializer
-    if (auto mainFn = dyn_cast_or_null<Function>(M.getFunction("main"))) {
-      auto CI = llvm::CallInst::Create(ScabbardRTL.scabbard_init, "");
-      auto firstInst = &(*(mainFn->getEntryBlock().getFirstInsertionPt()));
-      CI->insertBefore(firstInst);
-      CI->setDebugLoc(firstInst->getDebugLoc());
-    }
     
     if (changed) //NOTE: this method of metadata will need to be altered to work with instrumenting durring compilation instead of LTO.
       ScabbardRTL.Metadata.finalizeMetadata(M);
     else
-      MetadataVar->eraseFromParent();    // remove metadata global if no instrumentation occurred
+      ScabbardRTL.Metadata.clean();    // cleanup metadata stuff if nothing was added.
+
+    // add in RTL initializer and de-initializers
+    if (not instrumentScabbardInit(M)) 
+      ((Function*)ScabbardRTL.scabbard_init.getCallee())->eraseFromParent();
+    else 
+      changed |= true;
+    if (not instrumentScabbardClose(M)) 
+      ((Function*)ScabbardRTL.scabbard_close.getCallee())->eraseFromParent();
+    else 
+      changed |= true;
 
     // errs() << "\n\n[scabbard.instr.host:DBG] Module written to: \"" << _DBG::write_module_to_file(M,"host.postInstr") << "\"\n\n"; //DEBUG
 
@@ -922,8 +979,15 @@ public:
 
     if (changed) //NOTE: this method of metadata will need to be altered to work with instrumenting durring compilation instead of LTO.
       ScabbardRTL.Metadata.finalizeMetadata(M);
-    else
-      MetadataVar->eraseFromParent();    // remove metadata global if no instrumentation occurred
+    else {
+      ScabbardRTL.Metadata.clean();
+      for (Function* Fn : {((Function*)ScabbardRTL.trace_append$mem.getCallee()),
+                            ((Function*)ScabbardRTL.trace_append$alloc.getCallee())}) {
+        if (Fn->hasZeroLiveUses())
+          Fn->eraseFromParent();
+      }
+
+    }
 
     // errs() << "\n\n[scabbard.instr.device:DBG] Module written to: \"" << _DBG::write_module_to_file(M,"device.postInstr") << "\"\n\n"; //DEBUG
 
@@ -1084,14 +1148,14 @@ void IScabbardHostPass::registerRTL(Module& M) {
             false
           )
       );
-  // host.scabbard_close = M.getOrInsertFunction(
-  //     host.scabbard_close_name,
-  //     FunctionType::get(
-  //         VoidTy,
-  //         {}, // std::array<VoidTyType*,1ull>{VoidTy},
-  //         false
-  //       )
-  //   );
+  ScabbardRTL.scabbard_close = M.getOrInsertFunction(
+      ScabbardRTL.scabbard_close_name,
+      FunctionType::get(
+          VoidTy,
+          {}, // std::array<VoidTyType*,1ull>{VoidTy},
+          false
+        )
+    );
   ScabbardRTL.trace_append$mem = M.getOrInsertFunction(
       ScabbardRTL.trace_append$mem_name,
       FunctionType::get(
@@ -2353,6 +2417,11 @@ inline size_t MetadataHandler::getCalledFn(const StringRef& FnName/* , LLVMConte
   // uint64_t offset = 
   return registerString(FnName);
   // return cast<Constant>(Constant::getIntegerValue(IntegerType::get(C,64ul), APInt(64ul,offset)));
+}
+
+void MetadataHandler::clean() {
+  MetadataVar->eraseFromParent();
+  EntryTy->setName(""); // clearing name is closest thing to removing a type without recalculating the context.
 }
 
 inline raw_ostream& operator << (raw_ostream& out, const scabbard::InstrData& data) {

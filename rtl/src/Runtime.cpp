@@ -105,7 +105,7 @@ namespace scabbard {
                                           hipMemAttachGlobal);
       // hipError_t hipRes = hipHostMalloc(&dt, sizeof(device::DeviceTracker), hipHostMallocPortable);
       if (hipRes != hipSuccess) {
-        SCAB_SERR << "\n[scabbard.rtl:ERROR] failed to allocate managed memory before kernel launch!\n" << std::endl;
+        SCAB_SERR << "\033[91m\n[scabbard.rtl:ERROR] failed to allocate managed memory before kernel launch!\033[00m\n" << std::endl;
         exit(EXIT_FAILURE);
       }
       mx_device.lock();
@@ -135,8 +135,16 @@ namespace scabbard {
     __host__
     void Runtime::async_process()
     {
+      static std::size_t cycle_count = 0ull;
       process_device();
       process_host();
+      if (cycle_count++ % 8u == 0u) {
+        mx_device.lock(); // NOTE: might disrupt validity to freeze host and device here.
+        mx_host.lock();
+        SM->run(2u);
+        mx_host.unlock();
+        mx_device.unlock();
+      }
     }
 
     [[clang::disable_sanitizer_instrumentation, gnu::used, gnu::retain]] 
@@ -155,11 +163,13 @@ namespace scabbard {
           *SM << std::move(GPF->create(dt->buffer[i%DeviceTracker::BUFFER_SIZE]));
         dt->next_read = NEXT;
         if (TRUE_SPAN)
-          SCAB_SERR << "[scabbard.rtl:INFO] reading " << SPAN << '/' << TRUE_SPAN << " data points from GPU s:" << dt->JOB_ID.STREAM << " j:" << dt->JOB_ID.JOB << std::endl;
+          SCAB_SERR << "\n[scabbard.rtl:INFO] reading " << SPAN << '/' << TRUE_SPAN << " data points from GPU s:" << dt->JOB_ID.STREAM << " j:" << dt->JOB_ID.JOB << std::flush;
+        if (TRUE_SPAN > SPAN)
+          SCAB_SERR << "\n\033[33m[scabbard.rtl:WARN] " << TRUE_SPAN - SPAN << " data points lost from GPU s:" << dt->JOB_ID.STREAM << " j:" << dt->JOB_ID.JOB << "\033[00m" << std::flush;
         if (dt->finished) { // deal with a device tracker that is done with it's job
           auto hipRes = hipFree(dt);
           if (hipRes != hipSuccess)
-            SCAB_SERR << "\n[scabbard.rtl:ERR] failed to free a device tracker from managed memory! (errcode: " << hipRes << ")\n";
+            SCAB_SERR << "\n\033[91m[scabbard.rtl:ERROR] failed to free a device tracker from managed memory! (errcode: " << hipRes << ")\033[00m\n";
           dt = nullptr;
         }
       }
