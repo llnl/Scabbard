@@ -24,6 +24,7 @@
 #include <thread>
 #include <type_traits>
 #include <new>
+#include <utility>
 
 
 namespace scabbard {
@@ -163,7 +164,19 @@ struct TraceData {
 
   [[clang::disable_sanitizer_instrumentation, gnu::flatten, gnu::always_inline]] 
   __host__ __device__
-  TraceData(const TraceData& other) { std::memcpy(this, &other, sizeof(TraceData)); }
+  explicit TraceData(const TraceData& other) = default;
+  // { std::memcpy(this, &other, sizeof(TraceData)); }
+
+  [[clang::disable_sanitizer_instrumentation, gnu::flatten, gnu::always_inline]] 
+  __host__ __device__
+  explicit TraceData(TraceData&& other) = default;
+  //   : time_stamp(std::exchange(other.time_stamp, 0ull)), 
+  //     data(std::exchange(other.data, InstrData::NONE)), 
+  //     threadId(std::exchange(other.threadId, ((void*)nullptr))),
+  //     ptr(std::exchange(other.ptr, 0ull)), 
+  //     metadata(std::exchange(other.metadata, nullptr)), 
+  //     _OPT_DATA(std::exchange(other._OPT_DATA, 0ull))
+  // {}
 
   [[clang::disable_sanitizer_instrumentation, gnu::flatten, gnu::always_inline]]
   __device__ 
@@ -191,7 +204,11 @@ struct TraceData {
   // Explicit operators
   [[clang::disable_sanitizer_instrumentation, gnu::flatten, gnu::always_inline]] 
   __device__ __host__
-  inline TraceData& operator = (const TraceData& other) = default; 
+  inline TraceData& operator = (const TraceData& other) = default;
+
+  [[clang::disable_sanitizer_instrumentation, gnu::flatten, gnu::always_inline]] 
+  __device__ __host__
+  inline TraceData& operator = (TraceData&& other) = default; 
 
   [[clang::disable_sanitizer_instrumentation, gnu::flatten, gnu::always_inline]] 
   __host__

@@ -1,5 +1,5 @@
 /**
- * @file AsyncQueue.hpp
+ * @file Runtime.hpp
  * @author osterhoutan (osterhoutan+scabbard@gmail.com)
  * @brief The cross host, device and thread lock-free queue
  * @version alpha 0.0.1
@@ -9,13 +9,13 @@
  * 
  */
 
-#include <scabbard/rtl/AsyncQueue.hpp>
+#include <scabbard/rtl/Runtime.hpp>
+#include <scabbard/rtl/globals.hpp>
 
 #include <hip/hip_ext.h>
 #include <hip/hip_runtime_api.h>
 
 #include <cstring>
-#include <iostream>
 #include <deque>
 #include <thread>
 
@@ -31,11 +31,11 @@ namespace scabbard {
 
     [[clang::disable_sanitizer_instrumentation, gnu::used, gnu::retain]] 
     __host__
-    AsyncQueue::AsyncQueue() {}
+    Runtime::Runtime() {}
 
     [[clang::disable_sanitizer_instrumentation, gnu::used, gnu::retain]] 
     __host__
-    AsyncQueue::~AsyncQueue()
+    Runtime::~Runtime()
     {
       stop();
       for (auto dt : device_trackers)
@@ -43,17 +43,14 @@ namespace scabbard {
           if (hipFree(dt) != hipSuccess)
             SCAB_SERR << "\n[scabbard.rtl.dtor:ERROR] could not deallocate device side buffer!\n" 
                       << std::endl;
-      if (tw != nullptr) {
-        tw->finalize();
-        tw->close();
-        delete tw;
-      }
+      if (SM) delete SM;
+      if (GPF) delete GPF;
     }
 
 
     [[clang::disable_sanitizer_instrumentation, gnu::used, gnu::retain]] 
     __host__
-    void AsyncQueue::start()
+    void Runtime::start()
     {
       stop();
       run_worker = true;
@@ -67,7 +64,7 @@ namespace scabbard {
 
     [[clang::disable_sanitizer_instrumentation, gnu::used, gnu::retain]] 
     __host__
-    void AsyncQueue::stop()
+    void Runtime::stop()
     {
       if (worker_thread != nullptr) {
         run_worker = false;
@@ -79,7 +76,7 @@ namespace scabbard {
     template<class Rep, class Period>
     [[clang::disable_sanitizer_instrumentation, gnu::used, gnu::retain]] 
     __host__
-    void AsyncQueue::set_delay(const std::chrono::duration<Rep,Period>& delay_)
+    void Runtime::set_delay(const std::chrono::duration<Rep,Period>& delay_)
     {
       delay = delay_;
     }
@@ -87,45 +84,20 @@ namespace scabbard {
 
     [[clang::disable_sanitizer_instrumentation, gnu::used, gnu::retain]] 
     __host__
-    void AsyncQueue::set_trace_writer(const std::string& file_path, const std::string& exe_path, std::time_t start_time)
+    void Runtime::initialize(std::size_t mem_chunk_len)
     {
-      if (tw != nullptr) {
-        tw->finalize();
-        tw->close();
-        delete tw;
-      }
-      try {
-        tw = new TraceWriter(file_path);
-      } catch (std::exception ex) {
-        SCAB_SERR << "\n[scabbard.rtl:ERR] Could not open rtl file!"
-                     "\n[scabbard.rtl:ERR]          error: \"" << ex.what() << "\"" 
-                     "\n[scabbard.rtl:ERR]     rtl file: \"" << file_path << "\"\n";
-        exit(EXIT_FAILURE);
-      } catch (...) {
-        SCAB_SERR << "\n[scabbard.rtl:ERR] Could not open rtl file!"
-                     "\n[scabbard.rtl:ERR]          error: \"<UNKNOWN_ERROR>\"" 
-                     "\n[scabbard.rtl:ERR]     rtl file: \"" << file_path << "\"\n";
-        exit(EXIT_FAILURE);
-      }
-      try {
-        tw->init(exe_path, start_time);
-      } catch (std::exception ex) {
-        SCAB_SERR << "\n[scabbard.rtl:ERR] Could not write header for rtl file!"
-                     "\n[scabbard.rtl:ERR]          error: \"" << ex.what() << "\"" 
-                     "\n[scabbard.rtl:ERR]     rtl file: \"" << file_path << "\"\n";
-        exit(EXIT_FAILURE);
-      } catch (...) {
-        SCAB_SERR << "\n[scabbard.rtl:ERR] Could not write header for rtl file!"
-                     "\n[scabbard.rtl:ERR]          error: \"<UNKNOWN_ERROR>\"" 
-                     "\n[scabbard.rtl:ERR]     rtl file: \"" << file_path << "\"\n";
-        exit(EXIT_FAILURE);
-      }
+      if (SM != nullptr) { // case reinitialization
+        SM->reset();
+        if (GPF) delete GPF;
+      } else
+        SM = new StateMachine();
+      GPF = new GroupedPtrFactory<const TraceData>(mem_chunk_len);
     }
 
 
     [[clang::disable_sanitizer_instrumentation, gnu::used, gnu::retain]] 
     __host__
-    device::DeviceTracker* AsyncQueue::add_job(const hipStream_t STREAM)
+    device::DeviceTracker* Runtime::add_job(const hipStream_t STREAM)
     {
       device::DeviceTracker* dt = nullptr;
       hipError_t hipRes = hipMallocManaged(&dt, 
@@ -150,26 +122,26 @@ namespace scabbard {
 
     [[clang::disable_sanitizer_instrumentation, gnu::used, gnu::retain]] 
     __host__
-    void AsyncQueue::append(TraceData tData)
+    void Runtime::append(TraceData&& tData)
     {
-      mx_hostQ.lock();
-      hostQ.push(tData);
-      mx_hostQ.unlock();
+      mx_host.lock();
+      hostQ.push(std::move(GPF->create(tData)));
+      mx_host.unlock();
     }
 
 
 
     [[clang::disable_sanitizer_instrumentation, gnu::used, gnu::retain]] 
     __host__
-    void AsyncQueue::async_process()
+    void Runtime::async_process()
     {
-      process_device(*tw);
-      process_host(*tw);
+      process_device();
+      process_host();
     }
 
     [[clang::disable_sanitizer_instrumentation, gnu::used, gnu::retain]] 
     __host__
-    void AsyncQueue::process_device(TraceWriter& tw)
+    void Runtime::process_device()
     {
       using namespace scabbard::rtl::device;
       mx_device.lock();
@@ -180,7 +152,7 @@ namespace scabbard {
         const size_t SPAN = (TRUE_SPAN < DeviceTracker::BUFFER_SIZE) ? TRUE_SPAN : DeviceTracker::BUFFER_SIZE;
         const size_t MAX = dt->next_read + DeviceTracker::BUFFER_SIZE;
         for (size_t i = dt->next_read; i < MAX && i < NEXT; ++i)
-          tw << dt->buffer[i%DeviceTracker::BUFFER_SIZE];
+          *SM << std::move(GPF->create(dt->buffer[i%DeviceTracker::BUFFER_SIZE]));
         dt->next_read = NEXT;
         if (TRUE_SPAN)
           SCAB_SERR << "[scabbard.rtl:INFO] reading " << SPAN << '/' << TRUE_SPAN << " data points from GPU s:" << dt->JOB_ID.STREAM << " j:" << dt->JOB_ID.JOB << std::endl;
@@ -196,14 +168,14 @@ namespace scabbard {
 
     [[clang::disable_sanitizer_instrumentation, gnu::used, gnu::retain]] 
     __host__
-    void AsyncQueue::process_host(TraceWriter& tw)
+    void Runtime::process_host()
     {
-      mx_hostQ.lock();
+      mx_host.lock();
       while (not hostQ.empty()) {
-        tw << hostQ.front();
+        *SM << hostQ.front();
         hostQ.pop();
       }
-      mx_hostQ.unlock();
+      mx_host.unlock();
     }
 
 

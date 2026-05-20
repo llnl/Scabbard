@@ -12,7 +12,7 @@
 
 #include <scabbard/rtl/calls.hpp>
 #include <scabbard/rtl/globals.hpp>
-#include <scabbard/rtl/AsyncQueue.hpp>
+#include <scabbard/rtl/Runtime.hpp>
 #include <scabbard/rtl/StateMachine.hpp>
 #include <scabbard/rtl/ReportWriter.hpp>
 #include <scabbard/Metadata.hpp>
@@ -37,8 +37,7 @@ namespace scabbard {
     // <<                                          GLOBALS                                           >> 
     // << ========================================================================================== >> 
 
-    AsyncQueue TRACE_LOGGER; // initialized in scabbard init
-    StateMachine* STATE_MACHINE = nullptr;
+    Runtime SCAB_RUNTIME; // initialized in scabbard init
     scabbard::rtl::ostream SCAB_SOUT(std::cout);
     scabbard::rtl::ostream SCAB_SERR(std::cerr);
 
@@ -173,18 +172,21 @@ namespace scabbard {
         std::exit(EXIT_FAILURE);
       }
 
-      TRACE_LOGGER.set_trace_writer(TRACE_FILE, EXE_NAME, 
-                                    std::chrono::system_clock::now().time_since_epoch().count());
+      SCAB_RUNTIME.initialize(MEM_CHUNK_SIZE);
+
       if (std_out) SCAB_SOUT.replace(std_out);
       if (std_err) SCAB_SERR.replace(std_err);
-      TRACE_LOGGER.start();
+
+      SCAB_RUNTIME.start();
     }
 
     [[clang::disable_sanitizer_instrumentation, gnu::used, gnu::retain, gnu::noinline]] 
     __host__
     void scabbard_close()
     {
-      
+      SCAB_RUNTIME.stop();
+      SCAB_RUNTIME.report();
+      SCAB_RUNTIME.finalize();
     }
 
 
@@ -193,20 +195,20 @@ namespace scabbard {
     __host__
     void* register_job(const hipStream_t STREAM)
     {
-      return ((void*) TRACE_LOGGER.add_job(STREAM));
+      return ((void*) SCAB_RUNTIME.add_job(STREAM));
     }
 
     [[clang::disable_sanitizer_instrumentation, gnu::used, gnu::retain, gnu::noinline]] 
     __host__
     void scabbard_stream_callback(hipStream_t stream, hipError_t status, void* dt_)
     {
-      // mark the device tracker as finished for the TRACE_LOGGER to take care of during next device upkeep cycle
+      // mark the device tracker as finished for the SCAB_RUNTIME to take care of during next device upkeep cycle
       device::DeviceTracker* dt = (device::DeviceTracker*) dt_;
       dt->finished = true;
       // rebalance logical vClk
       const size_t dvClk = dt->vClk;
-      if (dvClk > TRACE_LOGGER.vClk)
-        TRACE_LOGGER.vClk = dvClk;
+      if (dvClk > SCAB_RUNTIME.vClk)
+        SCAB_RUNTIME.vClk = dvClk;
     }
 
     [[clang::disable_sanitizer_instrumentation, gnu::used, gnu::retain, gnu::noinline]] 
@@ -244,9 +246,9 @@ namespace scabbard {
       __host__
       void trace_append$mem(const InstrData data, const void*const PTR, const void* const SRC_ID)
       {
-        TRACE_LOGGER.append(
+        SCAB_RUNTIME.append(
             TraceData(
-                TRACE_LOGGER.vClk++,
+                SCAB_RUNTIME.vClk++,
                 data,
                 ThreadId(), 
                 (std::uintptr_t)PTR,
@@ -289,9 +291,9 @@ namespace scabbard {
       __host__
       void trace_append$alloc(const InstrData data, const void*const PTR, const void* const SRC_ID, const std::size_t SIZE)
       {
-        TRACE_LOGGER.append(
+        SCAB_RUNTIME.append(
             TraceData(
-                TRACE_LOGGER.vClk++,
+                SCAB_RUNTIME.vClk++,
                 (data | InstrData::_OPT_USED),
                 ThreadId(),
                 (std::uintptr_t)PTR,

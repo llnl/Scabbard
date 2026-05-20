@@ -31,14 +31,14 @@ namespace rtl {
     using SyncTable_t = std::map<std::uintptr_t, std::size_t>;
     
   private:
-    Trace_t& trace;
+    Trace_t trace;
     MemTable_t mem;
     AllocTable_t allocs;
     size_t last_global_sync = __UINT64_MAX__;
     SyncTable_t last_stream_sync;
 
   public:
-    StateMachine(const Trace_t& trace_);
+    StateMachine() = default;
     
     struct Result {
       enum Status { GOOD=0, ERROR=2, WARNING=1, INTERNAL_ERROR=-1 };
@@ -74,9 +74,12 @@ namespace rtl {
     //  */
     // const ResultStatus check_race_write(const TraceData& w, const TraceData& o);
 
+    friend inline StateMachine& operator << (StateMachine& SM, GroupedPtr<const TraceData>& Ptr);
+    friend inline StateMachine& operator << (StateMachine& SM, GroupedPtr<const TraceData>&& __Ptr);
+
   };
 
-  std::ostream& operator << (std::ostream& out, const StateMachine::ResultStatus& status);
+  inline std::ostream& operator << (std::ostream& out, const StateMachine::Result::Status& status);
 
 } //?namespace rtl
 } //?namespace scabbard

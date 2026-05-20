@@ -11,8 +11,6 @@
 
 #pragma once
 
-#include <scabbard/rtl/AsyncQueue.hpp>
-#include <scabbard/rtl/StateMachine.hpp>
 #include <scabbard/rtl/osteam.hpp>
 
 namespace scabbard {

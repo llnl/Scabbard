@@ -1,5 +1,5 @@
 /**
- * @file AsyncQueue.hpp
+ * @file Runtime.hpp
  * @author osterhoutan (osterhoutan+scabbard@gmail.com)
  * @brief The cross host, device and thread lock-free queue
  * @version alpha 0.0.1
@@ -12,13 +12,12 @@
 #pragma once
 
 
-#include "TraceWriter.hpp"
-// #include "MetadataStrore.hpp"
 #include "calls.hpp"
 #include "DeviceTracker.hpp"
 
 #include <scabbard/TraceData.hpp>
-#include <scabbard/GroupedPtr.hpp>
+#include <scabbard/rtl/GroupedPtr.hpp>
+#include <scabbard/rtl/StateMachine.hpp>
 
 #include <hip/hip_ext.h>
 #include <hip/hip_runtime.h>
@@ -42,29 +41,26 @@ namespace scabbard {
   
 
     /**
-     * @brief A specialized AsyncQueue, that just collates the contents of 
+     * @brief A specialized Runtime, that just collates the contents of 
      *        subsidiary queues that are running on separate threads and devices
      *        primarily between host and device for a CPU/GPU setup. \n
      *        NOTE: the subsidiary queues are not updated to reflect changes
      *        provided by other threads, it's a one way relationship.
      *        WARNING: this class is designed to only have one instantiation in an entire program.
      */
-    class AsyncQueue {
+    class Runtime {
 
     public:
       /// @brief a logical clock used to determine when things occur
-      _Atomic(size_t) vClk = 0u;
+      std::atomic<size_t> vClk = 0u;
     
     protected:
-      // /// @brief host side storage of the device ptr where the device side.
-      // ///        NOTE: this is a device ptr and is set during scabbard_init()
-      // DeviceAsyncQueue* deviceQ = nullptr;        
-      //
-      // /// @brief array of the last place we read from when processing the device side async queue
-      // size_t device_last_read[SCABBARD_DEVICE_CYCLE_BUFFER_LANE_COUNT];
-      //
-      // /// @brief aka \c _device_buffer - local place to store the device side async queue during processing
-      // DeviceAsyncQueue _db;
+      
+      /// @brief Pointer to the state machine that validates the process.
+      StateMachine* SM = nullptr;
+
+      /// @brief owner of all \c GroupedPtrs in the Runtime.
+      GroupedPtrFactory<const TraceData>* GPF = nullptr;
 
       /// @brief the owning list of device trackers
       std::vector<device::DeviceTracker*> device_trackers;
@@ -72,24 +68,20 @@ namespace scabbard {
       /// @brief a map connecting counters to each stream's jobs
       std::map<hipStream_t,uint16_t> stream_job_counters;
 
-      // /// @brief a map connecting device trackers to their GPU device (non-owning)
-      // ///        the result is the index in the device_tracker vector that owns the pointer
-      // std::multimap<int,DTRef> dts_by_device;
-
-      /// @brief the mutex protecting access to the device side buffer objects
+      /// @brief the mutex protecting access to the device side volatiles
       std::mutex mx_device;
 
       /// @brief the host buffer
-      std::queue<TraceData> hostQ;
+      std::queue<GroupedPtr<const TraceData>> hostQ;
 
-      /// @brief the mutex protecting the host side buffer (if I can find an easily imported lock free queue this will replace it)
-      std::mutex mx_hostQ;
+      /// @brief the mutex protecting the host side volatiles
+      std::mutex mx_host;
 
       /// @brief the worker thread for the async queue
       std::thread* worker_thread = nullptr;
 
       /// @brief way to get worker to stop so it can be joined latter
-      bool run_worker = false;
+      std::atomic<bool> run_worker = false;
 
       /// @brief delay between processes of the various buffers
       std::chrono::high_resolution_clock::duration delay = std::chrono::milliseconds(2);
@@ -100,25 +92,25 @@ namespace scabbard {
       
     public:
 
-      __host__ AsyncQueue();
-      __host__ ~AsyncQueue();
+      __host__ Runtime();
+      __host__ ~Runtime();
 
       /**
-       * @brief start the async process
+       * @brief start the runtime
        */
       __host__ void start();
 
       /**
-       * @brief stop the async process
+       * @brief stop the runtime
        */
       __host__ void stop();
 
 
       /**
        * @brief how the host will append its traces data to the rtl.
-       * @param tData the rtl data to append
+       * @param tData the rtl data to append (moved not copied)
        */
-      __host__ void append(TraceData tData);
+      __host__ void append(TraceData&& tData);
 
       /**
        * @brief Set the delay between processing(s) of the buffers
@@ -145,31 +137,36 @@ namespace scabbard {
       __host__ device::DeviceTracker* add_job(const hipStream_t STREAM);
       
       /**
-       * @brief Set the rtl writer object
-       * @param file_path the filepath of where the tracefile will be setup
-       * @param exe_path path to the instrumented executable generating the rtl
-       * @param start_time unix timestamp of \em roughly when this executable started running
+       * @brief initialize the runtime
+       * @param mem_chunk_len size to set chunk size to in the GPF
        */
-      __host__ void set_trace_writer(const std::string& file_path, const std::string& exe_path, const std::time_t start_time);
+      __host__
+      void initialize(std::size_t mem_chunk_len);
+
+      /**
+       * @brief Produce a report to the global \c SCAB_SOUT with the results produced by the 
+       *        \c StateMachine so far.
+       */
+      __host__
+      void report();
+
+      /**
+       * @brief Perform any final actions necessary before a deconstructor is called for final cleanup.
+       */
+      __host__
+      void finalize() {}
 
       /**
        * @brief how to trigger a single round of processing of the rtl data buffered from 
-       *        the device then from the host out to the TraceWriter set with \c set_trace_writer() method.
+       *        the device then from the host out to the TraceWriter set with \c initialize() method.
        */
       __host__ void async_process();
-
-      /**
-       * @brief called from instrumented module scabbard_ctor's to register new src files 
-       * @param src - the src file being registered
-       * @return \c std::uint64_t - the id that this src file should be registered with
-       */
-      // __host__ std::uint64_t register_src(const char* src);
 
 
     protected:
 
-      __host__ void process_device(TraceWriter& tw);
-      __host__ void process_host(TraceWriter& tw);
+      __host__ void process_device();
+      __host__ void process_host();
       
 
     };

@@ -41,48 +41,48 @@ namespace rtl {
     size_t dbg_j = 0u; //DEBUG
     size_t dbg_k = 0u; //DEBUG
     for (const auto& td : trace) {
-      if (/* td.time_stamp == 0u || */ td.data == InstrData::NEVER) dbg_j++; //DEBUG
-      if (td.data & InstrData::ON_GPU) dbg_k++; //DEBUG
+      if (/* td->time_stamp == 0u || */ td->data == InstrData::NEVER) dbg_j++; //DEBUG
+      if (td->data & InstrData::ON_GPU) dbg_k++; //DEBUG
       std::map<size_t, const scabbard::TraceData *>::iterator it = mem.end();
-      switch (td.data & FILTER)
+      switch (td->data & FILTER)
       {
         case InstrData::SYNC_EVENT: //NOTE: hipMemcpy might fuck this up look into separating trace data fields into two entires in some tbd order
-          if (td.ptr == 0) {
-            last_global_sync = td.time_stamp;
+          if (td->ptr == 0) {
+            last_global_sync = td->time_stamp;
             last_stream_sync.clear();
           } else
-            last_stream_sync[jobId_t::hash_stream_ptr(td.ptr)] = td.time_stamp;
+            last_stream_sync[jobId_t::hash_stream_ptr(td->ptr)] = td->time_stamp;
           break;
 
         case InstrData::DESYNC_EVENT:
           //NOTE: currently just used to help when debugging
-          if (td.ptr == 0ul)
+          if (td->ptr == 0ul)
             last_global_sync = UINT64_MAX;
           else
-            last_stream_sync[jobId_t::hash_stream_ptr(td.ptr)] = UINT64_MAX;  //replace with erase?
+            last_stream_sync[jobId_t::hash_stream_ptr(td->ptr)] = UINT64_MAX;  //replace with erase?
           break;
 
         case InstrData::WRITE:
-          it = mem.find(td.ptr); //TODO: \/ logic below needs a refresh (might be flawed) \/
+          it = mem.find(td->ptr); //TODO: \/ logic below needs a refresh (might be flawed) \/
           if (it == mem.end()) { // first write of a pair (empty or just allocated)
-            mem[td.ptr] = &td;
+            mem[td->ptr] = &td;
           } else if (not (it->second->data & InstrData::READ)) { // OR the last operation on the mem space was a read 
-            mem[td.ptr] = &td;
+            mem[td->ptr] = &td;
           } else { // This is probably a race  //NOTE: expand this to search for read times compared to last desync event? (after ending mem wipes during free events)
             add_result(results,{ERROR, it->second, &td, "Data Written to after it was Read from"});
           }
           break;
 
         case InstrData::READ:
-          it = mem.find(td.ptr);
+          it = mem.find(td->ptr);
           if (it == mem.end()) {// read with no preceding write
-            if ((td.data & InstrData::_RUNTIME_CONDITIONAL) && (td.data & InstrData::HOST_HEAP)) // if the memory location was conditional and verified to be on the heap
+            if ((td->data & InstrData::_RUNTIME_CONDITIONAL) && (td->data & InstrData::HOST_HEAP)) // if the memory location was conditional and verified to be on the heap
               break;  // it is not likely to be relevant to the gpu; skip it
             add_result(results,{WARNING, &td, nullptr, "Read with no preceding/matching Write"}); // read with no preceding write
-            mem[td.ptr] = &td;
+            mem[td->ptr] = &td;
             break;
-          } else if (td.data & InstrData::_OPT_USED) { // bulk read (memcpy device to host)
-            for (; it != mem.end() && it->second->ptr < td.ptr+td._OPT_DATA; ++it) {
+          } else if (td->data & InstrData::_OPT_USED) { // bulk read (memcpy device to host)
+            for (; it != mem.end() && it->second->ptr < td->ptr+td->_OPT_DATA; ++it) {
               auto res = check_race_read(td, *it->second);
               if (res != GOOD) {
                 add_result(results,{res, &td, it->second, "Bulk Read/MemCpyAsync occurs before any identifiably relevant sync event"});
@@ -101,23 +101,23 @@ namespace rtl {
           break;
 
         case InstrData::ALLOCATE:
-          allocs[td.ptr] = td._OPT_DATA;
-          last_global_sync = td.time_stamp;   // currently assuming all allocate and free are synchonous
+          allocs[td->ptr] = td->_OPT_DATA;
+          last_global_sync = td->time_stamp;   // currently assuming all allocate and free are synchonous
           break;
 
         case InstrData::FREE: {
-          auto r = allocs.find(td.ptr);
+          auto r = allocs.find(td->ptr);
           if (r == allocs.end()) {
             add_result(results,{INTERNAL_ERROR, nullptr, nullptr, "\n[scabbard.rtl:ERR] bad alloc data (could not find hipMalloc associated with hipFree in trace history)"}); //DEBUG
-            last_global_sync = td.time_stamp; //DEBUG
+            last_global_sync = td->time_stamp; //DEBUG
             break; //DEBUG
             // return {{{INTERNAL_ERROR, nullptr, nullptr, "\n[scabbard.rtl:ERR] bad alloc data (could not find hipMalloc associated with hipFree in trace history)"}, 1ul}};
           }
-          for (it = mem.find(td.ptr); it != mem.end() && it->second->ptr < td.ptr+r->second; ++it)
+          for (it = mem.find(td->ptr); it != mem.end() && it->second->ptr < td->ptr+r->second; ++it)
             it = mem.erase(it);
             // mem.erase(it);
           allocs.erase(r);
-          last_global_sync = td.time_stamp;   // currently assuming all allocate and free are synchonous
+          last_global_sync = td->time_stamp;   // currently assuming all allocate and free are synchonous
           break;
         }
 
@@ -143,41 +143,41 @@ namespace rtl {
 
 
 
-  const StateMachine::ResultStatus StateMachine::check_race_read(const TraceData& r, const TraceData& o) 
+  const StateMachine::Result::Status StateMachine::check_race_read(const TraceData& r, const TraceData& o) 
   {
     // mem[o.ptr] = &r;
     //NOTE: we probably don't need to compare sync times to the current read event since we are garenteed to process events in chronological order.
     //NOTE: we might also be able to get away with transforming this into DFA style state machine instead of a Murphi style state machine
     if (o.data & InstrData::WRITE) { // if mem stores a write event 
       if (last_global_sync < o.time_stamp || last_global_sync > r.time_stamp ) // the write happened after the last global sync event
-          return ResultStatus::WARNING; // return a warning
+          return Result::Status::WARNING; // return a warning
       auto res = last_stream_sync.find(o.threadId.device.job.STREAM);
       if (res != last_stream_sync.end() && (res->second < o.time_stamp || res->second >= r.time_stamp )) // the write happened after the last global sync event or the read occurred after the last global sync event
-        return ResultStatus::WARNING; // return a warning
+        return Result::Status::WARNING; // return a warning
     } // else    // if a read event we don't care yet (could be a double read)
       mem[o.ptr] = &r;
-      return ResultStatus::GOOD;
+      return Result::Status::GOOD;
   }
 
-  // const StateMachine::ResultStatus StateMachine::check_race_write(const TraceData& w, const TraceData& o)
+  // const StateMachine::Result::Status StateMachine::check_race_write(const TraceData& w, const TraceData& o)
   // {
   //
   // }
 
 
-  std::ostream& operator << (std::ostream& out, const StateMachine::ResultStatus& status)
+  explicit inline std::ostream& operator << (std::ostream& out, const StateMachine::Result::Status& status)
   {
     switch (status)
     {
-      case StateMachine::ResultStatus::ERROR:
+      case StateMachine::Result::Status::ERROR:
         return (out << "DATA RACE FOUND");
         break;
-      case StateMachine::ResultStatus::WARNING:
-        return (out << "POSSIBLE Data Race FOUND");
-      case StateMachine::ResultStatus::GOOD:
+      case StateMachine::Result::Status::WARNING:
+        return (out << "POSSIBLE Data Race Found");
+      case StateMachine::Result::Status::GOOD:
         return (out << "NO data races detected");
-      case StateMachine::ResultStatus::INTERNAL_ERROR:
-        return (out << "Internal ERROR occurred in scabbard rtl");
+      case StateMachine::Result::Status::INTERNAL_ERROR:
+        return (out << "Internal ERROR occurred in Scabbard RTL");
       default:
         return (out << "<UNKNOWN>");
     }
@@ -199,6 +199,18 @@ namespace rtl {
         || ((read && other.read) && read->metadata < other.read->metadata)
         || ((write && other.write) && write->metadata < other.write->metadata)
       );
+  }
+
+  explicit inline StateMachine& operator << (StateMachine& SM, GroupedPtr<const TraceData>&& __Ptr)
+  {
+    SM.trace.insert(__Ptr);
+    return SM;
+  }
+
+  explicit inline StateMachine& operator << (StateMachine& SM, GroupedPtr<const TraceData>& Ptr)
+  {
+    SM.trace.insert(Ptr);
+    return SM;
   }
 
 } //?namespace rtl
