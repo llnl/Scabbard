@@ -11,27 +11,12 @@
 
 #pragma once
 
+#include <scabbard/rtl/StateMachine.hpp>
+
 namespace scabbard {
 namespace rtl {
 
-class ostream;
-
-/// @brief Produce a human readable report of the results of Scabbard's verification step
-///         to the desired location specified by providing the desired \c std::ostream
-///         or \c scabbard::rtl::ostream to the constructor.
-class ReportWriter {
-
-  /// @brief Where to write the report to
-  std::ostream& out;
-
-
-public:
-  
-  ReportWriter(std::ostream& out_) : out(out_) {} 
-  ReportWriter(scabbard::rtl::ostream& out_) : out(*out_.get()) {}
-
-
-};
+void print_report(StateMachine::ResultList_t& results);
 
 
 } //?namespace rtl

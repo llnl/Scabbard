@@ -73,6 +73,9 @@ private:
   Slot<T>* slot;
 
 public:
+
+  GroupedPtr() = default;
+
   GroupedPtr(Slot<T>* s) : slot(s)
   {
     if (slot) slot->ref_count++;
@@ -93,6 +96,14 @@ public:
   {
     if (slot) slot->ref_count++;
   }
+  GroupedPtr& operator = (const GroupedPtr& other) = default;
+
+  // Move Constructor
+  GroupedPtr(GroupedPtr&& other) = delete;
+  GroupedPtr& operator = (GroupedPtr&& other) = delete;
+
+  // make a new grouped ptr from the pointer to a data point that is already in a Slot.
+  static inline GroupedPtr make(T* ptr) { return GroupedPtr((Slot<T>*)ptr); }
 
   T& operator*() { return slot->data; }
   T* operator->() { return &slot->data; }
@@ -107,17 +118,31 @@ public:
   std::size_t use_count() const { return slot ? block->ref_count : 0ull; }
   explicit operator bool() const { return slot && slot->ref_count; }
 
-  bool operator == (const GroupedPtr& other) { return *this == *other; }
-  bool operator == (const T& other) { return *this == other; }
+  explicit bool operator == (const GroupedPtr& other) const { return slot == other.slot; }
+  explicit bool operator == (const void* other) const { return slot == other; }
+  explicit bool operator != (const GroupedPtr& other) const { return slot != other.slot; }
+  explicit bool operator != (const void* other) const { return slot != other; }
+
+  bool operator == (const T& other) const { return *this == other; }
+  bool operator != (const T& other) const { return *this != other; }
+
+  bool operator < (const GroupedPtr& other) const { return *this < *other; }
+  bool operator < (const T& other) const { return *this < other; }
+  bool operator > (const GroupedPtr& other) const { return *this > *other; }
+  bool operator > (const T& other) const { return *this > other; }
+  bool operator <= (const GroupedPtr& other) const { return *this <= *other; }
+  bool operator <= (const T& other) const { return *this <= other; }
+  bool operator >= (const GroupedPtr& other) const { return *this >= *other; }
+  bool operator >= (const T& other) const { return *this >= other; }
 
   class less {
   public:
-    bool operator () (const GroupedPtr<T>& l, const GroupedPtr<T> r) { return *l < *r; }
+    bool operator () (const GroupedPtr<T>& l, const GroupedPtr<T> r) const { return *l < *r; }
   };
   // inverse of less for use with std::priority_queue which is weakly ordered 
   class priority_less {
   public:
-    bool operator () (const GroupedPtr<T>& l, const GroupedPtr<T> r) { return not (*l < *r); }
+    bool operator () (const GroupedPtr<T>& l, const GroupedPtr<T> r) const { return not (*l < *r); }
   };
 };
 

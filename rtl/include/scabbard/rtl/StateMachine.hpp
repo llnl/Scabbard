@@ -13,6 +13,9 @@
 
 #include <scabbard/TraceData.hpp>
 #include <scabbard/rtl/GroupedPtr.hpp>
+#include <scabbard/rtl/IntervalMap.hpp>
+
+// #include <llvm/ADT/IntervalMap.h>
 
 #include <unordered_set>
 #include <queue>
@@ -30,12 +33,18 @@ namespace rtl {
     using Trace_t = std::priority_queue<DataPtr_t, 
                                         std::vector<DataPtr_t>,
                                         DataPtr_t::priority_less>;
-    using MemTable_t = std::map<std::uintptr_t, DataPtr_t>;
+    using MemTable_t = IntervalMap<std::uintptr_t, DataPtr_t>;
     using AllocTable_t = std::map<std::uintptr_t, std::size_t>;
     using SyncTable_t = std::map<std::uintptr_t, std::size_t>;
 
     struct Result {
-      enum Status { GOOD=0, ERROR=2, WARNING=1, INTERNAL_ERROR=-1 };
+      enum Status { 
+        GOOD=0, 
+        RACE_DH=2, RACE_HD=4,
+        POS_RACE_DH=1, POS_RACE_HD=3,
+        READ_UNINIT_D=5, READ_UNINIT_H=6,
+        INTERNAL_ERROR=-1 
+      };
       Status status;
       DataPtr_t read = nullptr; 
       DataPtr_t write = nullptr;
@@ -80,7 +89,7 @@ namespace rtl {
   private:
 
     /**
-     * @brief check if a race has occurred if the current trace is a read event (for d->h races)
+     * @brief check if a race has occurred if the current trace is a READ event (for d->h races)
      * @param r - the current trace data being processed that is known to be a read event
      * @param o  - the other trace data from the mem_dh object (known to exist)
      * @return \c const ResultStatus - the resulting condition
@@ -88,20 +97,29 @@ namespace rtl {
     Result::Status check_race_read_dh(const DataPtr_t& r, const DataPtr_t& o);
 
     /**
-     * @brief check if a race has occurred if the current trace is a read event (for h->d races)
+     * @brief check if a race has occurred if the current trace is a READ event (for h->d races)
      * @param r - the current trace data being processed that is known to be a read event
      * @param o  - the other trace data from the mem_dh object (known to exist)
      * @return \c const ResultStatus - the resulting condition
      */
     Result::Status check_race_read_hd(const DataPtr_t& r, const DataPtr_t& o);
 
-    // /**
-    //  * @brief check if a race has occurred if the current trace is a write event
-    //  * @param w - the current trace data being processed that is known to be a write event
-    //  * @param o - the other trace data from the mem_dh object (known to exist)
-    //  * @return \c const ResultStatus - the resulting condition
-    //  */
-    // const ResultStatus check_race_write(const TraceData& w, const TraceData& o);
+    /**
+     * @brief check if a race has occurred if the current trace is a WRITE event (for d->h races)
+     * @param r - the current trace data being processed that is known to be a read event
+     * @param o  - the other trace data from the mem_dh object (known to exist)
+     * @return \c const ResultStatus - the resulting condition
+     */
+    Result::Status check_race_write_dh(const DataPtr_t& w, const DataPtr_t& o);
+
+    /**
+     * @brief check if a race has occurred if the current trace is a WRITE event (for h->d races)
+     * @param r - the current trace data being processed that is known to be a read event
+     * @param o  - the other trace data from the mem_dh object (known to exist)
+     * @return \c const ResultStatus - the resulting condition
+     */
+    Result::Status check_race_write_hd(const DataPtr_t& w, const DataPtr_t& o);
+
 
     friend inline StateMachine& operator << (StateMachine& SM, DataPtr_t& Ptr);
     friend inline StateMachine& operator << (StateMachine& SM, DataPtr_t&& __Ptr);

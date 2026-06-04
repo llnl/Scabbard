@@ -14,16 +14,12 @@
 namespace scabbard {
 namespace rtl {
 
-StateMachine::StateMachine(StateMachine::Trace_t& trace_)
-  : trace(trace_)
-{}
-
 
 inline void add_result(StateMachine::ResultList_t& results, const StateMachine::Result& res, std::size_t n=1u)
 {
   auto it = results.find(res);
   if (it == results.end()) // case not encountered yet
-    results.insert(std::make_pair(res,1ul));
+    results.insert(std::make_pair(res,n));
   else                     // case encountered before
     it->second += n;
 }
@@ -40,13 +36,15 @@ void StateMachine::run(std::uint64_t remainder_quotient)
   std::size_t dbg_i = 0u; //DEBUG
   std::size_t dbg_j = 0u; //DEBUG
   std::size_t dbg_k = 0u; //DEBUG
+  MemTable_t::iterator idh = mem_dh.end();
+  MemTable_t::iterator ihd = mem_hd.end();
   const std::size_t GOAL_SIZE = trace.size() >> remainder_quotient;
   while (not trace.empty() && trace.size() > GOAL_SIZE) {
     const DataPtr_t& td = trace.top();
     if (/* td->time_stamp == 0u || */ td->data == InstrData::NEVER) dbg_j++; //DEBUG
     if (td->data & InstrData::ON_GPU) dbg_k++; //DEBUG
-    MemTable_t::iterator idh = mem_dh.end();
-    MemTable_t::iterator ihd = mem_hd.end();
+    idh = mem_dh.end();
+    ihd = mem_hd.end();
     switch (td->data & FILTER)
     {
       // << ======= Driver Events ======= >> 
@@ -82,15 +80,14 @@ void StateMachine::run(std::uint64_t remainder_quotient)
       case ON_HOST | FREE: {
         auto r = allocs.find(td->ptr);
         if (r == allocs.end()) {
-          add_result(results,{Status::INTERNAL_ERROR, nullptr, nullptr, "\n[scabbard.rtl:ERR] bad alloc data (could not find hipMalloc associated with hipFree in trace history)"}); //DEBUG
-          last_global_sync = td->time_stamp; //DEBUG
-          break; //DEBUG
+          add_result(results,{Result::INTERNAL_ERROR, td, nullptr, 
+                            "Bad alloc data (could not find hipMalloc associated with this hipFree in trace history)"}); //DEBUG
+          last_global_sync = td->time_stamp;
+          break;
           // return {{{INTERNAL_ERROR, nullptr, nullptr, "\n[scabbard.rtl:ERR] bad alloc data (could not find hipMalloc associated with hipFree in trace history)"}, 1ul}};
         }
-        for (idh = mem_dh.find(td->ptr); idh != mem_dh.end() && idh->second->ptr < td->ptr+r->second; ++idh)
-          idh = mem_dh.erase(idh);
-        for (ihd = mem_hd.find(td->ptr); ihd != mem_hd.end() && ihd->second->ptr < td->ptr+r->second; ++ihd)
-          ihd = mem_hd.erase(ihd);
+        idh = mem_dh.erase(td->ptr, td->ptr+r->second);
+        ihd = mem_hd.erase(td->ptr, td->ptr+r->second);
         allocs.erase(r);
         last_global_sync = td->time_stamp;   // currently assuming all allocate and free are synchonous
         break;
@@ -98,95 +95,134 @@ void StateMachine::run(std::uint64_t remainder_quotient)
 
       // << ===== Host Events ===== >> 
 
-      case ON_HOST | READ | WRITE:
+      case ON_HOST | READ | WRITE: // (DH)
       case ON_HOST | READ:
-        idh = mem_dh.find(td->ptr);
+        if (td->data & InstrData::_OPT_USED) { // bulk read (memcpy device to host)
+          std::size_t occurrences_pos_race = 0ull;
+          const Data_t* last_occurrence_pos_race;
+          std::size_t occurrences_uninit = 0ull;
+          const Data_t* last_occurrence_uninit;
+          uintptr_t last_stop = td->ptr;
+          for (const auto& _idh : mem_dh.find_all(td->ptr, td->ptr+td->_OPT_DATA)) {
+            if (_idh->start > last_stop && mem_hd.find(last_stop) == mem_hd.end()) {
+              occurrences_uninit += _idh->start - last_stop;
+              last_occurrence_uninit = _idh->val.get();
+            } else if (check_race_read_dh(td, _idh->val) != Result::GOOD) {
+              occurrences_pos_race += _idh->stop - _idh->start;
+              last_occurrence_pos_race = idh->val.get();
+            }
+            last_stop = _idh->stop;
+          }
+          if (occurrences_pos_race)
+            add_result(results,{Result::POS_RACE_DH, td, DataPtr_t::make(last_occurrence_pos_race), 
+                                "Bulk CPU Read/MemcpyAsync occurs before any identifiably relevant Sync event"},
+                       occurrences_pos_race);
+          if (occurrences_uninit)
+            add_result(results,{Result::POS_RACE_DH, td, DataPtr_t::make(last_occurrence_uninit), 
+                                "The CPU read from Uninitialized memory durring a Bulk-CPU-Read/Memcpy"},
+                       occurrences_uninit);
+          mem_dh.insert(td->ptr, td->ptr+td->_OPT_DATA, td);
+        } else { // single read
+          idh = mem_dh.find(td->ptr);
         if (idh == mem_dh.end()) {// read with no preceding write
-          // if (td->data & _RUNTIME_CONDITIONAL && td->data & HOST_HEAP)) // if the memory location was conditional and verified to be on the host heap
-          //   break;  // it is not likely to be relevant to the gpu; skip it
-          add_result(results,{Status::WARNING, td, nullptr, "Read with no preceding/matching Write"},
-                      ((td->data & _OPT_USED) ? td->_OPT_DATA : 1u)); // read with no preceding write
-          mem_dh[td->ptr] = td;
-          break;
-        } else if (td->data & InstrData::_OPT_USED) { // bulk read (memcpy device to host)
-          Result::Status res = GOOD;
-          for (auto _idh = idh; _idh != mem_dh.end() && _idh->second->ptr < td->ptr+td->_OPT_DATA; ++_idh) {
-            auto res = check_race_read_dh(td, _idh->second);
-            if (res != Status::GOOD) {
-              mem_dh[_idh->second->ptr] = td;
-              break;
+          if (mem_hd.find(td->ptr) == mem_hd.end()) // check to see if other mem table records an event
+            add_result(results,{Result::READ_UNINIT_H, td, nullptr, "The CPU Read from Uninitialized Memory"},
+                        ((td->data & _OPT_USED) ? td->_OPT_DATA : 1u)); // read with no preceding write
+          mem_dh.insert(td->ptr, td);
+        } else {
+            auto res = check_race_read_dh(td, idh->val);
+            if (res != Result::GOOD) {
+              add_result(results,{res, td, idh->val, "CPU Read occurs before any identifiably relevant Sync event"});
+              if (idh->is_single()) idh->val = td; else mem_dh.insert(td->ptr, td);
             }
           }
-          if (res != GOOD)
-            add_result(results,{res, td, idh->second, "Bulk Read/MemCpyAsync occurs before any identifiably relevant sync event"},
-                       td->_OPT_DATA);
-        } else { // single read
-          auto res = check_race_read_dh(td, idh->second);
-            if (res != Status::GOOD) {
-              add_result(results,{res, td, idh->second, "Read occurs before any identifiably relevant sync event"});
-              mem_dh[idh->second->ptr] = td;
-              break;
-            }
         }
-        if (not td->data & WRITE) //allow atomic instructions to fall through.
+        if (not (td->data & WRITE)) //allow atomic instructions to fall through.
           break;
         
-      case ON_HOST | WRITE:
-        ihd = mem_hd.find(td->ptr); //TODO: \/ logic below needs a refresh (might be flawed) \/
-        // first write of a pair (empty or just allocated)
-        if (ihd == mem_hd.end()) 
-          mem_hd[td->ptr] = td;
-        // OR the last operation on the mem_dh space was a read 
-        else if (not (idh->second->data & InstrData::READ)) 
-          mem_hd[td->ptr] = td;
-        else // This is probably a race  //NOTE: expand this to search for read times compared to last desync event? (after ending mem_dh wipes during free events)
-          add_result(results,{ERROR, ihd->second, td, "Data Written to after idh was Read from"});
+      case ON_HOST | WRITE: // (HD)
+        if (td->data & InstrData::_OPT_USED) {
+          uintptr_t last_stop = td->ptr;
+          for (auto _ihd : mem_hd.find_all(td->ptr, td->ptr+td->_OPT_DATA)) {
+            
+          }
+        } else {
+          ihd = mem_hd.find(td->ptr); //TODO: \/ logic below needs a refresh (might be flawed) \/
+          // first write of a pair (empty or just allocated)
+          if (ihd == mem_hd.end()) 
+            mem_hd.insert(td->ptr, td); // do nothing but insert into memory later.
+          // OR the last operation on the mem_dh space was a read 
+          else if (not (idh->val->data & InstrData::READ)) 
+          else // This is probably a race  //NOTE: expand this to search for read times compared to last desync event? (after ending mem_dh wipes during free events)
+            add_result(results,{Result::RACE_HD, ihd->val, td, 
+                                "Memory Written to on the CPU after a Launch and it was Read by a GPU"});
+          
+        }
         break;
 
 
       // << ===== Device Events ===== >> 
 
-      case ON_DEVICE | READ | WRITE:
+      case ON_DEVICE | READ | WRITE: // (HD)
       case ON_DEVICE | READ:
-        ihd = mem_hd.find(td->ptr);
-        if (ihd == mem_hd.end()) {// read with no preceding write
-          add_result(results,{Status::WARNING, td, nullptr, "Read with no preceding/matching Write"}); 
-          mem_hd[td->ptr] = td;
-          break;
-        } else if (td->data & InstrData::_OPT_USED) { // bulk read (memcpy device to host)
-          for (; ihd != mem_hd.end() && ihd->second->ptr < td->ptr+td->_OPT_DATA; ++ihd) {
-            auto res = check_race_read_hd(td, ihd->second);
-            if (res != Status::GOOD) {
-              add_result(results,{res, td, ihd->second, "Bulk Read/device-memcpy occurs before any identifiably relevant launch event"});
-              mem_hd[ihd->second->ptr] = td;
-              break;
+        if (td->data & InstrData::_OPT_USED) { // bulk read (memcpy device to host)
+          std::size_t occurrences_pos_race = 0ull;
+          const Data_t* last_occurrence_pos_race;
+          std::size_t occurrences_uninit = 0ull;
+          const Data_t* last_occurrence_uninit;
+          uintptr_t last_stop = td->ptr;
+          for (auto _ihd : mem_hd.find_all(td->ptr, td->ptr+td->_OPT_DATA)) {
+            if (_ihd->start > last_stop && mem_dh.find(last_stop) == mem_dh.end()) {
+              occurrences_uninit += _ihd->start - last_stop;
+              last_occurrence_uninit = _ihd->val.get();
+            } else if (check_race_read_hd(td, _ihd->val) != Result::GOOD) {
+              occurrences_pos_race += _ihd->stop - _ihd->start;
+              last_occurrence_pos_race = ihd->val.get();
+            }
+            last_stop = _ihd->stop;
+          }
+          if (occurrences_pos_race)
+            add_result(results,{Result::POS_RACE_HD, td, DataPtr_t::make(last_occurrence_pos_race), 
+                                "Bulk-GPU-Read/Memcpy occurs before any identifiably relevant Sync event"},
+                       occurrences_pos_race);
+          if (occurrences_uninit)
+            add_result(results,{Result::POS_RACE_HD, td, DataPtr_t::make(last_occurrence_uninit), 
+                                "The GPU Read from Uninitialized memory durring a Bulk-GPU-Read/Memcpy"},
+                       occurrences_uninit);
+          mem_hd.insert(td->ptr, td->ptr+td->_OPT_DATA, td);
+        } else { // single read
+          ihd = mem_hd.find(td->ptr);
+          if (ihd == mem_hd.end()) {// read with no preceding write
+            if (mem_dh.find(td->ptr) == mem_dh.end()) // check to see if it was initalized in other mem table.
+              add_result(results,{Result::READ_UNINIT_D, td, nullptr, "a GPU Read of Uninitialized Memory"},
+                          ((td->data & _OPT_USED) ? td->_OPT_DATA : 1u)); 
+            mem_hd.insert(td->ptr, td);
+          } else {
+            auto res = check_race_read_hd(td, ihd->val);
+            if (res != Result::GOOD) {
+              add_result(results,{res, td, ihd->val, "GPU Read occurs before any identifiably relevant Sync event"});
+              if (ihd->is_single()) ihd->val = td; else mem_hd.insert(td->ptr, td);
             }
           }
-        } else { // single read
-          auto res = check_race_read_hd(td, ihd->second);
-            if (res != Status::GOOD) {
-              add_result(results,{res, td, ihd->second, "Read occurs before any identifiably relevant sync event"});
-              mem_hd[ihd->second->ptr] = td;
-              break;
-            }
         }
-        if (not td->data & WRITE) //allow atomic instructions to fall through.
-          break;
+        if (not (td->data & WRITE)) //allow atomic instructions to fall through.
+          break; 
 
-      case ON_DEVICE | WRITE:
+      case ON_DEVICE | WRITE: // (DH)
         idh = mem_dh.find(td->ptr); //TODO: \/ logic below needs a refresh (might be flawed) \/
         if (idh == mem_dh.end()) // first write of a pair (empty or just allocated)
-          mem_dh[td->ptr] = td;
-        else if (not (idh->second->data & InstrData::READ)) // OR the last operation on the mem_dh space was a read 
-          mem_dh[td->ptr] = td;
+          mem_dh.insert(td->ptr, td);
+        else if (not (idh->val->data & InstrData::READ)) // OR the last operation on the mem_dh space was a read 
+          if (idh->is_single()) idh->val = td; else mem_dh.insert(td->ptr, td);
         else // This is probably a race  //NOTE: expand this to search for read times compared to last desync event? (after ending mem_dh wipes during free events)
-          add_result(results,{ERROR, idh->second, td, "Data Written to after idh was Read from"});
+          add_result(results,{Result::RACE_DH, idh->val, td, "Memory Written to on a GPU after it was Read from on the CPU"});
         break;
 
       default:
         break;
     }
     dbg_i++; //DEBUG
+    trace.pop();
   }
 }
 
@@ -202,38 +238,66 @@ void StateMachine::reset()
 
 
 StateMachine::Result::Status StateMachine::check_race_read_dh(const StateMachine::DataPtr_t& r, 
-                                                           const StateMachine::DataPtr_t& o) 
+                                                              const StateMachine::DataPtr_t& o) 
 {
-  // mem_dh[o->ptr] = &r;
-  // if mem_dh stores a write event
-  if (o->data & (ON_DEVICE | WRITE)) { 
+  // if mem_dh stores a device write event
+  if ((o->data & (ON_DEVICE | WRITE)) == (ON_DEVICE | WRITE)) { 
     // the write happened after the last global sync event
-    if (last_global_sync < o->time_stamp || last_global_sync > r->time_stamp ) 
-        return Result::Status::WARNING; // return a warning
+    if (last_global_sync < o->time_stamp /* || last_global_sync > r->time_stamp */) 
+        return Result::Status::POS_RACE_DH; // return a pos race warn
     auto res = last_stream_sync.find(o->threadId.device.job.STREAM);
     // the write happened after the last global sync event or the read occurred after the last global sync event
-    if (res != last_stream_sync.end() && (res->second < o->time_stamp || res->second >= r->time_stamp )) 
-      return Result::Status::WARNING; // return a warning
+    if (res != last_stream_sync.end() && (res->second < o->time_stamp /* || res->second >= r->time_stamp */ )) 
+      return Result::Status::POS_RACE_DH; // return a poss race warn
   } // else    // if a read event we don't care yet (could be a double read)
-    mem_dh[o->ptr] = r;
     return Result::Status::GOOD;
 }
 
 StateMachine::Result::Status StateMachine::check_race_read_hd(const StateMachine::DataPtr_t& r, 
-                                                           const StateMachine::DataPtr_t& o) 
+                                                              const StateMachine::DataPtr_t& o) 
 {
-  // mem_hd[o->ptr] = &r;
-  // if mem_dh stores a write event 
-  if (o->data & (ON_HOST | WRITE)) { 
+  // if mem_dh stores a host write event 
+  if ((o->data & (ON_HOST | WRITE)) == (ON_HOST | WRITE)) { 
     // the write happened after the last global launch event
     if (last_global_launch < o->time_stamp || last_global_launch > r->time_stamp ) 
-        return Result::Status::WARNING; // return a warning
+        return Result::Status::POS_RACE_HD; // return a poss race warn
     auto res = last_stream_launch.find(r->threadId.device.job.STREAM);
     // the write happened after the last global launch event or the read occurred after the last global launch event
     if (res != last_stream_launch.end() && (res->second < o->time_stamp || res->second >= r->time_stamp )) 
-      return Result::Status::WARNING; // return a warning
+      return Result::Status::POS_RACE_HD; // return a poss race warn
+  } // else    // if a write event we don't care yet (could be a double write)
+    return Result::Status::GOOD;
+}
+
+StateMachine::Result::Status StateMachine::check_race_write_dh(const StateMachine::DataPtr_t& w, 
+                                                               const StateMachine::DataPtr_t& o) 
+{
+  // if mem_dh stores a host read event
+  if ((o->data & (ON_HOST | READ)) == (ON_HOST | READ)) { 
+    // the write happened after the last global sync event
+    if (last_global_sync > o->time_stamp || last_global_sync < w->time_stamp ) 
+        return Result::Status::RACE_DH; // return a race result
+    auto res = last_stream_sync.find(o->threadId.device.job.STREAM);
+    // the write happened after the last global sync event or the read occurred after the last global sync event
+    if (res != last_stream_sync.end() && (res->second < o->time_stamp || res->second >= w->time_stamp )) 
+      return Result::Status::RACE_DH; // return a race result
   } // else    // if a read event we don't care yet (could be a double read)
-    mem_hd[o->ptr] = r;
+    return Result::Status::GOOD;
+}
+
+StateMachine::Result::Status StateMachine::check_race_write_hd(const StateMachine::DataPtr_t& w, 
+                                                               const StateMachine::DataPtr_t& o) 
+{
+  // if mem_dh stores a device read event 
+  if ((o->data & (ON_DEVICE | READ)) == (ON_DEVICE | READ)) { 
+    // the write happened after the last global launch event
+    if (last_global_launch < o->time_stamp || last_global_launch > w->time_stamp ) 
+        return Result::Status::RACE_HD; // return a warning
+    auto res = last_stream_launch.find(w->threadId.device.job.STREAM);
+    // the write happened after the last global launch event or the read occurred after the last global launch event
+    if (res != last_stream_launch.end() && (res->second < o->time_stamp || res->second >= w->time_stamp )) 
+      return Result::Status::RACE_HD; // return a warning
+  } // else    // if a write event we don't care yet (could be a double write)
     return Result::Status::GOOD;
 }
 
@@ -242,17 +306,19 @@ inline std::ostream& operator << (std::ostream& out, const StateMachine::Result:
 {
   switch (status)
   {
-    case StateMachine::Result::Status::ERROR:
+    case StateMachine::Result::Status::RACE_DH:
+    case StateMachine::Result::Status::RACE_HD:
       return (out << "DATA RACE FOUND");
       break;
-    case StateMachine::Result::Status::WARNING:
+    case StateMachine::Result::Status::POS_RACE_DH:
+    case StateMachine::Result::Status::POS_RACE_HD:
       return (out << "POSSIBLE Data Race Found");
     case StateMachine::Result::Status::GOOD:
       return (out << "NO data races detected");
     case StateMachine::Result::Status::INTERNAL_ERROR:
       return (out << "Internal ERROR occurred in Scabbard RTL");
     default:
-      return (out << "<UNKNOWN>");
+      return (out << "<UNKNOWN_STATUS>");
   }
 }
 

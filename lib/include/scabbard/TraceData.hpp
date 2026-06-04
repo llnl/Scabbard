@@ -80,6 +80,10 @@ struct jobId_t {
     if (not STREAM) return 0u;
     return (((std::uint64_t)STREAM) % (UINT16_MAX-1u)) + 1u;
   }
+  [[clang::disable_sanitizer_instrumentation, gnu::flatten, gnu::always_inline]] 
+  __host__
+  static inline uint16_t hash_stream_ptr(const std::uintptr_t STREAM) 
+  { return hash_stream_ptr((hipStream_t)STREAM); }
 };
 #pragma pack()
 

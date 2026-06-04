@@ -9,7 +9,8 @@
  * 
  */
 
-#include<scabbard/rtl/ReportWriter.hpp>
+#include <scabbard/rtl/ReportWriter.hpp>
+#include <scabbard/rtl/globals.hpp>
 
 #include <iostream>
 
@@ -23,26 +24,29 @@ void print_report(StateMachine::ResultList_t& results) {
 
   std::string sep = "";
   for (auto result : results) {
-    std::cout << sep; 
+    SCAB_SOUT << sep; 
     switch (result.first.status)
     {
       case StateMachine::ResultStatus::ERROR:
-        std::cout << '\n' << result.second << "x DATA RACE(S) were detected; deriving from the src locations detailed in the sampled event below!\n";
-        printResult(std::cout, mf, tf, result.first);
+        SCAB_SOUT << '\n' << result.second << "x DATA RACE(S) were detected; of the kind detailed in the sampled event below\n";
+        printResult(SCAB_SOUT, mf, tf, result.first);
         break;
 
       case StateMachine::ResultStatus::WARNING:
-        std::cout << '\n' << result.second << "x POSSIBLE data race(s) were detected; deriving from the src locations detailed in the sampled event below!\n";
-        printResult(std::cout, mf, tf, result.first);
+        SCAB_SOUT << '\n' << result.second << "x POSSIBLE data race(s) were detected; in the sampled event below!\n";
+        printResult(SCAB_SOUT, mf, tf, result.first);
         break;
 
       case StateMachine::ResultStatus::GOOD:
-        std::cout << "\nNO data races were found :)\n"; 
+        SCAB_SOUT << "\nNO data races were found :)\n"; 
         break;
 
       case StateMachine::ResultStatus::INTERNAL_ERROR:
-        std::cout << result.first.err_msg << std::endl;
-        std::cout << "(x" << result.second << ')' << std::endl; break; //DEBUG
+        SCAB_SOUT << '\n' << result.first.err_msg
+                  << "(x" << result.second << ')' << std::endl;
+        if (result.first.read) 
+          SCAB_SOUT << "  FROM: " << result.first.read.metadata << "\n"
+                       "    AT: " << result.first.read.time_stamp << std::endl;
         // return EXIT_FAILURE;
       default:
         std::cerr << "!unknown result code!" << std::endl;
@@ -50,7 +54,7 @@ void print_report(StateMachine::ResultList_t& results) {
     }
     sep = "\n========\n";
   }
-  return 0;
+  return;
 }
 
 void printResult(std::ostream& out, 
@@ -107,6 +111,7 @@ void printResult(std::ostream& out,
     out << "  RESULT: `" << res.status << "`,\n";
   if (res.err_msg != "")
     out << " MESSAGE: \"" << res.err_msg << "\",\n";
+  //TODO: add ranged brackets for mem addresses with _OPT_DATA_USED
   out << " MEM LOC: 0x" << std::hex << ((res.read) ? res.read->ptr : res.write->ptr) << std::dec << ",\n";
   
   if (res.write == nullptr) { //case there is no write data

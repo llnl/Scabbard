@@ -979,15 +979,9 @@ public:
 
     if (changed) //NOTE: this method of metadata will need to be altered to work with instrumenting durring compilation instead of LTO.
       ScabbardRTL.Metadata.finalizeMetadata(M);
-    else {
+    else
       ScabbardRTL.Metadata.clean();
-      for (Function* Fn : {((Function*)ScabbardRTL.trace_append$mem.getCallee()),
-                            ((Function*)ScabbardRTL.trace_append$alloc.getCallee())}) {
-        if (Fn->hasZeroLiveUses())
-          Fn->eraseFromParent();
-      }
-
-    }
+ 
 
     // errs() << "\n\n[scabbard.instr.device:DBG] Module written to: \"" << _DBG::write_module_to_file(M,"device.postInstr") << "\"\n\n"; //DEBUG
 
