@@ -75,7 +75,7 @@ namespace scabbard {
      *        That will be passed into the kernel and through all user defined kernel functions.
      */
     __host__
-    void* register_job(const hipStream_t STREAM)
+    void* register_job(hipStream_t STREAM)
       asm (SCABBARD_CALLBACK_REGISTER_JOB);
     
     
@@ -122,7 +122,13 @@ namespace scabbard {
     //       asm (SCABBARD_CALLBACK_UNREGISTER_LOC_NAME);
     
 
-
+    /**
+     * @brief get what the final compilation's default hipStream behavior is:
+     *         0u - error could not determine
+     *         1u - legacy (blocking shared across host threads)
+     *         2u - per-thread (blocking only for current thread)
+     */
+    constexpr uintptr_t DEFAULT_STREAM_BEHAVIOR() asm ("scabbard.rtl.DEFAULT_STREAM_BEHAVIOR");
 
   } //?namespace rtl
 } //?namespace scabbard

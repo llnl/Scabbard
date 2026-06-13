@@ -19,7 +19,7 @@
 
 #include <unordered_set>
 #include <queue>
-#include <map>
+#include <unordered_map>
 #include <tuple>
 
 namespace scabbard {
@@ -34,8 +34,8 @@ namespace rtl {
                                         std::vector<DataPtr_t>,
                                         DataPtr_t::priority_less>;
     using MemTable_t = IntervalMap<std::uintptr_t, DataPtr_t>;
-    using AllocTable_t = std::map<std::uintptr_t, std::size_t>;
-    using SyncTable_t = std::map<std::uintptr_t, std::size_t>;
+    using AllocTable_t = std::unordered_map<std::uintptr_t, std::size_t>;
+    using SyncTable_t = std::unordered_map<std::uintptr_t, std::size_t>;
 
     struct Result {
       enum Status { 

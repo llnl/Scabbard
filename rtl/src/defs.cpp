@@ -189,12 +189,24 @@ namespace scabbard {
       SCAB_RUNTIME.finalize();
     }
 
+#   ifndef hipStreamLegacy
+#   define hipStreamLegacy ((hipStream_t)1u)
+#   endif
+#   ifndef hipStreamPerThread
+#   define hipStreamPerThread ((hipStream_t)2u)
+#   endif
 
 
     [[clang::disable_sanitizer_instrumentation, gnu::used, gnu::retain, gnu::noinline]] 
     __host__
-    void* register_job(const hipStream_t STREAM)
+    void* register_job(hipStream_t STREAM)
     {
+      if (STREAM == nullptr)
+        STREAM = (hipStream_t) DEFAULT_STREAM_BEHAVIOR();
+      if (STREAM == hipStreamLegacy) //TODO: double check this still works later
+        return ((void*) SCAB_RUNTIME.add_job(nullptr));
+      if (STREAM == hipStreamPerThread)
+        return ((void*) SCAB_RUNTIME.add_job((hipStream_t)*(void**)&std::this_thread::get_id()));
       return ((void*) SCAB_RUNTIME.add_job(STREAM));
     }
 
@@ -216,10 +228,10 @@ namespace scabbard {
     void register_job_callback(void* dt_, hipStream_t stream, const void* const SRC_ID)
     {
       device::DeviceTracker* dt = (device::DeviceTracker*) dt_;
-      auto hipRes = hipStreamAddCallback(stream, scabbard_stream_callback, dt, 0);
+      auto hipRes = hipStreamAddCallback(stream, scabbard_stream_callback, dt, 0u);
       if (hipRes != hipSuccess) {
         SCAB_SERR << "\n[scabbard.rtl:ERROR] failed to register callback on "
-                     "{stream: "<< dt->JOB_ID.STREAM<< ", "
+                     "{stream: "<< jobId_t::hash_stream_ptr(stream) << ", "
                       "job: " << dt->JOB_ID.JOB  << "}\n" << std::endl;
       }
       host::trace_append$alloc(

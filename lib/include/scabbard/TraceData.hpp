@@ -63,6 +63,9 @@ struct threadId_t {
 #pragma pack()
 static_assert(sizeof(threadId_t) <= __WORDSIZE, "threadId_t is of the correct size");
 
+typedef std::thread::id HostThreadId;
+static_assert(sizeof(HostThreadId) <= sizeof(DeviceThreadId), "HostThreadId is of the correct size");
+
 #pragma pack(1)
 struct jobId_t {
   uint16_t JOB = 0u;
@@ -84,56 +87,51 @@ struct jobId_t {
   __host__
   static inline uint16_t hash_stream_ptr(const std::uintptr_t STREAM) 
   { return hash_stream_ptr((hipStream_t)STREAM); }
+  [[clang::disable_sanitizer_instrumentation, gnu::flatten, gnu::always_inline]] 
+  __host__
+  static inline uint16_t hash_stream_ptr(const HostThreadId& STREAM) 
+  { return hash_stream_ptr(*((uintptr_t*)&STREAM)); }
+  [[clang::disable_sanitizer_instrumentation, gnu::flatten, gnu::always_inline]] 
+  __host__
+  inline bool isDefaultStream() const { return not STREAM; }
 };
 #pragma pack()
 
+#ifdef __HIP_API_PER_THREAD_DEFAULT_STREAM__
+#endif
 struct DeviceThreadId {
   jobId_t job;
   blockId_t block;
   threadId_t thread;
-# ifdef __scabbard_hip_compile
   [[clang::disable_sanitizer_instrumentation, gnu::flatten, gnu::always_inline]] 
   __host__ __device__ 
   inline DeviceThreadId(const jobId_t& jobId, const dim3& blockId, const dim3& threadId) 
     : job(jobId), block(blockId), thread(threadId) 
   {}
-# else
-  inline DeviceThreadId(const jobId_t& jobId, const blockId_t& b, const threadId_t& t)
-    : job(jobId), block(b), thread(t)
-  {}
-  inline DeviceThreadId(const jobId_t& jobId, const scabbard::dim3& b, const scabbard::dim3& t)
-    : job(jobId), block(b), thread(t)
-  {}
-  inline DeviceThreadId(const jobId_t& jobId, const threadId_t& t)
-    : job(jobId), block({0u,0u,0u}), thread(t) 
-  {}
-  inline DeviceThreadId(const jobId_t& jobId, const scabbard::dim3& t)
-    : job(jobId), block({0u,0u,0u}), thread(t)
-  {}
-  inline DeviceThreadId(uint32_t thread_x, uint32_t thread_y=0u, uint32_t thread_z=0u)
-    : job((jobId_t){0u,0u}), block((scabbard::dim3){0u,0u,0u}), thread((scabbard::dim3){thread_x,thread_y,thread_z}) 
-  {}
-# endif
+  [[clang::disable_sanitizer_instrumentation, gnu::flatten, gnu::always_inline]] 
+  __host__
+  inline bool isDefaultStream() { return job.isDefaultStream(); }
 };
 // static_assert(sizeof(DeviceThreadId) <= __WORDSIZE*2, "DeviceThreadID is of the correct size");
-
-typedef std::thread::id HostThreadId;
-static_assert(sizeof(HostThreadId) <= sizeof(DeviceThreadId), "HostThreadId is of the correct size");
 
 union ThreadId {
   HostThreadId host;
   DeviceThreadId device;
   void* _NONE_;
   [[clang::disable_sanitizer_instrumentation, gnu::flatten, gnu::always_inline]]
-  __device__ inline ThreadId(const jobId_t& job_, const dim3& blockId_, const dim3& threadId_) { device = DeviceThreadId(job_, blockId_, threadId_); }
+  __device__ inline ThreadId(const jobId_t& job_, const dim3& blockId_, const dim3& threadId_) 
+  { device = DeviceThreadId(job_, blockId_, threadId_); }
   [[clang::disable_sanitizer_instrumentation, gnu::flatten, gnu::always_inline]] 
   __host__
-  ThreadId() { std::memset(this,0,sizeof(ThreadId)); this->host = ::std::this_thread::get_id(); }
+  ThreadId() { this->host = ::std::this_thread::get_id(); }
   [[clang::disable_sanitizer_instrumentation, gnu::flatten, gnu::always_inline]] 
   __host__ __device__
-  ThreadId(void* _) { std::memset(this,0,sizeof(ThreadId)); }
+  ThreadId(void* _) { std::memset(this,0u,sizeof(ThreadId)); }
   // [[clang::disable_sanitizer_instrumentation, gnu::flatten, gnu::always_inline]] 
-  // __host__ __device__ bool ok() const { return this->_NONE_ != nullptr; } 
+  // __host__ __device__ bool ok() const { return this->_NONE_ != nullptr; }
+  [[clang::disable_sanitizer_instrumentation, gnu::flatten, gnu::always_inline]] 
+  __host__
+  inline bool isDefaultStream() const { return device.job.isDefaultStream(); }
 };
 static_assert(sizeof(ThreadId) <= __WORDSIZE*2, "ThreadID is of the correct size");
 

@@ -72,35 +72,54 @@ class GroupedPtr {
 private:
   Slot<T>* slot;
 
+
+protected:
+
+  inline void reference()
+  {
+    if (slot) slot->ref_count++;
+  }
+  
+  inline void dereference() 
+  {
+    //case: This specific object is no longer used by any GroupedPtr
+    if (slot && --slot->ref_count == 0u) 
+      slot->parent_chunk->release_slot();
+  }
+
 public:
 
   GroupedPtr() = default;
 
   GroupedPtr(Slot<T>* s) : slot(s)
   {
-    if (slot) slot->ref_count++;
+    reference();
   }
 
   ~GroupedPtr()
   {
-    if (not slot) return;
-
-    if (--slot->ref_count == 0u) {
-      // This specific object is no longer used by any GroupedPtr
-      slot->parent_chunk->release_slot();
-    }
+    dereference();
   }
 
   // Copy Constructor
-  GroupedPtr(const GroupedPtr& other) : slot(other.slot)
-  {
-    if (slot) slot->ref_count++;
+  GroupedPtr(const GroupedPtr& other) 
+    : GroupedPtr(other.slot) {}
+  // Copy Assignment Operator
+  GroupedPtr& operator = (const GroupedPtr& other) {
+    dereference();
+    slot = other.slot;
+    reference();
+    return *this;
   }
-  GroupedPtr& operator = (const GroupedPtr& other) = default;
 
   // Move Constructor
-  GroupedPtr(GroupedPtr&& other) = delete;
-  GroupedPtr& operator = (GroupedPtr&& other) = delete;
+  GroupedPtr(GroupedPtr&& other) 
+    : slot(std::exchange(other.slot, nullptr)) {}
+  // Move Assignment Operator
+  GroupedPtr& operator = (GroupedPtr&& other) {
+    slot = std::exchange(other.slot, slot);
+    return *this;
+  }
 
   // make a new grouped ptr from the pointer to a data point that is already in a Slot.
   static inline GroupedPtr make(T* ptr) { return GroupedPtr((Slot<T>*)ptr); }
@@ -109,10 +128,12 @@ public:
   T* operator->() { return &slot->data; }
   T* get() const { return (slot && slot->ref_count) ? &slot->data : nullptr; }
   T* blind_get() const { return slot ? &slot->data : nullptr; }
+  T* unsafe_get() const { return (T*)slot; }
   const T& operator*() const { return slot->data; }
   const T* operator->() const { return &slot->data; }
   const T* get() const { return (slot && slot->ref_count) ? &slot->data : nullptr; }
   const T* blind_get() const { return slot ? &slot->data : nullptr; }
+  const T* unsafe_get() const { return (T*)slot; }
   // T& get_ref() const { return (slot && slot->ref_count) ? slot->data : nullptr; }
   // T& blind_get_ref() const { return slot ? slot->data : nullptr; }
   std::size_t use_count() const { return slot ? block->ref_count : 0ull; }

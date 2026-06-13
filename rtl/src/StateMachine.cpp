@@ -10,6 +10,14 @@
  */
 
 #include <scabbard/rtl/StateMachine.hpp>
+#include <scabbard/rtl/calls.hpp>
+
+#ifndef hipStreamLegacy
+#define hipStreamLegacy ((hipStream_t)1u)
+#endif
+#ifndef hipStreamPerThread
+#define hipStreamPerThread ((hipStream_t)2u)
+#endif
 
 namespace scabbard {
 namespace rtl {
@@ -39,7 +47,7 @@ void StateMachine::run(std::uint64_t remainder_quotient)
   MemTable_t::iterator idh = mem_dh.end();
   MemTable_t::iterator ihd = mem_hd.end();
   const std::size_t GOAL_SIZE = trace.size() >> remainder_quotient;
-  while (not trace.empty() && trace.size() > GOAL_SIZE) {
+  while (trace.size() > GOAL_SIZE) {
     const DataPtr_t& td = trace.top();
     if (/* td->time_stamp == 0u || */ td->data == InstrData::NEVER) dbg_j++; //DEBUG
     if (td->data & InstrData::ON_GPU) dbg_k++; //DEBUG
@@ -49,26 +57,35 @@ void StateMachine::run(std::uint64_t remainder_quotient)
     {
       // << ======= Driver Events ======= >> 
 
-      case ON_HOST | SYNC_EVENT: //NOTE: hipMemcpy might fuck this up look into separating trace data fields into two entires in some tbd order
-        if (td->ptr == 0) {
-          last_global_launch = UINT64_MAX;
-          last_global_sync = td->time_stamp;
-          last_stream_sync.clear();
-        } else {
-          last_stream_sync[jobId_t::hash_stream_ptr(td->ptr)] = td->time_stamp; 
-          last_stream_launch[jobId_t::hash_stream_ptr(td->ptr)] = UINT64_MAX; //replace with erase?
+      case ON_HOST | SYNC_EVENT: { 
+          uintptr_t stream = (td->ptr) ? td->ptr : DEFAULT_STREAM_BEHAVIOR();
+          if (stream == (uintptr_t)hipStreamLegacy) {
+            last_global_launch = UINT64_MAX;
+            last_global_sync = td->time_stamp;
+            last_stream_sync.clear();
+          } else if (stream == (uintptr_t)hipStreamPerThread) {
+            last_stream_sync[jobId_t::hash_stream_ptr(td->threadId.host)] = td->time_stamp; 
+            last_stream_launch.erase(jobId_t::hash_stream_ptr(td->threadId.host));
+          } else {
+            last_stream_sync[jobId_t::hash_stream_ptr(td->ptr)] = td->time_stamp; 
+            last_stream_launch.erase(jobId_t::hash_stream_ptr(td->ptr));
+          }
         }
         break;
 
-      case ON_HOST | LAUNCH_EVENT:
-        //NOTE: currently just used to help when debugging
-        if (td->ptr == 0ul) {
-          last_global_sync = UINT64_MAX;
-          last_global_launch = td->time_stamp;
-          last_stream_launch.clear(); //NOTE: should this form also be copied???
-        } else {
-          last_stream_sync[jobId_t::hash_stream_ptr(td->ptr)] = UINT64_MAX;  //replace with erase?
-          last_stream_launch[jobId_t::hash_stream_ptr(td->ptr)] = td->time_stamp;  
+      case ON_HOST | LAUNCH_EVENT: {
+          uintptr_t stream = (td->ptr) ? td->ptr : DEFAULT_STREAM_BEHAVIOR();
+          if (stream == (uintptr_t)hipStreamLegacy) {
+            last_global_sync = UINT64_MAX;
+            last_global_launch = td->time_stamp;
+            last_stream_launch.clear(); //NOTE: should this form also be copied???
+          } else if (stream == (uintptr_t)hipStreamPerThread) {
+            last_stream_sync.erase(jobId_t::hash_stream_ptr(td->threadId.host));
+            last_stream_launch[jobId_t::hash_stream_ptr(td->threadId.host)] = td->time_stamp;
+          } else {
+            last_stream_sync.erase(jobId_t::hash_stream_ptr(td->ptr));
+            last_stream_launch[jobId_t::hash_stream_ptr(td->ptr)] = td->time_stamp;  
+          }
         }
         break;
 
@@ -106,10 +123,10 @@ void StateMachine::run(std::uint64_t remainder_quotient)
           for (const auto& _idh : mem_dh.find_all(td->ptr, td->ptr+td->_OPT_DATA)) {
             if (_idh->start > last_stop && mem_hd.find(last_stop) == mem_hd.end()) {
               occurrences_uninit += _idh->start - last_stop;
-              last_occurrence_uninit = _idh->val.get();
+              last_occurrence_uninit = _idh->val.unsafe_get();
             } else if (check_race_read_dh(td, _idh->val) != Result::GOOD) {
               occurrences_pos_race += _idh->stop - _idh->start;
-              last_occurrence_pos_race = idh->val.get();
+              last_occurrence_pos_race = idh->val.unsafe_get();
             }
             last_stop = _idh->stop;
           }
@@ -142,21 +159,26 @@ void StateMachine::run(std::uint64_t remainder_quotient)
         
       case ON_HOST | WRITE: // (HD)
         if (td->data & InstrData::_OPT_USED) {
-          uintptr_t last_stop = td->ptr;
+          std::size_t occurrences_race = 0ull;
+          const Data_t* last_occurrence_race;
           for (auto _ihd : mem_hd.find_all(td->ptr, td->ptr+td->_OPT_DATA)) {
-            
+            if (check_race_write_hd(td, _ihd->val) != Result::GOOD) {
+              occurrences_race++;
+              last_occurrence_race = _ihd->val.unsafe_get();
+            }
           }
+          if (occurrences_race)
+            add_result(results,{Result::RACE_HD, DataPtr_t::make(last_occurrence_race), td,
+                                "GPU Read from memory before a CPU Bulk-Memory-Write/Memcpy operation unbounded by a Sync. (DR->HW w/no Sync)"});
+          mem_hd.insert(td->ptr, td->ptr+td->_OPT_DATA, td);
         } else {
           ihd = mem_hd.find(td->ptr); //TODO: \/ logic below needs a refresh (might be flawed) \/
-          // first write of a pair (empty or just allocated)
-          if (ihd == mem_hd.end()) 
-            mem_hd.insert(td->ptr, td); // do nothing but insert into memory later.
-          // OR the last operation on the mem_dh space was a read 
-          else if (not (idh->val->data & InstrData::READ)) 
-          else // This is probably a race  //NOTE: expand this to search for read times compared to last desync event? (after ending mem_dh wipes during free events)
+          // not first write of a pair (empty or just allocated)
+          //                          AND the conditions with the last memory action checks out
+          if (idh != mem_hd.end() && check_race_write_hd(td, ihd->val) != Result::GOOD) 
             add_result(results,{Result::RACE_HD, ihd->val, td, 
-                                "Memory Written to on the CPU after a Launch and it was Read by a GPU"});
-          
+                                "GPU Read from memory before a CPU Write unbounded by a Sync. (DR->HW w/no Sync)"});
+          mem_hd.insert(td->ptr, td); // do nothing but insert into memory later.
         }
         break;
 
@@ -238,66 +260,66 @@ void StateMachine::reset()
 
 
 StateMachine::Result::Status StateMachine::check_race_read_dh(const StateMachine::DataPtr_t& r, 
-                                                              const StateMachine::DataPtr_t& o) 
+                                                              const StateMachine::DataPtr_t& w) 
 {
   // if mem_dh stores a device write event
-  if ((o->data & (ON_DEVICE | WRITE)) == (ON_DEVICE | WRITE)) { 
-    // the write happened after the last global sync event
-    if (last_global_sync < o->time_stamp /* || last_global_sync > r->time_stamp */) 
+  if ((w->data & (ON_DEVICE | WRITE)) == (ON_DEVICE | WRITE)) { 
+    // the device write happened after the last global sync event
+    if (last_global_sync < w->time_stamp /* || last_global_sync > r->time_stamp */) 
         return Result::Status::POS_RACE_DH; // return a pos race warn
-    auto res = last_stream_sync.find(o->threadId.device.job.STREAM);
-    // the write happened after the last global sync event or the read occurred after the last global sync event
-    if (res != last_stream_sync.end() && (res->second < o->time_stamp /* || res->second >= r->time_stamp */ )) 
+    auto res = last_stream_sync.find(w->threadId.device.job.STREAM);
+    // the device write happened after the last global sync event or the read occurred after the last global sync event
+    if (res != last_stream_sync.end() && (res->second < w->time_stamp /* || res->second >= r->time_stamp */ )) 
       return Result::Status::POS_RACE_DH; // return a poss race warn
   } // else    // if a read event we don't care yet (could be a double read)
     return Result::Status::GOOD;
 }
 
 StateMachine::Result::Status StateMachine::check_race_read_hd(const StateMachine::DataPtr_t& r, 
-                                                              const StateMachine::DataPtr_t& o) 
+                                                              const StateMachine::DataPtr_t& w) 
 {
   // if mem_dh stores a host write event 
-  if ((o->data & (ON_HOST | WRITE)) == (ON_HOST | WRITE)) { 
-    // the write happened after the last global launch event
-    if (last_global_launch < o->time_stamp || last_global_launch > r->time_stamp ) 
+  if ((w->data & (ON_HOST | WRITE)) == (ON_HOST | WRITE)) { 
+    // the host write happened before the last global launch event which happened before this read
+    if (last_global_launch < w->time_stamp /*|| last_global_launch > r->time_stamp*/ ) 
         return Result::Status::POS_RACE_HD; // return a poss race warn
     auto res = last_stream_launch.find(r->threadId.device.job.STREAM);
-    // the write happened after the last global launch event or the read occurred after the last global launch event
-    if (res != last_stream_launch.end() && (res->second < o->time_stamp || res->second >= r->time_stamp )) 
+    // the host write happened after the last stream launch event or the read occurred after the last global launch event
+    if (res != last_stream_launch.end() && (res->second < w->time_stamp /*|| res->second >= r->time_stamp*/ )) 
       return Result::Status::POS_RACE_HD; // return a poss race warn
   } // else    // if a write event we don't care yet (could be a double write)
     return Result::Status::GOOD;
 }
 
 StateMachine::Result::Status StateMachine::check_race_write_dh(const StateMachine::DataPtr_t& w, 
-                                                               const StateMachine::DataPtr_t& o) 
+                                                               const StateMachine::DataPtr_t& r) 
 {
   // if mem_dh stores a host read event
-  if ((o->data & (ON_HOST | READ)) == (ON_HOST | READ)) { 
-    // the write happened after the last global sync event
-    if (last_global_sync > o->time_stamp || last_global_sync < w->time_stamp ) 
+  if ((r->data & (ON_HOST | READ)) == (ON_HOST | READ)) { 
+    // the last global sync event must have occurred (at all and) before the associated host read (else race)
+    if (last_global_sync < UINT64_MAX && last_global_sync > r->time_stamp) 
         return Result::Status::RACE_DH; // return a race result
-    auto res = last_stream_sync.find(o->threadId.device.job.STREAM);
-    // the write happened after the last global sync event or the read occurred after the last global sync event
-    if (res != last_stream_sync.end() && (res->second < o->time_stamp || res->second >= w->time_stamp )) 
+    auto res = last_stream_sync.find(r->threadId.device.job.STREAM);
+    // the last stream sync event must have occurred (at all and) before the associated host read (else race)
+    if (res != last_stream_sync.end() && (res->second > r->time_stamp)) 
       return Result::Status::RACE_DH; // return a race result
-  } // else    // if a read event we don't care yet (could be a double read)
+  } // else    // if not a host read we don't care ... yet
     return Result::Status::GOOD;
 }
 
 StateMachine::Result::Status StateMachine::check_race_write_hd(const StateMachine::DataPtr_t& w, 
-                                                               const StateMachine::DataPtr_t& o) 
+                                                               const StateMachine::DataPtr_t& r) 
 {
   // if mem_dh stores a device read event 
-  if ((o->data & (ON_DEVICE | READ)) == (ON_DEVICE | READ)) { 
-    // the write happened after the last global launch event
-    if (last_global_launch < o->time_stamp || last_global_launch > w->time_stamp ) 
+  if ((r->data & (ON_DEVICE | READ)) == (ON_DEVICE | READ)) { 
+    // the last global launch event must have occurred (at all and) before the associated device read (else race)
+    if (last_global_launch < UINT64_MAX && last_global_launch > r->time_stamp) 
         return Result::Status::RACE_HD; // return a warning
     auto res = last_stream_launch.find(w->threadId.device.job.STREAM);
-    // the write happened after the last global launch event or the read occurred after the last global launch event
-    if (res != last_stream_launch.end() && (res->second < o->time_stamp || res->second >= w->time_stamp )) 
+    // the last stream launch event must have occurred (at all and) before the associated device read (else race)
+    if (res != last_stream_launch.end() && (res->second > r->time_stamp))
       return Result::Status::RACE_HD; // return a warning
-  } // else    // if a write event we don't care yet (could be a double write)
+  } // else    // if not a device read event we don't care ... yet
     return Result::Status::GOOD;
 }
 
@@ -342,13 +364,13 @@ inline bool operator < (const StateMachine::Result& l, const StateMachine::Resul
 
 explicit inline StateMachine& operator << (StateMachine& SM, StateMachine::DataPtr_t&& __Ptr)
 {
-  SM.trace.insert(__Ptr);
+  SM.trace.emplace(__Ptr);
   return SM;
 }
 
 explicit inline StateMachine& operator << (StateMachine& SM, StateMachine::DataPtr_t& Ptr)
 {
-  SM.trace.insert(Ptr);
+  SM.trace.push(Ptr);
   return SM;
 }
 
