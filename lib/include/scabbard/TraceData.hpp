@@ -90,7 +90,7 @@ struct jobId_t {
   [[clang::disable_sanitizer_instrumentation, gnu::flatten, gnu::always_inline]] 
   __host__
   static inline uint16_t hash_stream_ptr(const HostThreadId& STREAM) 
-  { return hash_stream_ptr(*((uintptr_t*)&STREAM)); }
+  { return hash_stream_ptr(std::hash<std::thread::id>()(STREAM)); }
   [[clang::disable_sanitizer_instrumentation, gnu::flatten, gnu::always_inline]] 
   __host__
   inline bool isDefaultStream() const { return not STREAM; }

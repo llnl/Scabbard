@@ -11,6 +11,7 @@
 
 #include <scabbard/rtl/Runtime.hpp>
 #include <scabbard/rtl/globals.hpp>
+#include <scabbard/rtl/ReportWriter.hpp>
 
 #include <hip/hip_ext.h>
 #include <hip/hip_runtime_api.h>
@@ -41,7 +42,7 @@ namespace scabbard {
       for (auto dt : device_trackers)
         if (dt != nullptr)
           if (hipFree(dt) != hipSuccess)
-            SCAB_SERR << "\n[scabbard.rtl.dtor:ERROR] could not deallocate device side buffer!\n" 
+            SCAB_SERR << "\n[scabbard.rtl.dtor:ERROR] could not deallocate a device side buffer!\n" 
                       << std::endl;
       if (SM) delete SM;
       if (GPF) delete GPF;
@@ -81,7 +82,6 @@ namespace scabbard {
       delay = delay_;
     }
 
-
     [[clang::disable_sanitizer_instrumentation, gnu::used, gnu::retain]] 
     __host__
     void Runtime::initialize(std::size_t mem_chunk_len)
@@ -92,6 +92,13 @@ namespace scabbard {
       } else
         SM = new StateMachine();
       GPF = new GroupedPtrFactory<const TraceData>(mem_chunk_len);
+    }
+
+    [[clang::disable_sanitizer_instrumentation, gnu::used, gnu::retain]] 
+    __host__
+    void Runtime::report()
+    {
+      print_report(SM->get_results());
     }
 
 

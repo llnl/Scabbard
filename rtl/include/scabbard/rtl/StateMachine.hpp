@@ -40,20 +40,20 @@ namespace rtl {
     struct Result {
       enum Status { 
         GOOD=0, 
-        RACE_DH=2, RACE_HD=4,
-        POS_RACE_DH=1, POS_RACE_HD=3,
-        READ_UNINIT_D=5, READ_UNINIT_H=6,
+        READ_UNINIT_D=1, READ_UNINIT_H=2,
+        POS_RACE_DH=3, POS_RACE_HD=4,
+        RACE_DH=6, RACE_HD=5,
         INTERNAL_ERROR=-1 
       };
       Status status;
       DataPtr_t read = nullptr; 
       DataPtr_t write = nullptr;
-      std::string err_msg = "";
+      std::string msg = "";
       friend inline bool operator == (const Result& L, const Result& R);
       friend inline bool operator < (const Result& L, const Result& R);
     };
 
-    using ResultList_t = std::map<StateMachine::Result, std::size_t>;
+    using ResultList_t = std::map<const StateMachine::Result, std::size_t>;
     
   private:
     Trace_t trace;

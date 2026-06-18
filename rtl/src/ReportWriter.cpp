@@ -12,125 +12,135 @@
 #include <scabbard/rtl/ReportWriter.hpp>
 #include <scabbard/rtl/globals.hpp>
 
-#include <iostream>
+namespace scabbard{
+namespace rtl {
 
 
-void printResult(std::ostream& out,
-                  const scabbard::MetadataJSONFile_t& MF,
-                  const scabbard::TraceFile& TF, 
-                  const scabbard::rtl::StateMachine::Result& res);
+inline ostream& operator << (ostream&, const StateMachine::DataPtr_t&);
 
-void print_report(StateMachine::ResultList_t& results) {
+void printResult(const StateMachine::Result& res);
 
-  std::string sep = "";
-  for (auto result : results) {
-    SCAB_SOUT << sep; 
-    switch (result.first.status)
-    {
-      case StateMachine::ResultStatus::ERROR:
-        SCAB_SOUT << '\n' << result.second << "x DATA RACE(S) were detected; of the kind detailed in the sampled event below\n";
-        printResult(SCAB_SOUT, mf, tf, result.first);
-        break;
 
-      case StateMachine::ResultStatus::WARNING:
-        SCAB_SOUT << '\n' << result.second << "x POSSIBLE data race(s) were detected; in the sampled event below!\n";
-        printResult(SCAB_SOUT, mf, tf, result.first);
-        break;
-
-      case StateMachine::ResultStatus::GOOD:
-        SCAB_SOUT << "\nNO data races were found :)\n"; 
-        break;
-
-      case StateMachine::ResultStatus::INTERNAL_ERROR:
-        SCAB_SOUT << '\n' << result.first.err_msg
-                  << "(x" << result.second << ')' << std::endl;
-        if (result.first.read) 
-          SCAB_SOUT << "  FROM: " << result.first.read.metadata << "\n"
-                       "    AT: " << result.first.read.time_stamp << std::endl;
-        // return EXIT_FAILURE;
-      default:
-        std::cerr << "!unknown result code!" << std::endl;
-        return EXIT_FAILURE;
-    }
-    sep = "\n========\n";
+void print_report(const StateMachine::ResultList_t& results) {
+  SCAB_SOUT.setLogType("REPORT").setLabel("scab.rtl");
+  if (results.size() == 0u) {
+    SCAB_SOUT << nl() << "NO ISSUES FOUND" << endl();
+    return;
   }
+  size_t i = 0u;
+  for (auto res : results) { 
+    switch (res.first.status)
+    {
+      case StateMachine::Result::Status::RACE_DH:
+      case StateMachine::Result::Status::RACE_HD:
+      case StateMachine::Result::Status::POS_RACE_DH:
+      case StateMachine::Result::Status::POS_RACE_HD:
+        break;
+
+      case StateMachine::Result::Status::GOOD:
+        SCAB_SOUT << nl() << "- NO data races were found :)" << endl(); 
+        continue;
+
+      case StateMachine::Result::Status::INTERNAL_ERROR:
+        SCAB_SOUT.setLogType("ERROR");
+        SCAB_SOUT << nl() << nl() << "- { ERROR_MSG: \"" << res.first.msg
+                  << "\", COUNT: " << res.second;
+        if (res.first.read)
+          SCAB_SOUT << indent(4u) << nl()
+                    << "FROM: " << *res.first.read->metadata << nl()
+                    << "  AT: " << res.first.read->time_stamp 
+                    << dedent(4u) << nl();
+        SCAB_SOUT.setLogType("REPORT");
+        //exit(EXIT_FAILURE);
+        continue;
+
+      default:
+        SCAB_SERR << SetLabel("scabbard.rtl.report") << SetLogType("ERROR") << nl() 
+                  << "!unknown result code!" << endl();
+        // exit(EXIT_FAILURE);
+        return;   
+    }
+
+    SCAB_SOUT << nl()
+              << "- {" << indent(2u) << nl()
+              << "RESULT: " << res.first.status << nl()
+              << "INFO: \"" << res.first.msg << '"' << nl()
+              << "OCCURRENCE_COUNT: " << res.second << nl();
+    if (not res.first.write) 
+      SCAB_SOUT << "READ: " << indent(4u) << res.first.read << dedent(4u) << nl()
+                << "WRITE: null" << dedent(2u) << nl();
+    else if (res.first.read->time_stamp < res.first.write->time_stamp)
+      SCAB_SOUT << "READ: " << indent(4u) << res.first.read  << dedent(4u) << nl()
+                << "WRITE: " << indent(4u) << res.first.write << dedent(6u) << nl();
+    else
+      SCAB_SOUT << "WRITE: " << indent(4u) << res.first.write << dedent(4u) << nl()
+                << "READ: " << indent(4u) << res.first.read  << dedent(6u) << nl();
+
+    SCAB_SOUT << '}';
+  }
+  SCAB_SOUT.reset();
   return;
 }
 
-void printResult(std::ostream& out, 
-                  const scabbard::MetadataJSONFile_t& MF,
-                  const scabbard::TraceFile& TF,
-                  const scabbard::rtl::StateMachine::Result& res)
-{
-  using namespace ::scabbard::rtl;
-  if (res.status == StateMachine::ResultStatus::GOOD) {
-    out << res.status;
-    return;
-  }
-  const scabbard::SrcMetadata UNKNOWN_METADATA{UINT64_MAX,"<UNKNOWN_SRC_FILE>",0ul,0ul,scabbard::instr::ModuleType::UNKNOWN_MODULE};
-  auto printRead = [&]() -> void {
-    auto it = MF.find(res.read->metadata);
-    const scabbard::SrcMetadata& meta = ((it != MF.end()) ? it->second : UNKNOWN_METADATA);
-    out << "    READ: {\n" 
-           "                time: " << res.read->time_stamp << " (logical),\n"
-           "              device: CPU,\n"
-           "            metadata: {" << res.read->data << "},\n"
-           "           thread id: 0x" << std::hex << std::hash<std::thread::id>{}(res.read->threadId.host) << std::dec << ",\n"
-           "             src loc: \"" << meta.srcFile << ':' << meta.line << ',' << meta.col << "\"\n"
-           "          }";
-  };
-  auto printWrite = [&]() -> void {
-    auto it = MF.find(res.write->metadata);
-    const scabbard::SrcMetadata& meta = ((it != MF.end()) ? it->second : UNKNOWN_METADATA);
-    out << "   WRITE: {\n" 
-           "               time: " << res.write->time_stamp << " (logical),\n"
-           "              device: GPU,\n"
-           "            metadata: {" << res.write->data << "},\n"
-           "           thread id: {\n"
-           "                           id: {stream: 0x" << std::hex << res.write->threadId.device.job.STREAM << std::dec << ", job#: " << res.write->threadId.device.job.JOB << "},\n"
-           "                        block: {x:" << res.write->threadId.device.block.x << 
-                                         ", y:" << res.write->threadId.device.block.y << 
-                                         ", z:"<< res.write->threadId.device.block.z <<"},\n"
-           "                       thread: {x:" << res.write->threadId.device.thread.x << 
-                                         ", y:" << res.write->threadId.device.thread.y << 
-                                         ", z:"<< (uint16_t)res.write->threadId.device.thread.z <<"}\n"
-           "                      },\n"
-           "            src loc: \"" << meta.srcFile << ':' << meta.line << ',' << meta.col << "\"\n"
-           "          }";
-  };
-  if (res.status == StateMachine::ResultStatus::WARNING) {
-    if (res.write == nullptr)
-      out << "  RESULT: `UNPAIRED_READ`,\n"
-          << "    INFO: \"No GPU Write detected before CPU Read.\n"
-             "           The memory might not have been initalized or was initalized by the CPU.\",\n";
-    else
-      out << "  RESULT: `UNPROTECTED_READ`,\n"
-          << "    INFO: \"No effective Synchronisation between this GPU Write and CPU Read was detected.\n"
-             "           A data race did not occur this time, but might in the future.\",\n";
-  } else 
-    out << "  RESULT: `" << res.status << "`,\n";
-  if (res.err_msg != "")
-    out << " MESSAGE: \"" << res.err_msg << "\",\n";
-  //TODO: add ranged brackets for mem addresses with _OPT_DATA_USED
-  out << " MEM LOC: 0x" << std::hex << ((res.read) ? res.read->ptr : res.write->ptr) << std::dec << ",\n";
-  
-  if (res.write == nullptr) { //case there is no write data
-    printRead();
-    out << std::endl;
-    return;
-  }
-  
-  if (res.read->time_stamp > res.write->time_stamp) {
-    printWrite();
-    out << ",\n";
-    printRead();
-    out << std::endl;
-    return;
-  }
-
-  printRead();
-  out << ",\n";
-  printWrite();
-  out << std::endl;
-                                      
+inline ostream& operator << (ostream& out, const SrcMetadata& data) {
+  out << "[`" << data.fnName << "()`](\""<< data.srcFile << "\":" 
+              << data.line << ':' << data.col << ')';
+  return out;
 }
+inline ostream& operator << (ostream& out, const HostThreadId& threadId) {
+  out << "0x" << std::hex << std::hash<std::thread::id>()(threadId) << std::dec;
+  return out;
+}
+inline ostream& operator << (ostream& out, const jobId_t& jobId) {
+  (*out) << "{stream: 0x" << std::hex << jobId.STREAM << std::dec 
+         << ", job: " << jobId.JOB << '}'; 
+  return out;
+}
+inline ostream& operator << (ostream& out, const blockId_t& id) {
+  (*out) << "{x: " << id.x << ", y: " << id.y << ", z: " << id.z << '}';
+  return out;
+}
+inline ostream& operator << (ostream& out, const threadId_t& id) {
+  (*out) << "{x: " << id.x << ", y: " << id.y << ", z: " << id.z << '}';
+  return out;
+}
+inline ostream& operator << (ostream& out, const DeviceThreadId& threadId) {
+  out << '{' << indent(2u) << nl()
+      << "job: " << threadId.job << nl()
+      << "block: " << threadId.block << nl()
+      << "thread: " << threadId.thread << dedent(2u) << nl()
+      << '}';
+  return out;
+}
+
+inline ostream& operator << (ostream& out, const TraceData& td) {
+  if (td.data & ON_CPU) {
+    out << '{' << indent(2u) << nl()
+        << "time: " << td.time_stamp << nl()
+        << "device: HOST / CPU" << nl()
+        << "address: 0x" << std::hex << td.ptr << std::dec << nl() 
+        << "srcLoc: " << *td.metadata << nl()
+        << "metadata: {" << td.data << '}' << nl()
+        << "threadID: " << td.threadId.host
+        << dedent(2u) << nl() << '}';
+  } else {
+    out << '{' << indent(2u) << nl()
+        << "time: " << td.time_stamp << nl()
+        << "device: DEVICE / GPU" << nl()
+        << "address: 0x" << std::hex << td.ptr << std::dec << nl() 
+        << "srcLoc: " << *td.metadata << nl() //might cause issues with memory accessibility
+        << "metadata: [" << td.data << ']' << nl()
+        << "threadID: " << td.threadId.device
+        << dedent(2u) << nl() << '}';
+  }
+  return out;
+}
+inline ostream& operator << (ostream& out, const StateMachine::DataPtr_t& _td) {
+  if (_td)
+    return (out << *_td);
+  return (out << "null");
+}
+
+
+} //?namespace rtl 
+} //?namespace scabbard

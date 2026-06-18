@@ -16,7 +16,7 @@
 namespace scabbard {
 namespace rtl {
 
-void print_report(StateMachine::ResultList_t& results);
+void print_report(const StateMachine::ResultList_t& results);
 
 
 } //?namespace rtl

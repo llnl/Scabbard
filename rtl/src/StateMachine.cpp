@@ -175,7 +175,7 @@ void StateMachine::run(std::uint64_t remainder_quotient)
           ihd = mem_hd.find(td->ptr); //TODO: \/ logic below needs a refresh (might be flawed) \/
           // not first write of a pair (empty or just allocated)
           //                          AND the conditions with the last memory action checks out
-          if (idh != mem_hd.end() && check_race_write_hd(td, ihd->val) != Result::GOOD) 
+          if (ihd != mem_hd.end() && check_race_write_hd(td, ihd->val) != Result::GOOD) 
             add_result(results,{Result::RACE_HD, ihd->val, td, 
                                 "GPU Read from memory before a CPU Write unbounded by a Sync. (DR->HW w/no Sync)"});
           mem_hd.insert(td->ptr, td); // do nothing but insert into memory later.
@@ -231,14 +231,28 @@ void StateMachine::run(std::uint64_t remainder_quotient)
           break; 
 
       case ON_DEVICE | WRITE: // (DH)
-        idh = mem_dh.find(td->ptr); //TODO: \/ logic below needs a refresh (might be flawed) \/
-        if (idh == mem_dh.end()) // first write of a pair (empty or just allocated)
-          mem_dh.insert(td->ptr, td);
-        else if (not (idh->val->data & InstrData::READ)) // OR the last operation on the mem_dh space was a read 
-          if (idh->is_single()) idh->val = td; else mem_dh.insert(td->ptr, td);
-        else // This is probably a race  //NOTE: expand this to search for read times compared to last desync event? (after ending mem_dh wipes during free events)
-          add_result(results,{Result::RACE_DH, idh->val, td, "Memory Written to on a GPU after it was Read from on the CPU"});
-        break;
+        if (td->data & InstrData::_OPT_USED) {
+          std::size_t occurrences_race = 0ull;
+          const Data_t* last_occurrence_race;
+          for (auto _idh : mem_dh.find_all(td->ptr, td->ptr+td->_OPT_DATA)) {
+            if (check_race_write_dh(td, _idh->val) != Result::GOOD) {
+              occurrences_race++;
+              last_occurrence_race = _idh->val.unsafe_get();
+            }
+          }
+          if (occurrences_race)
+            add_result(results,{Result::RACE_DH, DataPtr_t::make(last_occurrence_race), td,
+                                "GPU Read from memory before a CPU Bulk-Memory-Write/Memcpy operation unbounded by a Sync. (DR->HW w/no Sync)"});
+          mem_dh.insert(td->ptr, td->ptr+td->_OPT_DATA, td);
+        } else {
+          idh = mem_dh.find(td->ptr); //TODO: \/ logic below needs a refresh (might be flawed) \/
+          // not first write of a pair (empty or just allocated)
+          //                          AND the conditions with the last memory action checks out
+          if (idh != mem_dh.end() && check_race_write_dh(td, idh->val) != Result::GOOD) 
+            add_result(results,{Result::RACE_DH, idh->val, td, 
+                                "GPU Read from memory before a CPU Write unbounded by a Sync. (DR->HW w/no Sync)"});
+          mem_dh.insert(td->ptr, td); // do nothing but insert into memory later.
+        }
 
       default:
         break;
@@ -358,7 +372,7 @@ inline bool operator < (const StateMachine::Result& l, const StateMachine::Resul
     return false;
   return ( (l.status < r.status)
       || ((l.read && r.read) && l.read->metadata < r.read->metadata)
-      || ((l.write && r.write) && l.write->metadata < r.other.write->metadata)
+      || ((l.write && r.write) && l.write->metadata < r.write->metadata)
     );
 }
 

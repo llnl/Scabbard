@@ -27,9 +27,24 @@ namespace scabbard {
     const std::size_t line;
     const std::size_t col;
 
-    // inline bool operator < (const SrcMetadata& other) const {
-    //   return srcID < other.srcID;
-    // }
+    inline bool operator == (const SrcMetadata& other) const {
+      return ((std::string(srcFile) == std::string(other.srcFile))
+              && (line == other.line)
+              && (col == other.col));
+    }
+    inline bool operator != (const SrcMetadata& other) const {
+      return not ((*this) == other);
+    }
+    inline bool operator < (const SrcMetadata& other) const {
+      const std::string _srcFile(srcFile), other_srcFile(other.srcFile);
+      return ((_srcFile != other_srcFile)
+              ? (_srcFile < other_srcFile)
+              : ((line < other.line)
+                 || (col < other.col)));
+    }
+    inline bool operator >= (const SrcMetadata& other) const {
+      return not ((*this) < other);
+    }
 
     // NLOHMANN_DEFINE_TYPE_INTRUSIVE(SrcMetadata, srcID, srcFile, line, col, modType) //TODO: remove
   };

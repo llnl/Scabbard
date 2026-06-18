@@ -23,6 +23,10 @@ namespace rtl {
 class ostream {
 
   std::ostream* out = nullptr;
+  bool print_label = false;
+  std::string label = "scabbard.rtl";
+  std::string type = "INFO";
+  std::size_t _indent = 0u;
 
 public:
 
@@ -54,6 +58,7 @@ public:
   inline std::ostream* replace(std::ostream* new_out) {
     std::ostream* old_out = ((is_stdio()) ? nullptr : out);
     out = new_out;
+    print_label = is_stdio() || old_out == &std::cerr;
     return old_out;
   }
 
@@ -63,13 +68,121 @@ public:
   inline std::ostream& operator*() { return *out; }
   inline std::ostream* operator->() { return out; }
 
+  inline ostream& indent(std::size_t n=2u) { _indent += n; return *this; }
+  inline ostream& dedent(std::size_t n=2u;) { _indent = (n<_indent) ? _indent-n : 0u; return *this; }
+  inline ostream& setIndent(std::size_t n=0) { _indent = n; return *this; }
+  inline ostream& setLabel(std::string&& label_) { label = label_; return *this; }
+  inline ostream& setLogType(std::string&& logType_) { type = logType_; return *this; }
+  inline ostream& reset() {
+    label = "scabbard.rtl"; type = "INFO"; _indent = 0u; 
+    return *this;
+  }
+
+  friend class endl;
+  friend class nl;
+  friend class flush;
+  friend class indent;
+  friend class dedent;
+  friend class SetLabel;
+  friend class SetLogType;
+
+  // template<typename _CharT, typename _Traits>
+  // inline ostream& operator << (std::basic_ostream<_CharT, _Traits>& (*manipulator)(std::basic_ostream<_CharT, _Traits>&)) {
+  //   manipulator(*out.out); return out;
+  // }
+  // template<typename _CharT, typename _Traits>
+  // friend inline ostream& operator << (ostream& out, 
+  //                                     std::basic_ostream<_CharT, _Traits>& (*manipulator)(std::basic_ostream<_CharT, _Traits>&)) {
+  //   manipulator(*out.out); return out;
+  // }
+  template<typename T>
+  inline ostream& operator << (const T& other) {
+    (*out) << other; return *this;
+  }
+  template<>
+  inline ostream& operator << (const nl&) {
+    if (print_label)
+      *out << "\n[" << label << ':' << type << "] " << std::string(' ', _indent);
+    else
+      *out << '\n' << std::string(' ', _indent);
+    return *this;
+  }
+  template<>
+  inline ostream& operator << (const endl&) {
+    *out << '\n' << std::flush;
+    label = "scabbard.rtl";
+    type = "INFO";
+    return *this;
+  }
+  template<>
+  inline ostream& operator << (const flush&) {
+    *out << std::flush; return *this;
+  }
+  inline ostream& operator << (const scabbard::rtl::indent& indent_) {
+    return indent(indent_.n);
+  }
+  template<>
+  inline ostream& operator << (const scabbard::rtl::dedent& dedent_) {
+    return dedent(dedent_.n);
+  }
+  inline ostream& operator << (const scabbard::rtl::SetLabel& label_) {
+    return this->setLabel(label_.x);
+  }
+  template<>
+  inline ostream& operator << (const scabbard::rtl::SetLogType& logType_) {
+    return setLogType(logType_.x);
+  }
+  // template<>
+  // inline ostream& operator << (std::ostream& (*manipulator)(std::ostream&)) {
+  //   manipulator(*out); return this;
+  // }
+  // template<>
+  // inline ostream& operator << (std::function<std::ostream&(std::ostream&)>& manipulator) {
+  //   manipulator(*out); return *this;
+  // }
 };
 
-template<typename T>
-inline std::ostream& operator << (ostream& out, const T& other) {
-  return ((*out) << other);
-} 
+struct nl {};
+struct endl {};
+struct flush {};
+struct indent { size_t n = 2u; indent(size_t n_) : n(n_) {} };
+struct dedent { size_t n = 2u; dedent(size_t n_) : n(n_) {} };
+struct SetLabel { 
+  std::string x = "scabbard.rtl"; 
+  SetLabel() = default;
+  SetLabel(const std::string& x_) : x(x_) {}
+  SetLabel(std::string&& x_) : x(std::exchange(x_,std::string())) {}
+};
+struct SetLogType { 
+  std::string x = "INFO";
+  SetLogType() = default;
+  SetLogType(const std::string& x_) : x(x_) {}
+  SetLogType(std::string&& x_) : x(std::exchange(x_,std::string())) {}
+};
 
 } //?namespace rtl
 } //?namespace scabbard
+
+namespace std {
+  
+// inline scabbard::rtl::ostream& nl(scabbard::rtl::ostream& out) {
+//   return (out << scabbard::rtl::nl());
+// }
+// inline scabbard::rtl::ostream& endl(scabbard::rtl::ostream& out) {
+//   return (out << scabbard::rtl::endl());
+// }
+// inline scabbard::rtl::ostream& flush(scabbard::rtl::ostream& out) {
+//   return (out << scabbard::rtl::flush());
+// }
+// inline scabbard::rtl::ostream& indent(scabbard::rtl::ostream& out, size_t n=2u);
+// inline scabbard::rtl::ostream& indent(scabbard::rtl::ostream& out, size_t n) {
+//   return out.indent(n);
+// }
+// inline scabbard::rtl::ostream& dedent(scabbard::rtl::ostream& out, size_t n=2u);
+// inline scabbard::rtl::ostream& dedent(scabbard::rtl::ostream& out, size_t n) {
+//   return out.dedent(n);
+// }
+
+
+} //?namespace std
 
