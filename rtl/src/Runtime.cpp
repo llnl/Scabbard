@@ -119,7 +119,7 @@ namespace scabbard {
       if (it == stream_job_counters.end())
         it = stream_job_counters.emplace(std::make_pair(STREAM,0u)).first;
       // in place construction into allocated managed memory
-      new (dt) device::DeviceTracker(jobId_t(it->second,STREAM), vClk);
+      new (dt) device::DeviceTracker(jobId_t(++it->second,STREAM), vClk);
       mx_device.lock();
       device_trackers.push_back(dt);
       mx_device.unlock();
