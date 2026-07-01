@@ -110,7 +110,7 @@ namespace scabbard {
 
     llvm::PreservedAnalyses ScabbardPassPlugin::run(llvm::Module& M, llvm::ModuleAnalysisManager& MAM)
     {
-      // llvm::errs() << "\n[scabbard.instr.run:DBG] running instrumentation pass\n"; //DEBUG
+      llvm::errs() << "\n[scabbard.instr.run:DBG] running instrumentation pass\n"; //DEBUG
       const llvm::Triple target(M.getTargetTriple());
       // archBit = ((target.isArch64Bit()) ? 64 //ASSUMING for now this will only be used on 64 bit machines
       //             : ((target.isArch32Bit()) ? 32 
@@ -120,6 +120,7 @@ namespace scabbard {
       } else if (not target.isAMDGCN() and not isLTO) {
         run_host(M, MAM);
       }
+      llvm::errs() << "\n[scabbard.instr.run:DBG] END instrumentation pass\n"; //DEBUG
       //TODO process analysis invalidations and return the Preserved analysis of all changes
       return llvm::PreservedAnalyses::none(); // this will have to change after transforms are performed
       // create custom implementation of Fn llvm::PreservedAnalysis::invalidate : ( -> llvm::PreservedAnalysis) to do so
@@ -214,7 +215,7 @@ namespace scabbard {
 
       // remove the dummy caller function from device_def
       // M.getFunction(SCABBARD_DEVICE_DUMMY_FUNC_NAME)->eraseFromParent(); //note: causes all linked functions to also be removed
-
+      // llvm::errs() << "\n[scabbard.instr.device:DBG] Saving snapshot of device module pre-instrumentation to: \"" << _DBG::write_module_to_file(M,"device") << "\"\n"; //DEBUG
       // llvm::errs() << "\n[scabbard.instr.device:DBG] Saving snapshot of device module post-instrumentation to: \"" << _DBG::write_module_to_file(M,"device.instr") << "\"\n"; //DEBUG
     }
 
@@ -384,12 +385,14 @@ namespace scabbard {
 
     void ScabbardPassPlugin::run_device(llvm::Function& _F, llvm::FunctionAnalysisManager& FAM, const DepTraceDevice& DT)
     {
+      llvm::errs() << "\n[scabbard.instr.device.run:DBG] START working on Fn(`"<< _F.getName() <<"`) \n"; //DEBUG
       // if (_F.isDeclaration()) return; // skip functions not defined (only declared) in this module 
       llvm::Function& F = *replace_device_function(_F);
 
       llvm::SmallVector<std::tuple<llvm::Instruction*,llvm::Value*,InstrData,bool>,16u> to_instr;
       llvm::SmallVector<llvm::CallInst*,16u> calls_to_instr;
 
+       llvm::errs() << "\n[scabbard.instr.device.run:DBG] searching Fn for instructions of interest. \n"; //DEBUG
       // search for instructions to instrument
       for (auto& bb : F)
         for (auto& i : bb)
@@ -444,11 +447,15 @@ namespace scabbard {
             //instrument atomic readwrite instructions
             to_instr.emplace_back(&i, cmpxchg->getPointerOperand(), data, true);
           }
+      
+      llvm::errs() << "\n[scabbard.instr.device.run:DBG] instrumenting found instructions (#: " << to_instr.size() << ")\n"; //DEBUG
       // instrument found instructions
       for (auto [I, Ptr, data, insertAfter] : to_instr)
         instr_mem_func_device(F, *I, Ptr, data, insertAfter);
       for (llvm::CallInst* CI : calls_to_instr)
         instr_call_device(F, CI);
+
+      llvm::errs() << "\n[scabbard.instr.device.run:DBG] END working on Fn(`"<< _F.getName() <<"`) \n"; //DEBUG
       // llvm::errs() << "\n[scabbard.instr.device:DBG] instrumented a function:\n```"; F.print(llvm::errs()); llvm::errs() << "\n```\n"; //DEBUG
     }
 
@@ -506,6 +513,7 @@ namespace scabbard {
 
     llvm::Function* ScabbardPassPlugin::replace_device_function(llvm::Function& OldFn)
     {
+      llvm::errs() << "\n[scabbard.instr.device.expandFnSigs:DBG] cloning and extending Fn signature.\n"; //DEBUG
       llvm::Module& M = *OldFn.getParent();
       std::string old_name = OldFn.getName().str();
       const auto* ptrTy = llvm::PointerType::get(OldFn.getContext(),0ul);
@@ -578,6 +586,7 @@ namespace scabbard {
 
     void ScabbardPassPlugin::finish_replacing_old_funcs_device(llvm::Module& M)
     {
+      llvm::errs() << "\n[scabbard.instr.device.extendFnSigs:DBG] Cleanup old Fn's and perform RAUW with new Fn's\n"; //DEBUG
       llvm::SmallPtrSet<llvm::CallInst*,8u> to_remove;
       //modify to pass device tracker through as last parameter to all functions defined in this module'
       for (auto& tr : to_replace) {
@@ -643,6 +652,8 @@ namespace scabbard {
     void ScabbardPassPlugin::run_host(llvm::Function& F, llvm::FunctionAnalysisManager& FAM, const DepTraceHost& DT)
     {
       if (F.isDeclaration()) return; // skip functions not defined (only declared) in this module
+
+      llvm::errs() << "\n[scabbard.instr.host.run:DBG] Start working on Fn(`"<< F.getName() <<"`) \n"; //DEBUG
       
       llvm::SmallVector<std::tuple<llvm::Instruction*,llvm::Value*,InstrData>,64u> to_instr;
       llvm::SmallVector<llvm::CallInst*,32u> calls_to_instr;
@@ -708,6 +719,8 @@ namespace scabbard {
             instr_mem_func_device(F, *I, Ptr, data);
           for (llvm::CallInst* CI : calls_to_instr)
             instr_call_device(F, CI);
+
+          llvm::errs() << "\n[scabbard.instr.host.run:DBG] END working on Fn(`"<< F.getName() <<"`) \n"; //DEBUG
     }
 
 
@@ -777,6 +790,7 @@ namespace scabbard {
 
     void ScabbardPassPlugin::instr_call_host(llvm::Function& F, llvm::CallInst* CI)
     {
+      llvm::errs() << "\n[scabbard.instr.host.run:DBG] instrumenting call to `"<< CI->getCalledFunction()->getName() <<"` \n"; //DEBUG
       const auto* fn = CI->getCalledFunction();
       if (fn == nullptr) return; // don't deal with antonymous functions 
       // const auto& fnTy = *fn.getFunctionType();

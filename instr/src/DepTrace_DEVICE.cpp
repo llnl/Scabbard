@@ -72,6 +72,7 @@ namespace scabbard {
     DepTrace<DEVICE>::DepTrace(const llvm::Module& M)
       : DepTrace()
     {
+      llvm::errs() << "\n[scabbard.instr.device.ptrTrace:DBG] Constructing PtrTracer from Module\n"; //DEBUG
       for (const auto& g : M.globals())
         if (const auto* mg = M.getNamedGlobal(llvm::StringRef(std::string(g.getName().str() + ".managed")))) {
           globalManagedMem.insert(std::make_pair(g.getName(),mg));
@@ -90,6 +91,7 @@ namespace scabbard {
     template<>
     InstrData DepTrace<DEVICE>::getInstrData(const llvm::StoreInst& I) const
     {
+      llvm::errs() << "\n[scabbard.instr.device.ptrTrace:DBG] searching for origin of Ptr from LoadInst(`"<< I.getName()<<"`). "; //DEBUG
       if (not is_accessible_address_space(I.getPointerOperand())) return InstrData::NEVER;
       llvm::SmallSet<llvm::StringRef, 8u> phiBBVisited;
       InstrData res = __getInstrData_val(*I.getPointerOperand(), phiBBVisited);
@@ -127,6 +129,7 @@ namespace scabbard {
     template<>
     InstrData DepTrace<DEVICE>::getInstrData(const llvm::AtomicRMWInst& I) const
     {
+      llvm::errs() << "\n[scabbard.instr.device.ptrTrace:DBG] searching for origin of Ptr from AtomicRMWInst(`"<< I.getName()<<"`). "; //DEBUG
       if (not is_accessible_address_space(I.getPointerOperand())) return InstrData::NEVER;
       llvm::SmallSet<llvm::StringRef, 8u> phiBBVisited;
       InstrData res = __getInstrData_val(*I.getPointerOperand(), phiBBVisited);
@@ -139,6 +142,7 @@ namespace scabbard {
     template<>
     InstrData DepTrace<DEVICE>::getInstrData(const llvm::AtomicCmpXchgInst& I) const
     {
+      llvm::errs() << "\n[scabbard.instr.device.ptrTrace:DBG] searching for origin of Ptr from AtomicCmpXchgInst(`"<< I.getName()<<"`). "; //DEBUG
       if (not is_accessible_address_space(I.getPointerOperand())) return InstrData::NEVER;
       llvm::SmallSet<llvm::StringRef, 8u> phiBBVisited;
       InstrData res = __getInstrData_val(*I.getPointerOperand(), phiBBVisited);
@@ -233,7 +237,8 @@ namespace scabbard {
     template<>
     template<>
     InstrData DepTrace<DEVICE>::getInstrData(const llvm::Instruction& i) const
-    { 
+    {
+      llvm::errs() << "\n[scabbard.instr.host.ptrTrace:DBG] searching for origin of Ptr for Ints(`"<< i.getName()<<"`)"; //DEBUG
       if (auto* _i = llvm::dyn_cast_or_null<llvm::StoreInst>(&i)) {
         return getInstrData(*_i);
       } else if (auto* _i = llvm::dyn_cast_or_null<llvm::LoadInst>(&i)) {

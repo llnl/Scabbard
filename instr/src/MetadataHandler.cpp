@@ -170,6 +170,7 @@ namespace scabbard {
 
     inline int acquire_file_lock(const std::string& filepath) 
     {
+      llvm::errs() << "\n[scabbard.instr.metadataHandler.acquireLock:DBG] START ACQUIRING file system lock for metadata file. "; //DEBUG
       const size_t ATTEMPT_LIMIT = 20ul;
       int lfd = -1;
       size_t tries = 0ul;
@@ -227,6 +228,7 @@ namespace scabbard {
             break;
         }
       }
+      llvm::errs() << "\n[scabbard.instr.metadataHandler.acquireLock:DBG] END file system lock for metadata file ACQUIRED. "; //DEBUG
       return lfd;
     }
 
@@ -234,6 +236,7 @@ namespace scabbard {
     {
       // the flock release
       flock(LFD, LOCK_UN);
+      llvm::errs() << "\n[scabbard.instr.metadataHandler.acquireLock:DBG] RELEASED file system lock for metadata file. "; //DEBUG
       // close the lock file
       close(LFD);
     }

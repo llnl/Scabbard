@@ -100,6 +100,7 @@ namespace scabbard {
     DepTrace<HOST>::DepTrace(const llvm::Module& M)
       : DepTrace()
     {
+      llvm::errs() << "\n[scabbard.instr.host.ptrTrace:DBG] Constructing PtrTracer from Module\n"; //DEBUG
       if (const auto* F = llvm::dyn_cast_or_null<llvm::Function>(M.getFunction("__hip_module_ctor"))) {
         // llvm::dbgs() << "\n[scabbard.host:DBG_INFO] this module contains a __hip_module_ctor ctor function\n\n";
         for (const auto& bb : *F)
@@ -151,6 +152,7 @@ namespace scabbard {
     template<>
     InstrData DepTrace<HOST>::getInstrData(const llvm::LoadInst& I) const
     {
+      llvm::errs() << "\n[scabbard.instr.host.ptrTrace:DBG] searching for origin of Ptr for LoadInst(`"<< I.getName()<<"`). "; //DEBUG
       llvm::SmallSet<llvm::StringRef, 8u> phiBBVisited;
       if (const auto alloca = llvm::dyn_cast_or_null<llvm::AllocaInst>(I.getPointerOperand()))
         return InstrData::NEVER;  // skip all loads direct from local memory
@@ -172,6 +174,7 @@ namespace scabbard {
     template<>
     InstrData DepTrace<HOST>::getInstrData(const llvm::AtomicRMWInst& I) const
     {
+      llvm::errs() << "\n[scabbard.instr.host.ptrTrace:DBG] searching for origin of Ptr for AtomicRMWInst(`"<< I.getName()<<"`). "; //DEBUG
       llvm::SmallSet<llvm::StringRef, 8u> phiBBVisited;
       return __getInstrData_val(I, phiBBVisited);
     }
@@ -180,6 +183,7 @@ namespace scabbard {
     template<>
     InstrData DepTrace<HOST>::getInstrData(const llvm::AtomicCmpXchgInst& I) const
     {
+      // llvm::errs() << "\n[scabbard.instr.host.ptrTrace:DBG] searching for origin of Ptr for AtomicCmpXChgInt(`"<< i.getName()<<"`)"; //DEBUG
       return InstrData::NEVER;  //This will need to change if we start recording writes on the cpu side
     }
 
