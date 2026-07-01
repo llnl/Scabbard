@@ -9,6 +9,9 @@
  * 
  */
 
+#include <scabbard/TraceData.hpp>
+#include <scabbard/Metadata.hpp>
+#include <scabbard/rtl/osteam.hpp>
 #include <scabbard/rtl/ReportWriter.hpp>
 #include <scabbard/rtl/globals.hpp>
 

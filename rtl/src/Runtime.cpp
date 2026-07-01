@@ -43,7 +43,7 @@ namespace scabbard {
         if (dt != nullptr)
           if (hipFree(dt) != hipSuccess)
             SCAB_SERR << "\n[scabbard.rtl.dtor:ERROR] could not deallocate a device side buffer!\n" 
-                      << std::endl;
+                      << endl();
       if (SM) delete SM;
       if (GPF) delete GPF;
     }
@@ -112,7 +112,7 @@ namespace scabbard {
                                           hipMemAttachGlobal);
       // hipError_t hipRes = hipHostMalloc(&dt, sizeof(device::DeviceTracker), hipHostMallocPortable);
       if (hipRes != hipSuccess) {
-        SCAB_SERR << "\033[91m\n[scabbard.rtl:ERROR] failed to allocate managed memory before kernel launch!\033[00m\n" << std::endl;
+        SCAB_SERR << "\033[91m\n[scabbard.rtl:ERROR] failed to allocate managed memory before kernel launch!\033[00m\n" << endl();
         exit(EXIT_FAILURE);
       }
       auto it = stream_job_counters.find(STREAM);
@@ -170,9 +170,9 @@ namespace scabbard {
           *SM << std::move(GPF->create(dt->buffer[i%DeviceTracker::BUFFER_SIZE]));
         dt->next_read = NEXT;
         if (TRUE_SPAN)
-          SCAB_SERR << "\n[scabbard.rtl:INFO] reading " << SPAN << '/' << TRUE_SPAN << " data points from GPU s:" << dt->JOB_ID.STREAM << " j:" << dt->JOB_ID.JOB << std::flush;
+          SCAB_SERR << "\n[scabbard.rtl:INFO] reading " << SPAN << '/' << TRUE_SPAN << " data points from GPU s:" << dt->JOB_ID.STREAM << " j:" << dt->JOB_ID.JOB << flush();
         if (TRUE_SPAN > SPAN)
-          SCAB_SERR << "\n\033[33m[scabbard.rtl:WARN] " << TRUE_SPAN - SPAN << " data points lost from GPU s:" << dt->JOB_ID.STREAM << " j:" << dt->JOB_ID.JOB << "\033[00m" << std::flush;
+          SCAB_SERR << "\n\033[33m[scabbard.rtl:WARN] " << TRUE_SPAN - SPAN << " data points lost from GPU s:" << dt->JOB_ID.STREAM << " j:" << dt->JOB_ID.JOB << "\033[00m" << flush();
         if (dt->finished) { // deal with a device tracker that is done with it's job
           auto hipRes = hipFree(dt);
           if (hipRes != hipSuccess)

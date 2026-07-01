@@ -70,6 +70,8 @@ struct Chunk {
 template <typename T>
 class GroupedPtr {
 private:
+  using NoConstSlot_t = Slot<typename std::remove_const<T>::type>;
+
   Slot<T>* slot;
 
 
@@ -91,11 +93,18 @@ public:
 
   GroupedPtr() = default;
 
+  GroupedPtr(std::nullptr_t) : slot(nullptr) {}
+
   GroupedPtr(Slot<T>* s) : slot(s)
   {
     reference();
   }
-
+  GroupedPtr(NoConstSlot_t* s) 
+    : slot((Slot<T>*)(void*)s)
+  {
+    reference();
+  }
+  
   ~GroupedPtr()
   {
     dereference();
@@ -126,9 +135,9 @@ public:
 
   T& operator*() { return slot->data; }
   T* operator->() { return &slot->data; }
-  T* get() const { return (slot && slot->ref_count) ? &slot->data : nullptr; }
-  T* blind_get() const { return slot ? &slot->data : nullptr; }
-  T* unsafe_get() const { return (T*)slot; }
+  T* get() { return (slot && slot->ref_count) ? &slot->data : nullptr; }
+  T* blind_get() { return slot ? &slot->data : nullptr; }
+  T* unsafe_get() { return (T*)slot; }
   const T& operator*() const { return slot->data; }
   const T* operator->() const { return &slot->data; }
   const T* get() const { return (slot && slot->ref_count) ? &slot->data : nullptr; }
@@ -136,13 +145,13 @@ public:
   const T* unsafe_get() const { return (T*)slot; }
   // T& get_ref() const { return (slot && slot->ref_count) ? slot->data : nullptr; }
   // T& blind_get_ref() const { return slot ? slot->data : nullptr; }
-  std::size_t use_count() const { return slot ? block->ref_count : 0ull; }
+  std::size_t use_count() const { return slot ? slot->ref_count : 0ull; }
   explicit operator bool() const { return slot && slot->ref_count; }
 
-  explicit bool operator == (const GroupedPtr& other) const { return slot == other.slot; }
-  explicit bool operator == (const void* other) const { return slot == other; }
-  explicit bool operator != (const GroupedPtr& other) const { return slot != other.slot; }
-  explicit bool operator != (const void* other) const { return slot != other; }
+  bool operator == (const GroupedPtr& other) const { return slot == other.slot; }
+  bool operator == (const void* other) const { return slot == other; }
+  bool operator != (const GroupedPtr& other) const { return slot != other.slot; }
+  bool operator != (const void* other) const { return slot != other; }
 
   bool operator == (const T& other) const { return *this == other; }
   bool operator != (const T& other) const { return *this != other; }
@@ -158,21 +167,21 @@ public:
 
   class less {
   public:
-    bool operator () (const GroupedPtr<T>& l, const GroupedPtr<T> r) const { return *l < *r; }
+    bool operator () (const GroupedPtr<T>& l, const GroupedPtr<T>& r) const { return *l < *r; }
   };
   // inverse of less for use with std::priority_queue which is weakly ordered 
   class priority_less {
   public:
-    bool operator () (const GroupedPtr<T>& l, const GroupedPtr<T> r) const { return not (*l < *r); }
+    bool operator () (const GroupedPtr<T>& l, const GroupedPtr<T>& r) const { return not (*l < *r); }
   };
 };
 
 template <typename T>
 class GroupedPtrFactory {
 private:
-  using T_t = std::remove_const<T>::type;
-  using Chunk_t = Chunk<std::remove_const<T>::type>;
-  using Slot_t = Slot<std::remove_const<T>::type>;
+  using T_t = typename std::remove_const<T>::type;
+  using Chunk_t = Chunk<typename std::remove_const<T>::type>;
+  using Slot_t = Slot<typename std::remove_const<T>::type>;
   const std::size_t chunk_size;
   std::size_t next_slot_index;
   Chunk_t* root_chunk;

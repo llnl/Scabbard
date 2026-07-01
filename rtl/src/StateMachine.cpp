@@ -376,13 +376,13 @@ inline bool operator < (const StateMachine::Result& l, const StateMachine::Resul
     );
 }
 
-explicit inline StateMachine& operator << (StateMachine& SM, StateMachine::DataPtr_t&& __Ptr)
+inline StateMachine& operator << (StateMachine& SM, StateMachine::DataPtr_t&& __Ptr)
 {
   SM.trace.emplace(__Ptr);
   return SM;
 }
 
-explicit inline StateMachine& operator << (StateMachine& SM, StateMachine::DataPtr_t& Ptr)
+inline StateMachine& operator << (StateMachine& SM, const StateMachine::DataPtr_t& Ptr)
 {
   SM.trace.push(Ptr);
   return SM;

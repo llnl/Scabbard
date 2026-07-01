@@ -14,7 +14,7 @@ if(APPLE)
 endif(APPLE)
 # -- end Safety Pass --
 
-configure_file(${CMAKE_CURRENT_DIR}/default_stream_helper.cpp ${SCABBARD_PATH}/default_stream_helper.cpp)
+configure_file(${CMAKE_CURRENT_SOURCE_DIR}/default_stream_helper.cpp ${SCABBARD_PATH}/default_stream_helper.cpp)
 
 
 find_package(hip REQUIRED)
@@ -56,6 +56,7 @@ target_link_libraries(rtl
   )
 
 target_compile_options(rtl PRIVATE 
+        -Wno-switch -Wno-undefined-inline
         -fgpu-rdc -flto -foffload-lto=full 
         -fpass-plugin=${SCABBARD_PATH}/libsafety_pass.so #use safety pass to mark all fn's as not to be instrumented.
       )
@@ -138,7 +139,7 @@ list(REMOVE_DUPLICATES TARGET_DEVICE_ARCHITECTURES)
 
 
 list(JOIN TARGET_DEVICE_ARCHITECTURES "," KERNEL_OFFLOAD_ARCHS)
-target_compile_options(rtl.device PRIVATE -x hip --offload-arch=${KERNEL_OFFLOAD_ARCHS} -foffload-lto -fgpu-rdc )
+target_compile_options(rtl.device PRIVATE -x hip --offload-arch=${KERNEL_OFFLOAD_ARCHS} -foffload-lto -fgpu-rdc -Wno-undefined-inline)
 target_link_options(rtl.device PRIVATE -x hip --offload-arch=${KERNEL_OFFLOAD_ARCHS} -foffload-lto -fgpu-rdc ) # not linking -> not needed
 
 

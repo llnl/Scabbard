@@ -12,11 +12,32 @@
 
 #pragma once
 
+#include <scabbard/Metadata.hpp>
+
 #include <ostream>
 #include <iostream>
+#include <utility>
 
 namespace scabbard {
 namespace rtl {
+
+struct nl {};
+struct endl {};
+struct flush {};
+struct indent { size_t n = 2u; indent(size_t n_) : n(n_) {} };
+struct dedent { size_t n = 2u; dedent(size_t n_) : n(n_) {} };
+struct SetLabel { 
+  std::string x = "scabbard.rtl"; 
+  SetLabel() = default;
+  SetLabel(const std::string& x_) : x(x_) {}
+  SetLabel(std::string&& x_) : x(std::exchange(x_,std::string())) {}
+};
+struct SetLogType { 
+  std::string x = "INFO";
+  SetLogType() = default;
+  SetLogType(const std::string& x_) : x(x_) {}
+  SetLogType(std::string&& x_) : x(std::exchange(x_,std::string())) {}
+};
 
 /// @brief Provide a simple singleton interface that allows replacing the value
 ///        in global space after initialization without adding too much extra overhead.
@@ -69,10 +90,12 @@ public:
   inline std::ostream* operator->() { return out; }
 
   inline ostream& indent(std::size_t n=2u) { _indent += n; return *this; }
-  inline ostream& dedent(std::size_t n=2u;) { _indent = (n<_indent) ? _indent-n : 0u; return *this; }
+  inline ostream& dedent(std::size_t n=2u) { _indent = (n<_indent) ? _indent-n : 0u; return *this; }
   inline ostream& setIndent(std::size_t n=0) { _indent = n; return *this; }
-  inline ostream& setLabel(std::string&& label_) { label = label_; return *this; }
-  inline ostream& setLogType(std::string&& logType_) { type = logType_; return *this; }
+  inline ostream& setLabel(std::string&& label_) { label = std::exchange(label_,std::string()); return *this; }
+  inline ostream& setLogType(std::string&& logType_) { type = std::exchange(logType_, std::string()); return *this; }
+  inline ostream& setLabel(const std::string& label_) { label = label_; return *this; }
+  inline ostream& setLogType(const std::string& logType_) { type = logType_; return *this; }
   inline ostream& reset() {
     label = "scabbard.rtl"; type = "INFO"; _indent = 0u; 
     return *this;
@@ -97,39 +120,35 @@ public:
   // }
   template<typename T>
   inline ostream& operator << (const T& other) {
-    (*out) << other; return *this;
+    (*(out)) << other; return *this;
   }
-  template<>
-  inline ostream& operator << (const nl&) {
+
+  inline ostream& operator << (scabbard::rtl::nl&&) {
     if (print_label)
       *out << "\n[" << label << ':' << type << "] " << std::string(' ', _indent);
     else
       *out << '\n' << std::string(' ', _indent);
     return *this;
   }
-  template<>
-  inline ostream& operator << (const endl&) {
+  inline ostream& operator << (scabbard::rtl::endl&&) {
     *out << '\n' << std::flush;
     label = "scabbard.rtl";
     type = "INFO";
     return *this;
   }
-  template<>
-  inline ostream& operator << (const flush&) {
+  inline ostream& operator << (scabbard::rtl::flush&&) {
     *out << std::flush; return *this;
   }
-  inline ostream& operator << (const scabbard::rtl::indent& indent_) {
+  inline ostream& operator << (scabbard::rtl::indent&& indent_) {
     return indent(indent_.n);
   }
-  template<>
-  inline ostream& operator << (const scabbard::rtl::dedent& dedent_) {
+  inline ostream& operator << (scabbard::rtl::dedent&& dedent_) {
     return dedent(dedent_.n);
   }
-  inline ostream& operator << (const scabbard::rtl::SetLabel& label_) {
+  inline ostream& operator << (scabbard::rtl::SetLabel&& label_) {
     return this->setLabel(label_.x);
   }
-  template<>
-  inline ostream& operator << (const scabbard::rtl::SetLogType& logType_) {
+  inline ostream& operator << (scabbard::rtl::SetLogType&& logType_) {
     return setLogType(logType_.x);
   }
   // template<>
@@ -142,23 +161,7 @@ public:
   // }
 };
 
-struct nl {};
-struct endl {};
-struct flush {};
-struct indent { size_t n = 2u; indent(size_t n_) : n(n_) {} };
-struct dedent { size_t n = 2u; dedent(size_t n_) : n(n_) {} };
-struct SetLabel { 
-  std::string x = "scabbard.rtl"; 
-  SetLabel() = default;
-  SetLabel(const std::string& x_) : x(x_) {}
-  SetLabel(std::string&& x_) : x(std::exchange(x_,std::string())) {}
-};
-struct SetLogType { 
-  std::string x = "INFO";
-  SetLogType() = default;
-  SetLogType(const std::string& x_) : x(x_) {}
-  SetLogType(std::string&& x_) : x(std::exchange(x_,std::string())) {}
-};
+inline ostream& operator << (ostream& out, const SrcMetadata& data);
 
 } //?namespace rtl
 } //?namespace scabbard

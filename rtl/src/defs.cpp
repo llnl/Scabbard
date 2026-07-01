@@ -24,6 +24,7 @@
 #include <chrono>
 #include <unistd.h>
 #include <iostream>
+#include <fstream>
 #include <string>
 #include <filesystem>
 
@@ -62,22 +63,22 @@ namespace scabbard {
         } catch (std::invalid_argument& ia) {
           SCAB_SERR << "\n[scabbard.rtl.init:ERROR] `$SCABBARD_DEVICE_BUFFER_SIZE` was not a positive integer!"
                        "\n[scabbard.rtl.init:ERROR]     $SCABBARD_DEVICE_BUFFER_SIZE: \""<< _DEVICE_BUFFER_SIZE << '"'
-                    << std::endl;
+                    << endl();
           std::exit(EXIT_FAILURE);
         } catch (std::out_of_range& oor) {
           SCAB_SERR << "\n[scabbard.rtl.init:ERROR] `$SCABBARD_DEVICE_BUFFER_SIZE` was too large (or small)!"
                        "\n[scabbard.rtl.init:ERROR]     $SCABBARD_DEVICE_BUFFER_SIZE: \""<< _DEVICE_BUFFER_SIZE << '"'
-                    << std::endl;
+                    << endl();
           std::exit(EXIT_FAILURE);
         } catch (std::exception& ex) {
           SCAB_SERR << "\n[scabbard.rtl.init:ERROR] Exception while parsing the value of `$SCABBARD_DEVICE_BUFFER_SIZE`!"
                        "\n[scabbard.rtl.init:ERROR]   $SCABBARD_DEVICE_BUFFER_SIZE: \""<< _DEVICE_BUFFER_SIZE << "\""
-                       "\n[scabbard.rtl.init:ERROR]   Error Message: \"" << ex.what() << '\"' << std::endl;
+                       "\n[scabbard.rtl.init:ERROR]   Error Message: \"" << ex.what() << '\"' << endl();
           std::exit(EXIT_FAILURE);
         } catch (...) {
           SCAB_SERR << "\n[scabbard.rtl.init:ERROR] Unknown Error parsing the value of `$SCABBARD_DEVICE_BUFFER_SIZE`!"
                        "\n[scabbard.rtl.init:ERROR]     $SCABBARD_DEVICE_BUFFER_SIZE: \""<< _DEVICE_BUFFER_SIZE << '"'
-                    << std::endl;
+                    << endl();
           std::exit(EXIT_FAILURE);
         }
         if (device::DeviceTracker::BUFFER_SIZE < 4096ull 
@@ -85,7 +86,7 @@ namespace scabbard {
           SCAB_SERR << "\n[scabbard.rtl.init:ERROR] `$SCABBARD_DEVICE_BUFFER_SIZE` value not in range (min:4096,max:4294967296)"
                        "\n[scabbard.rtl.init:ERROR]     $SCABBARD_DEVICE_BUFFER_SIZE: \""<< _DEVICE_BUFFER_SIZE << "\""
                        "\n[scabbard.rtl.init:ERROR]                     Evaluated To:  "
-                    << device::DeviceTracker::BUFFER_SIZE << std::endl;
+                    << device::DeviceTracker::BUFFER_SIZE << endl();
           std::exit(EXIT_FAILURE);
         }
       }
@@ -97,28 +98,28 @@ namespace scabbard {
         } catch (std::invalid_argument& ia) {
           SCAB_SERR << "\n[scabbard.rtl.init:ERROR] `$SCABBARD_RTL_MEM_CHUNK_LEN` was not a positive integer!"
                        "\n[scabbard.rtl.init:ERROR]     $SCABBARD_RTL_MEM_CHUNK_LEN: \""<< _MEM_CHUNK_SIZE << '"'
-                    << std::endl;
+                    << endl();
           std::exit(EXIT_FAILURE);
         } catch (std::out_of_range& oor) {
           SCAB_SERR << "\n[scabbard.rtl.init:ERROR] `$SCABBARD_RTL_MEM_CHUNK_LEN` was too large (or small)!"
                        "\n[scabbard.rtl.init:ERROR]     $SCABBARD_RTL_MEM_CHUNK_LEN: \""<< _MEM_CHUNK_SIZE << '"'
-                    << std::endl;
+                    << endl();
           std::exit(EXIT_FAILURE);
         } catch (std::exception& ex) {
           SCAB_SERR << "\n[scabbard.rtl.init:ERROR] Exception occurred while parsing the value of `$SCABBARD_RTL_MEM_CHUNK_LEN`!"
                        "\n[scabbard.rtl.init:ERROR]   $SCABBARD_RTL_MEM_CHUNK_LEN: \""<< _MEM_CHUNK_SIZE << "\""
-                       "\n[scabbard.rtl.init:ERROR]   Error Message: \"" << ex.what() << '\"' << std::endl;
+                       "\n[scabbard.rtl.init:ERROR]   Error Message: \"" << ex.what() << '\"' << endl();
           std::exit(EXIT_FAILURE);
         } catch (...) {
           SCAB_SERR << "\n[scabbard.rtl.init:ERROR] Unknown Error parsing the value of `$SCABBARD_RTL_MEM_CHUNK_LEN`!"
                        "\n[scabbard.rtl.init:ERROR]     $SCABBARD_RTL_MEM_CHUNK_LEN: \""<< _MEM_CHUNK_SIZE << '"'
-                    << std::endl;
+                    << endl();
           std::exit(EXIT_FAILURE);
         }
         if (MEM_CHUNK_SIZE < 8ull || MEM_CHUNK_SIZE > 4096ull<<1ull) {
           SCAB_SERR << "\n[scabbard.rtl.init:ERROR] `$SCABBARD_RTL_MEM_CHUNK_LEN` value not in range (min: 8, max: 4096)"
                        "\n[scabbard.rtl.init:ERROR]     $SCABBARD_RTL_MEM_CHUNK_LEN: \""<< _MEM_CHUNK_SIZE << "\""
-                       "\n[scabbard.rtl.init:ERROR]                    Evaluated To:  "<< MEM_CHUNK_SIZE << std::endl;
+                       "\n[scabbard.rtl.init:ERROR]                    Evaluated To:  "<< MEM_CHUNK_SIZE << endl();
           std::exit(EXIT_FAILURE);
         }
       }
@@ -131,13 +132,13 @@ namespace scabbard {
         } catch (std::exception ex) {
           SCAB_SERR << "\n[scabbard.rtl.init:ERROR] Error opening file for `$SCABBARD_RTL_STDOUT`!"
                        "\n[scabbard.rtl.init:ERROR]   $SCABBARD_RTL_STDOUT: \""<< _STDOUT << "\""
-                       "\n[scabbard.rtl.init:ERROR]   Error Message: \"" << ex.what() << '\"' << std::endl;
+                       "\n[scabbard.rtl.init:ERROR]   Error Message: \"" << ex.what() << '\"' << endl();
           if (std_out) { delete std_out; std_out = nullptr; }
           std::exit(EXIT_FAILURE);
         } catch (...) {
           SCAB_SERR << "\n[scabbard.rtl.init:ERROR] UNKOWN Error opening file for `$SCABBARD_RTL_STDOUT`!"
                        "\n[scabbard.rtl.init:ERROR]   $SCABBARD_RTL_STDOUT: \""<< _STDOUT << "\""
-                    << std::endl;
+                    << endl();
           if (std_out) { delete std_out; std_out = nullptr; }
           std::exit(EXIT_FAILURE);
         }
@@ -150,13 +151,13 @@ namespace scabbard {
         } catch (std::exception ex) {
           SCAB_SERR << "\n[scabbard.rtl.init:ERROR] Error opening file for `$SCABBARD_RTL_STDERR`!"
                        "\n[scabbard.rtl.init:ERROR]   $SCABBARD_RTL_STDERR: \""<< _STDERR << "\""
-                       "\n[scabbard.rtl.init:ERROR]   Error Message: \"" << ex.what() << '\"' << std::endl;
+                       "\n[scabbard.rtl.init:ERROR]   Error Message: \"" << ex.what() << '\"' << endl();
           if (std_err) { delete std_err; std_err = nullptr; }
           std::exit(EXIT_FAILURE);
         } catch (...) {
           SCAB_SERR << "\n[scabbard.rtl.init:ERROR] UNKOWN Error opening file for `$SCABBARD_RTL_STDERR`!"
                        "\n[scabbard.rtl.init:ERROR]   $SCABBARD_RTL_STDERR: \""<< _STDERR << "\""
-                    << std::endl;
+                    << endl();
           if (std_err) { delete std_err; std_err = nullptr; }
           std::exit(EXIT_FAILURE);
         }
@@ -166,7 +167,7 @@ namespace scabbard {
           && std::filesystem::equivalent(std::filesystem::absolute(std::filesystem::path(_STDOUT)),
                                          std::filesystem::absolute(std::filesystem::path(_STDERR)))) {
         SCAB_SERR << "\n[scabbard.rtl.init:ERROR] `$SCABBARD_RTL_STDOUT` and `$SCABBARD_RTL_STDERR` can NOT redirect to the same file!"
-                  << std::endl;
+                  << endl();
         if (std_out->is_open()) std_out->close(); delete std_out;
         if (std_err->is_open()) std_err->close(); delete std_err;
         std::exit(EXIT_FAILURE);
@@ -206,7 +207,7 @@ namespace scabbard {
       if (STREAM == hipStreamLegacy) //TODO: double check this still works later
         return ((void*) SCAB_RUNTIME.add_job(nullptr));
       if (STREAM == hipStreamPerThread)
-        return ((void*) SCAB_RUNTIME.add_job((hipStream_t)*(void**)&std::this_thread::get_id()));
+        return ((void*) SCAB_RUNTIME.add_job((hipStream_t)std::hash<std::thread::id>()(std::this_thread::get_id())));
       return ((void*) SCAB_RUNTIME.add_job(STREAM));
     }
 
@@ -232,7 +233,7 @@ namespace scabbard {
       if (hipRes != hipSuccess) {
         SCAB_SERR << "\n[scabbard.rtl:ERROR] failed to register callback on "
                      "{stream: "<< jobId_t::hash_stream_ptr(stream) << ", "
-                      "job: " << dt->JOB_ID.JOB  << "}\n" << std::endl;
+                      "job: " << dt->JOB_ID.JOB  << "}\n" << endl();
       }
       host::trace_append$alloc(
           (InstrData)(LAUNCH_EVENT | ON_HOST | _OPT_USED),
@@ -280,7 +281,7 @@ namespace scabbard {
           switch (attrs.type) {
             case hipMemoryTypeArray:
               SCAB_SERR << "\n[scabbard.rtl.cond:WARNING] Scabbard does not support array memory results may be invalid!"
-                           "\n[scabbard.rtl.cond:WARNING]   location: " << *((SrcMetadata*) SRC_ID) << std::endl;
+                           "\n[scabbard.rtl.cond:WARNING]   location: " << *((SrcMetadata*) SRC_ID) << endl();
             case hipMemoryTypeUnregistered:
             return;
             case hipMemoryTypeHost:
@@ -292,7 +293,7 @@ namespace scabbard {
             }
         } else {
           SCAB_SERR << "\n[scabbard.rtl.cond:ERROR] Could not get the properties of a pointer with `hipPointerGetAttributes()`!"
-                       "\n[scabbard.rtl.cond:ERROR]   location: " << *((SrcMetadata*) SRC_ID) << std::endl;
+                       "\n[scabbard.rtl.cond:ERROR]   location: " << *((SrcMetadata*) SRC_ID) << endl();
 #         ifdef DEBUG
             exit(EXIT_FAILURE);
 #         endif
@@ -323,7 +324,7 @@ namespace scabbard {
           switch (attrs.type) {
             case hipMemoryTypeArray:
               SCAB_SERR << "\n[scabbard.rtl.cond:WARNING] Scabbard does not support array memory results may be invalid!"
-                           "\n[scabbard.rtl.cond:WARNING]   location: " << *((SrcMetadata*) SRC_ID) << std::endl;
+                           "\n[scabbard.rtl.cond:WARNING]   location: " << *((SrcMetadata*) SRC_ID) << endl();
             case hipMemoryTypeUnregistered:
               return;
             case hipMemoryTypeHost:
@@ -335,7 +336,7 @@ namespace scabbard {
             }
         } else {
           SCAB_SERR << "\n[scabbard.rtl.cond:ERROR] Could not get the properties of a pointer with `hipPointerGetAttributes()`!"
-                       "\n[scabbard.rtl.cond:ERROR]   location: " << *((SrcMetadata*) SRC_ID) << std::endl;
+                       "\n[scabbard.rtl.cond:ERROR]   location: " << *((SrcMetadata*) SRC_ID) << endl();
 #         ifdef DEBUG
             exit(EXIT_FAILURE);
 #         endif

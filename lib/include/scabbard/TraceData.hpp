@@ -64,7 +64,6 @@ struct threadId_t {
 static_assert(sizeof(threadId_t) <= __WORDSIZE, "threadId_t is of the correct size");
 
 typedef std::thread::id HostThreadId;
-static_assert(sizeof(HostThreadId) <= sizeof(DeviceThreadId), "HostThreadId is of the correct size");
 
 #pragma pack(1)
 struct jobId_t {
@@ -113,6 +112,7 @@ struct DeviceThreadId {
   inline bool isDefaultStream() { return job.isDefaultStream(); }
 };
 // static_assert(sizeof(DeviceThreadId) <= __WORDSIZE*2, "DeviceThreadID is of the correct size");
+static_assert(sizeof(HostThreadId) <= sizeof(DeviceThreadId), "HostThreadId is of the correct size");
 
 union ThreadId {
   HostThreadId host;
@@ -216,17 +216,17 @@ struct TraceData {
   __host__
   explicit operator bool () const { return data != InstrData::NEVER; }
 
-  [[clang::disable_sanitizer_instrumentation, gnu::flatten, gnu::always_inline]]
-  __host__
-  inline bool operator < (const TraceData& other) const {
-    if (time_stamp < other.time_stamp)
-      return true;
-    else if ((time_stamp == other.time_stamp) // if they are equal in time
-              && ((data & scabbard::InstrData::ON_CPU) // only true if l is on cpu and r is on gpu
-                  && (other.data & scabbard::InstrData::ON_GPU))) 
-        return true;
-    return false;
-  }
+  // [[clang::disable_sanitizer_instrumentation, gnu::flatten, gnu::always_inline]]
+  // __host__
+  // inline bool operator < (const TraceData& other) const {
+  //   if (time_stamp < other.time_stamp)
+  //     return true;
+  //   else if ((time_stamp == other.time_stamp) // if they are equal in time
+  //             && ((data & scabbard::InstrData::ON_CPU) // only true if l is on cpu and r is on gpu
+  //                 && (other.data & scabbard::InstrData::ON_GPU))) 
+  //       return true;
+  //   return false;
+  // }
 
   [[clang::disable_sanitizer_instrumentation, gnu::flatten, gnu::always_inline]]
   __host__

@@ -121,12 +121,10 @@ namespace rtl {
     Result::Status check_race_write_hd(const DataPtr_t& w, const DataPtr_t& o);
 
 
-    friend inline StateMachine& operator << (StateMachine& SM, DataPtr_t& Ptr);
+    friend inline StateMachine& operator << (StateMachine& SM, const DataPtr_t& Ptr);
     friend inline StateMachine& operator << (StateMachine& SM, DataPtr_t&& __Ptr);
 
   };
-
-  inline std::ostream& operator << (std::ostream& out, const StateMachine::Result::Status& status);
 
 } //?namespace rtl
 } //?namespace scabbard
