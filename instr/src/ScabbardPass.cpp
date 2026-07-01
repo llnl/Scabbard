@@ -386,7 +386,11 @@ namespace scabbard {
     {
       // if (_F.isDeclaration()) return; // skip functions not defined (only declared) in this module 
       llvm::Function& F = *replace_device_function(_F);
-      // search for instructions to instrument and instrument them
+
+      llvm::SmallVector<std::tuple<llvm::Instruction*,llvm::Value*,InstrData,bool>,16u> to_instr;
+      llvm::SmallVector<llvm::CallInst*,16u> calls_to_instr;
+
+      // search for instructions to instrument
       for (auto& bb : F)
         for (auto& i : bb)
           if (auto* store = llvm::dyn_cast<llvm::StoreInst>(&i)) {
@@ -400,7 +404,7 @@ namespace scabbard {
               llvm::errs() << "`\n[scabbard.instr.device:DBG]\n";
             );
             //instrument store instructions to update trace
-            instr_mem_func_device(F, i, store->getPointerOperand(), data, false);
+            to_instr.emplace_back(&i, store->getPointerOperand(), data, false);
           } else if (auto* load = llvm::dyn_cast<llvm::LoadInst>(&i)) {
             auto data = DT.getInstrData(*load);
             if (not data) continue;
@@ -412,9 +416,9 @@ namespace scabbard {
               llvm::errs() << "`\n[scabbard.instr.device:DBG]\n";
             );
             //instrument load instructions
-            instr_mem_func_device(F, i, load->getPointerOperand(), data);
+            to_instr.emplace_back(&i, load->getPointerOperand(), data, true);
           } else if (auto* call = llvm::dyn_cast<llvm::CallInst>(&i)) {
-            instr_call_device(F, call);
+            calls_to_instr.push_back(call);
           } else if (auto atomic = llvm::dyn_cast<llvm::AtomicRMWInst>(&i)) {
             auto data = DT.getInstrData(*atomic);
             LLVM_DEBUG(
@@ -426,7 +430,7 @@ namespace scabbard {
               llvm::errs() << "`\n[scabbard.instr.device:DBG]\n";
             );
             //instrument atomic readwrite instructions
-            instr_mem_func_device(F, i, atomic->getPointerOperand(), data);
+            to_instr.emplace_back(&i, atomic->getPointerOperand(), data, true);
           } else if (auto cmpxchg = llvm::dyn_cast<llvm::AtomicCmpXchgInst>(&i)) {
             auto data = DT.getInstrData(*cmpxchg);
             LLVM_DEBUG(
@@ -438,8 +442,13 @@ namespace scabbard {
               llvm::errs() << "`\n[scabbard.instr.device:DBG]\n";
             );
             //instrument atomic readwrite instructions
-            instr_mem_func_device(F, i, cmpxchg->getPointerOperand(), data);
+            to_instr.emplace_back(&i, cmpxchg->getPointerOperand(), data, true);
           }
+      // instrument found instructions
+      for (auto [I, Ptr, data, insertAfter] : to_instr)
+        instr_mem_func_device(F, *I, Ptr, data, insertAfter);
+      for (llvm::CallInst* CI : calls_to_instr)
+        instr_call_device(F, CI);
       // llvm::errs() << "\n[scabbard.instr.device:DBG] instrumented a function:\n```"; F.print(llvm::errs()); llvm::errs() << "\n```\n"; //DEBUG
     }
 
@@ -634,6 +643,11 @@ namespace scabbard {
     void ScabbardPassPlugin::run_host(llvm::Function& F, llvm::FunctionAnalysisManager& FAM, const DepTraceHost& DT)
     {
       if (F.isDeclaration()) return; // skip functions not defined (only declared) in this module
+      
+      llvm::SmallVector<std::tuple<llvm::Instruction*,llvm::Value*,InstrData>,64u> to_instr;
+      llvm::SmallVector<llvm::CallInst*,32u> calls_to_instr;
+
+      // find instructions to instrument
       for (auto& bb : F)
         for (auto& i : bb)
           if (auto* store = llvm::dyn_cast<llvm::StoreInst>(&i)) {
@@ -647,7 +661,7 @@ namespace scabbard {
             llvm::errs() << "`\n[scabbard.instr.host:DBG]\n";
             );
             // instrument store instructions to update trace 
-            instr_mem_func_host(F, i, store->getPointerOperand(), data);
+            to_instr.emplace_back(&i, store->getPointerOperand(), data);
           } else if (auto* load = llvm::dyn_cast<llvm::LoadInst>(&i)) {
             auto data = DT.getInstrData(*load);
             LLVM_DEBUG(
@@ -661,9 +675,9 @@ namespace scabbard {
             // skip the loads inserted after instrumenting a hipMalloc call
             if (not load->getDebugLoc()) continue; //NOTE: bad optimizers might make this skip valid loads to instrument
             // instrument load instructions
-            instr_mem_func_host(F, i, load->getPointerOperand(), data);
+            to_instr.emplace_back(&i, load->getPointerOperand(), data);
           } else if (auto* call = llvm::dyn_cast<llvm::CallInst>(&i)) {
-            instr_call_host(F, call);
+            calls_to_instr.push_back(call);
           } else if (auto atomic = llvm::dyn_cast<llvm::AtomicRMWInst>(&i)) {
             auto data = DT.getInstrData(*atomic);
             LLVM_DEBUG(
@@ -675,7 +689,7 @@ namespace scabbard {
             llvm::errs() << "`\n[scabbard.instr.host:DBG]\n";
             );
             //instrument atomic readwrite instructions
-            instr_mem_func_host(F, i, atomic->getPointerOperand(), data);
+            to_instr.emplace_back(&i, atomic->getPointerOperand(), data);
           } else if (auto cmpxchg = llvm::dyn_cast<llvm::AtomicCmpXchgInst>(&i)) {
             auto data = DT.getInstrData(*cmpxchg);
             LLVM_DEBUG(
@@ -687,9 +701,13 @@ namespace scabbard {
             llvm::errs() << "`\n[scabbard.instr.host:DBG]\n";
             );
             //instrument atomic readwrite instructions
-            instr_mem_func_host(F, i, cmpxchg->getPointerOperand(), data);
+            to_instr.emplace_back(&i, cmpxchg->getPointerOperand(), data);
           }
           // return llvm::PreservedAnalyses::all();
+          for (auto [I, Ptr, data] : to_instr)
+            instr_mem_func_device(F, *I, Ptr, data);
+          for (llvm::CallInst* CI : calls_to_instr)
+            instr_call_device(F, CI);
     }
 
 

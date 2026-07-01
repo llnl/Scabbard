@@ -49,6 +49,10 @@
 *.scabbard.meta.lock
 *.scabbard.meta
 !test/**/*.man.scabbard.meta
+*.ll
+!test/dev/*.ll
+*.bc
+!test/dev/*.bc
 
 # scabbard mertadata file
 *.meta
