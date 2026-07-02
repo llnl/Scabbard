@@ -4,6 +4,8 @@
 #define __SCABBARD_HIP_DEFAULT_STREAM__ 1u
 #endif
 
+#include <cinttypes>
+
 namespace scabbard {
 namespace rtl{
 

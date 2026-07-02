@@ -14,6 +14,7 @@ import os
 import pathlib
 import subprocess
 import sys
+import re
 
 from argconfig import parseScabbardArgs, printScabbardHelp
 from colors import *
@@ -43,29 +44,55 @@ ADDED_FLAGS: list = [
         '-g'                                                    # required to get the location metadata
     ]
 
-def executeCommandWithFlags(argv: list, env: dict) -> None:
+def executeCommandWithFlags(argv: list[str], env: dict[str,str]) -> None:
     if "SCABBARD_PATH" not in env:
         env.update({"SCABBARD_PATH": SCABBARD_PATH})
     
-    new_argv = list(argv)
-    new_argv[1:1] = ADDED_FLAGS
-    new_cmd = ' '.join(new_argv)
+    def split_compilation() -> tuple[list[str],list[str],list[str]]:
+        new_args = list()
+        file_types: re.Pattern = re.compile(r"^.+\.(?:c{1,2}|cpp|C|cu|hip)$",flags=re.IGNORECASE)
+        out_flag: re.Pattern = re.compile(r"""^--?o(?:utput=?)=?(["'`][^"'`]+["'`]|[\S]+)?$""")
+        out_file: str = ""
+        src_file: str = ""
+        i = iter(argv)
+        while (x := next(i, None)) is not None:
+            x = x.strip(' ')
+            if (m := out_flag.match(x)) is not None:
+                if len(m) > 1:
+                    out_file = m[1]
+                    continue
+                if (x := next(i, None)) is not None:
+                    out_file = x.strip(' ')
+                else:
+                    raise RuntimeError(f'poorly formatted output argument `{m[0]} {x}`')
+            elif (m := file_types.match(x)) is not None:
+                src_file = x
+            else:
+                new_args.append(x)
+        return (list(new_args).extend(('-c', src_file, '-o', f'{src_file}.o')),
+                list(new_args).extend(('-c', f"{SCABBARD_PATH}/default_stream_helper.cpp", '-o', './dsh.scabbard.o')),
+                new_args.extend(('./dsh.scabbard.o',f'{src_file}.o','-o',out_file)))
     
-    if DEBUG:
-        prCyan(f"[scabbard.py:DBG] instrumented cmd: {new_cmd}")
-    
-    try:
-        prGreen('*** SCABBARD ***')
-        prGreen('Running Instrumented command\n')
-        cmdOutput = subprocess.run(new_cmd, shell=True, check=True, env=env) #, text=True,
-                                    # stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-        # print(cmdOutput.stdout)
-    except subprocess.CalledProcessError as cpe:
-        prRed(str(cpe.stderr) if cpe.stderr is not None else str(cpe.stdout))
-        raise cpe
-    except Exception as e:
-        prRed(e)
-        raise Exception(new_cmd) from e
+    for args in split_compilation():
+        new_argv = list(args)
+        new_argv[1:1] = ADDED_FLAGS
+        new_cmd = ' '.join(new_argv)
+        
+        if DEBUG:
+            prCyan(f"[scabbard.py:DBG] instrumented cmd: {new_cmd}")
+        
+        try:
+            prGreen('*** SCABBARD ***')
+            prGreen('Running Instrumented command\n')
+            cmdOutput = subprocess.run(new_cmd, shell=True, check=True, env=env) #, text=True,
+                                        # stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+            # print(cmdOutput.stdout)
+        except subprocess.CalledProcessError as cpe:
+            prRed(str(cpe.stderr) if cpe.stderr is not None else str(cpe.stdout))
+            raise cpe
+        except Exception as e:
+            prRed(e)
+            raise Exception(new_cmd) from e
 
 
 
