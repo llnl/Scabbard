@@ -376,6 +376,15 @@ inline bool operator < (const StateMachine::Result& l, const StateMachine::Resul
     );
 }
 
+// inline void StateMachine::move_append(StateMachine::DataPtr_t&& __Ptr) 
+// {
+//   trace.emplace(__Ptr);
+// }
+// inline void StateMachine::copy_append(const StateMachine::DataPtr_t& Ptr)
+// {
+//   trace.push(Ptr);
+// }
+
 inline StateMachine& operator << (StateMachine& SM, StateMachine::DataPtr_t&& __Ptr)
 {
   SM.trace.emplace(__Ptr);

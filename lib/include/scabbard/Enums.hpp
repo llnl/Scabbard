@@ -13,8 +13,6 @@
 
 #include <cstdint>
 #include <ostream>
-#include <sstream>
-#include <bitset>
 
 
 namespace scabbard {
@@ -112,27 +110,27 @@ namespace scabbard {
     return (l = (InstrData)(static_cast<std::uint16_t>(l) & static_cast<std::uint16_t>(r)));
   }
 
-  std::ostream& operator << (std::ostream& out, const InstrData& data) noexcept
-  {
-    std::bitset<16u> bs(data);
-    return (out << std::string((data & InstrData::_RUNTIME_CONDITIONAL) ? "RT_COND, " : "")
-         << std::string((data & InstrData::ON_DEVICE) ? "ON_DEVICE, " : "")
-         << std::string((data & InstrData::ON_HOST) ? "ON_HOST, " : "")
-         << std::string((data & InstrData::UNKNOWN_HEAP) ? "UNKNOWN_HEAP, " : "")
-         << std::string((data & InstrData::DEVICE_HEAP) ? "DEVICE_HEAP, " : "")
-         << std::string((data & InstrData::HOST_HEAP) ? "HOST_HEAP, " : "")
-         << std::string((data & InstrData::ATOMIC) ? "ATOMIC, " : "")
-         << std::string((data & InstrData::MANAGED_MEM) ? "MANAGED_MEM, " : "")
-         << std::string((data & InstrData::READ) ? "READ, " : "")
-         << std::string((data & InstrData::WRITE) ? "WRITE, " : "")
-         << std::string((data & InstrData::ALLOCATE) ? "ALLOCATE, " : "")
-         << std::string((data & InstrData::FREE) ? "FREE, " : "")
-         << std::string((data & InstrData::LAUNCH_EVENT) ? "KERNEL_LAUNCH, " : "")
-         << std::string((data & InstrData::SYNC_EVENT) ? "SYNC_EVENT, " : "")
-         << std::string((data & InstrData::FREE) ? "FREE, " : "")
-         << std::string((data & InstrData::_OPT_USED) ? "OPT_DATA, " : "")
-         << std::string((data & InstrData::ASYNC) ? "ASYNC_OP, " : "")
-         << "(0b" << bs << ")");
-  }
+  std::ostream& operator << (std::ostream& out, const InstrData& data) noexcept;
+  // {
+  //   std::bitset<16u> bs(data);
+  //   return (out << std::string((data & InstrData::_RUNTIME_CONDITIONAL) ? "RT_COND, " : "")
+  //        << std::string((data & InstrData::ON_DEVICE) ? "ON_DEVICE, " : "")
+  //        << std::string((data & InstrData::ON_HOST) ? "ON_HOST, " : "")
+  //        << std::string((data & InstrData::UNKNOWN_HEAP) ? "UNKNOWN_HEAP, " : "")
+  //        << std::string((data & InstrData::DEVICE_HEAP) ? "DEVICE_HEAP, " : "")
+  //        << std::string((data & InstrData::HOST_HEAP) ? "HOST_HEAP, " : "")
+  //        << std::string((data & InstrData::ATOMIC) ? "ATOMIC, " : "")
+  //        << std::string((data & InstrData::MANAGED_MEM) ? "MANAGED_MEM, " : "")
+  //        << std::string((data & InstrData::READ) ? "READ, " : "")
+  //        << std::string((data & InstrData::WRITE) ? "WRITE, " : "")
+  //        << std::string((data & InstrData::ALLOCATE) ? "ALLOCATE, " : "")
+  //        << std::string((data & InstrData::FREE) ? "FREE, " : "")
+  //        << std::string((data & InstrData::LAUNCH_EVENT) ? "KERNEL_LAUNCH, " : "")
+  //        << std::string((data & InstrData::SYNC_EVENT) ? "SYNC_EVENT, " : "")
+  //        << std::string((data & InstrData::FREE) ? "FREE, " : "")
+  //        << std::string((data & InstrData::_OPT_USED) ? "OPT_DATA, " : "")
+  //        << std::string((data & InstrData::ASYNC) ? "ASYNC_OP, " : "")
+  //        << "(0b" << bs << ")");
+  // }
 
 } //?namespace scabbard

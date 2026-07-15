@@ -18,6 +18,22 @@
             "console": "integratedTerminal"
         },
         {
+            "name": "PyDB: cli single file instr test",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/scabbard/scabbard.py",
+            "env": {
+                    "ROCM_PATH":"/opt/rocm-6.1.2",
+                    "SCABBARD_PATH":"${workspaceFolder}/build/scabbard",
+                    "DEBUG":"true",
+                    "PSEUDO_RUN":"true",
+                },
+            "args": ["instr", "hipcc", "-x", "hip", "--std=c++17", "-O2", 
+                    "-o${workspaceFolder}/test/device/def-race.instr.out",
+                    "${workspaceFolder}/test/device/def-race.cpp"],
+            "console": "integratedTerminal"
+        },
+        {
             "name": "(gdb) Launch tmp",
             "type": "cppdbg",
             "request": "launch",

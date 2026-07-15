@@ -11,8 +11,6 @@
 
 #pragma once
 
-#include "Enums.hpp"
-
 // #include <nlohmann/json.hpp>  //TODO: remove
 #include <cstdint>
 #include <unordered_set>
@@ -49,10 +47,11 @@ namespace scabbard {
     // NLOHMANN_DEFINE_TYPE_INTRUSIVE(SrcMetadata, srcID, srcFile, line, col, modType) //TODO: remove
   };
 
-  std::ostream& operator << (std::ostream& out, SrcMetadata& data) {
-    return out << "[`" << data.fnName << "()`](\""<< data.srcFile << "\":" 
-                << data.line << ':' << data.col << ')';
-  }
+  std::ostream& operator << (std::ostream& out, SrcMetadata& data);
+  // {
+  //   return out << "[`" << data.fnName << "()`](\""<< data.srcFile << "\":" 
+  //               << data.line << ':' << data.col << ')';
+  // }
 
   // std::string to_string(const SrcMetadata& meta);
   // std::string repr(const SrcMetadata& meta);
