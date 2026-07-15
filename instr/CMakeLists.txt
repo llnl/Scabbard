@@ -8,7 +8,7 @@ add_library(instr MODULE
     src/ScabbardPass.cpp
     src/registry.cpp
   )
-# add_dependencies(instr rtl rtl.device)
+add_dependencies(instr rtl rtl.device)
 
 # add_library(testpass MODULE
 #     src/TestPass/TestPass.cpp

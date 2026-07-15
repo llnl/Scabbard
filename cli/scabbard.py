@@ -19,7 +19,7 @@ import re
 from argconfig import parseScabbardArgs, printScabbardHelp
 from colors import *
 
-DEBUG: bool = False
+DEBUG: bool = True
 
 SCABBARD_PATH:str = os.environ['SCABBARD_PATH'] if 'SCABBARD_PATH' in os.environ else os.path.dirname(os.path.abspath(__file__))
 # sys.path.append(SCABBARD_PATH)
@@ -29,60 +29,102 @@ INSTR_LIB:str = SCABBARD_PATH+"/libinstr.so"
 INTERCEPT_LIB:str = SCABBARD_PATH+"/intercept.so"
 
 ADDED_FLAGS: list = [
+        '-Wno-unused-command-line-argument',                    # mute warnings about unnecessary cli flags
         f'-fpass-plugin={INSTR_LIB}',                           # load the pass plugin (during late opt) (requires adjustments to pass manager setup)
-        # f'-Wl,--load-pass-plugin={INSTR_LIB}',                  # load pass plugin for cpu module (during LTO)
+        #f'-Wl,--load-pass-plugin={INSTR_LIB}',                  # load pass plugin for cpu module (during LTO)
         '-Xoffload-linker', f'--load-pass-plugin={INSTR_LIB}',  # load pass plugin for gpu module (during LTO)
         f'-L{SCABBARD_PATH}',                                   # point the linker to where scabbard's trace libraries are
-        '-ltrace',                                              # the tracing code for the gpu that the instrumentation will call on
-        '-ltrace.device',                                       # the tracing code for the gpu that the instrumentation will call on
+        '-lrtl',                                                # the tracing code for the gpu that the instrumentation will call on
+        '-lrtl.device',                                         # the tracing code for the gpu that the instrumentation will call on
         '-lpthread',                                            # required by scabbard's libtrace (link unix pthread library)
-        '@SCABBARD_ZLIB_LIBRARIES@',                            # required by scabbard's libtrace (link zlib compression library)
-        '@SCABBARD_LINK_ZLIB@',                                 # required by scabbard's libtrace (link zlib compression library)
         '-fgpu-rdc',                                            # if we compile in single TU mode the LTO pass won't run on the device modules
         #'-flto',                                                # ensure that LTO is run (will conflict if -fthin-lto or -fno-lto is used)
         '-foffload-lto=full',                                   # enable LTO for the device
-        '-g'                                                    # required to get the location metadata
+        '-g',                                                   # required to get the location metadata
     ]
 
 def executeCommandWithFlags(argv: list[str], env: dict[str,str]) -> None:
     if "SCABBARD_PATH" not in env:
         env.update({"SCABBARD_PATH": SCABBARD_PATH})
     
-    def split_compilation() -> tuple[list[str],list[str],list[str]]:
+    def split_compilation(args: list[str]) -> tuple[list[str],list[str],list[str]]:
         new_args = list()
-        file_types: re.Pattern = re.compile(r"^.+\.(?:c{1,2}|cpp|C|cu|hip)$",flags=re.IGNORECASE)
-        out_flag: re.Pattern = re.compile(r"""^--?o(?:utput=?)=?(["'`][^"'`]+["'`]|[\S]+)?$""")
-        out_file: str = ""
-        src_file: str = ""
-        i = iter(argv)
+        file_types: re.Pattern = re.compile(r"^.+\.(?:c{1,2}|cpp|cu|hip)$",flags=re.IGNORECASE)
+        out_flag: re.Pattern = re.compile(r"""^--?o(?:utput=?|=)?(["'`][^"'`]+["'`]|\S+)?$""")
+        ds_flag: re.Pattern = re.compile(r"^--?fgpu-default-stream(?:\s|=)?(per-thread)?$",flags=re.IGNORECASE)
+        lang_flags: re.Pattern = re.compile(r"^--?(?:x|language=?)(\w+)?$")
+        lang_std_flags: re.Pattern = re.compile(r"^--?std=?(\S+)?$")
+        lang: str = "hip"
+        lang_std: str|None = None
+        out_file: pathlib.Path|None = None
+        src_file: pathlib.Path|None = None
+        ds: int = 1
+        i = iter(args)
+        x: str|None
         while (x := next(i, None)) is not None:
             x = x.strip(' ')
+            m: re.Match|None
             if (m := out_flag.match(x)) is not None:
-                if len(m) > 1:
-                    out_file = m[1]
+                if m.lastindex is not None and m.lastindex > 0:
+                    out_file = pathlib.Path(m[1]).absolute()
                     continue
                 if (x := next(i, None)) is not None:
-                    out_file = x.strip(' ')
+                    out_file = pathlib.Path(x.strip(' ')).absolute()
                 else:
                     raise RuntimeError(f'poorly formatted output argument `{m[0]} {x}`')
             elif (m := file_types.match(x)) is not None:
-                src_file = x
+                src_file = pathlib.Path(x).absolute()
+            elif (m := ds_flag.match(x)) is not None:
+                new_args.append(x)
+                if m.lastindex is not None and m.lastindex > 0:
+                    ds = 2
+                elif (x := next(i, None)) is not None:
+                    x = x.strip(' ').lower()
+                    ds = 2 if x == 'per-thread' else 1
+                    new_args.append(x)
+            elif (m := lang_flags.match(x)) is not None:
+                if  m.lastindex is not None and m.lastindex > 0:
+                    lang = m[1]
+                elif (x := next(i, None)) is not None:
+                    lang = x.strip(' ')
+            elif (m := lang_std_flags.match(x)) is not None:
+                if  m.lastindex is not None and m.lastindex > 0:
+                    lang_std = m[1]
+                elif (x := next(i, None)) is not None:
+                    lang_std = x.strip(' ')
             else:
                 new_args.append(x)
-        return (list(new_args).extend(('-c', src_file, '-o', f'{src_file}.o')),
-                list(new_args).extend(('-c', f"{SCABBARD_PATH}/default_stream_helper.cpp", '-o', './dsh.scabbard.o')),
-                new_args.extend(('./dsh.scabbard.o',f'{src_file}.o','-o',out_file)))
-    
-    for args in split_compilation():
-        new_argv = list(args)
-        new_argv[1:1] = ADDED_FLAGS
-        new_cmd = ' '.join(new_argv)
-        
-        if DEBUG:
-            prCyan(f"[scabbard.py:DBG] instrumented cmd: {new_cmd}")
+        # ==
+        if src_file is None:
+            raise RuntimeError("No sourcefile argument found in build command!")
+        if out_file is None:
+            out_file = pathlib.Path("./a.out").absolute()
+        # ==
+        main_o_file: pathlib.Path = out_file.parent / (str(src_file.stem) + '.o')
+        dsh_o_file: pathlib.Path = out_file.parent / "scabbard_dsh.o"
+        # ==
+        main_comp: list[str] = list(new_args)
+        dsh_comp: list[str] = list(new_args)
+        link_args: list[str] = list(new_args)
+        main_comp.extend((f"-x{lang}",f"-std={lang_std}",'-c', f"{src_file}", '-o', f"{main_o_file}"))
+        dsh_comp.extend((f"-D__SCABBARD_HIP_DEFAULT_STREAM__={ds}u",f"-xhip",f"-std=c++17",'-c',
+                         f"{SCABBARD_PATH}/default_stream_helper.c","-Wno-null-character", 
+                         '-o', str(dsh_o_file)))
+        link_args.extend((str(dsh_o_file),str(main_o_file),'-o',str(out_file),"-Wno-null-character"))
+        # ==
+        main_comp[1:1] = ADDED_FLAGS
+        link_args[1:1] = ADDED_FLAGS
+        # ==
+        return (main_comp, dsh_comp, link_args)
+    #?END fn split_compilation()
+
+    prGreen('*** SCABBARD ***')
+    for args in split_compilation(argv):
+        new_cmd = ' '.join(args)
         
         try:
-            prGreen('*** SCABBARD ***')
+            if DEBUG:
+                prCyan(f"[scabbard.py:DBG] instrumented cmd: ```\n[scabbard.py:DBG]    {new_cmd}\n[scabbard.py:DBG]  ```")
             prGreen('Running Instrumented command\n')
             cmdOutput = subprocess.run(new_cmd, shell=True, check=True, env=env) #, text=True,
                                         # stdout=subprocess.PIPE, stderr=subprocess.STDOUT)

@@ -19,7 +19,7 @@ ScabbardArgParser: ArgumentParser = ArgumentParser(
           now enjoys.  It is currently only designed to work with AMDs Hip programming language.
           
         Using scabbard is a three step process:
-          (1) build your code using scabbards instrumentation tool.
+          (1) build your code using scabbards instrumentation tool(s).
           (2) run your instrumented code.
           (3) read and interpret the results.
           

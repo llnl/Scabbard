@@ -86,6 +86,9 @@ namespace rtl {
 
     inline const ResultList_t& get_results() const { return results; }
 
+    inline void append(DataPtr_t&& __Ptr) { move_append(std::move(__Ptr)); }
+    inline void append(const DataPtr_t& Ptr) { copy_append(Ptr); }
+
   private:
 
     /**
@@ -119,6 +122,10 @@ namespace rtl {
      * @return \c const ResultStatus - the resulting condition
      */
     Result::Status check_race_write_hd(const DataPtr_t& w, const DataPtr_t& o);
+
+
+    inline void move_append(DataPtr_t&& __Ptr) { trace.emplace(__Ptr); }
+    inline void copy_append(const DataPtr_t& Ptr) { trace.push(Ptr); }
 
 
     friend inline StateMachine& operator << (StateMachine& SM, const DataPtr_t& Ptr);

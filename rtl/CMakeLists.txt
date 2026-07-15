@@ -14,7 +14,7 @@ if(APPLE)
 endif(APPLE)
 # -- end Safety Pass --
 
-configure_file(${CMAKE_CURRENT_SOURCE_DIR}/default_stream_helper.cpp ${SCABBARD_PATH}/default_stream_helper.cpp)
+configure_file(${CMAKE_CURRENT_SOURCE_DIR}/default_stream_helper.c ${SCABBARD_PATH}/default_stream_helper.c)
 
 
 find_package(hip REQUIRED)

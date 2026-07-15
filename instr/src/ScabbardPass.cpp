@@ -576,13 +576,17 @@ public:
       ScabbardRTL.Metadata.clean();    // cleanup metadata stuff if nothing was added.
 
     // add in RTL initializer and de-initializers
-    if (not instrumentScabbardInit(M)) 
-      ((Function*)ScabbardRTL.scabbard_init.getCallee())->eraseFromParent();
-    else 
+    if (not instrumentScabbardInit(M)) {
+      if (Function* init = dyn_cast_or_null<Function>(ScabbardRTL.scabbard_init.getCallee())) {
+        init->eraseFromParent();
+      }
+    } else 
       changed |= true;
-    if (not instrumentScabbardClose(M)) 
-      ((Function*)ScabbardRTL.scabbard_close.getCallee())->eraseFromParent();
-    else 
+    if (not instrumentScabbardClose(M)) {
+      if (Function* close = dyn_cast_or_null<Function>(ScabbardRTL.scabbard_close.getCallee())) {
+        close->eraseFromParent();
+      }
+    } else
       changed |= true;
 
     // errs() << "\n\n[scabbard.instr.host:DBG] Module written to: \"" << _DBG::write_module_to_file(M,"host.postInstr") << "\"\n\n"; //DEBUG

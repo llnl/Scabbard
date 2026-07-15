@@ -128,7 +128,8 @@ namespace scabbard {
      *         1u - legacy (blocking shared across host threads)
      *         2u - per-thread (blocking only for current thread)
      */
-    constexpr uintptr_t DEFAULT_STREAM_BEHAVIOR() asm ("scabbard.rtl.DEFAULT_STREAM_BEHAVIOR");
+    __host__ 
+    extern "C" uintptr_t DEFAULT_STREAM_BEHAVIOR() asm ("scabbard.rtl.DEFAULT_STREAM_BEHAVIOR");
 
   } //?namespace rtl
 } //?namespace scabbard

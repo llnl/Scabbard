@@ -167,7 +167,7 @@ namespace scabbard {
         const size_t SPAN = (TRUE_SPAN < DeviceTracker::BUFFER_SIZE) ? TRUE_SPAN : DeviceTracker::BUFFER_SIZE;
         const size_t MAX = dt->next_read + DeviceTracker::BUFFER_SIZE;
         for (size_t i = dt->next_read; i < MAX && i < NEXT; ++i)
-          *SM << std::move(GPF->create(dt->buffer[i%DeviceTracker::BUFFER_SIZE]));
+          SM->append(std::move(GPF->create(dt->buffer[i%DeviceTracker::BUFFER_SIZE])));
         dt->next_read = NEXT;
         if (TRUE_SPAN)
           SCAB_SERR << "\n[scabbard.rtl:INFO] reading " << SPAN << '/' << TRUE_SPAN << " data points from GPU s:" << dt->JOB_ID.STREAM << " j:" << dt->JOB_ID.JOB << flush();
@@ -189,7 +189,7 @@ namespace scabbard {
     {
       mx_host.lock();
       while (not hostQ.empty()) {
-        *SM << hostQ.front();
+        SM->append(hostQ.front());
         hostQ.pop();
       }
       mx_host.unlock();
