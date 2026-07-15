@@ -15,6 +15,8 @@
 #include <llvm/Passes/PassPlugin.h>
 #include <llvm/Support/CommandLine.h>
 #include <llvm/IR/PassManager.h>
+#include <llvm/IR/Module.h>
+#include <llvm/IR/Function.h>
 
 namespace /* anon */ {
 
