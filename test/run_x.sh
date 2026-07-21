@@ -1,7 +1,7 @@
 #!/usr/bin/zsh
 #flux: -N1
 #flux: -n1
-#flux: -c8
+#flux: -c16
 #flux: -g1
 
 # NOTE: you either need to run this from the top level directory of scabbard or with SCABBARD_PATH already defined
@@ -12,6 +12,14 @@ echo -e "\n\n==== CHECKING the Environment Variables ====\n\n"
 
 # get the rocm and hipcc version
 HIP_EXE=${ROCM_PATH:-/opt/rocm}/bin/hipcc
+ROCGDB_EXE=${ROCM_PATH:-/opt/rocm}/bin/rocgdb
+# HIP_EXE=/opt/rocm-6.4.2/bin/hipcc
+# if [ -z "$ROCM_PATH" ]; then
+#   CXX_ARGS_EXTRA=""
+# else
+
+# fi
+
 
 echo "HIPCC: '$HIP_EXE'"
 
@@ -112,14 +120,14 @@ fi
 
 
 #compile the required environment variables
-export SCABBARD_INSTRUMENTED_EXE_NAME="$FILE_BASE.instr.out"
-export SCABBARD_TRACE_FILE="$FILE_BASE.scabbard.trace"
+SCABBARD_INSTRUMENTED_EXE_NAME="$FILE_BASE.instr.out"
+# export SCABBARD_TRACE_FILE="$FILE_BASE.scabbard.trace"
 
 # run the built executable
 echo -e "\n\n==== RUNNING the executable ====\n\nthe executable: $SCABBARD_INSTRUMENTED_EXE_NAME\n"
-echo "scabbard trace --trace-file=$SCABBARD_TRACE_FILE $SCABBARD_INSTRUMENTED_EXE_NAME"
-scabbard trace --trace-file=$SCABBARD_TRACE_FILE $SCABBARD_INSTRUMENTED_EXE_NAME || \
-  { printf "\n\e[31m[run_x.sh] ERROR: during trace\e[0m\n"; exit -1; }
+echo "scabbard run $SCABBARD_INSTRUMENTED_EXE_NAME"
+scabbard run $ROCGDB_EXE $SCABBARD_INSTRUMENTED_EXE_NAME || \
+  { printf "\n\e[31m[run_x.sh] ERROR: running instrumented exe\e[0m\n"; exit -1; }
 
 # $ROCM_PATH/bin/rocgdb $SCABBARD_INSTRUMENTED_EXE_NAME
 

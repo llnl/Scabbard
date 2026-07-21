@@ -62,10 +62,10 @@ target_compile_options(rtl PRIVATE
       )
 target_link_options(rtl PRIVATE -fgpu-rdc -flto -foffload-lto=full )
 
-if(SCABBARD_USE_COMPRESSION)
-target_link_libraries(rtl PUBLIC ZLIB::ZLIB)
-target_compile_options(rtl PRIVATE "-DSCABBARD_USE_COMPRESSION=\"${SCABBARD_COMPRESSION_LEVEL}\"")
-endif()
+# if(SCABBARD_USE_COMPRESSION)
+# target_link_libraries(rtl PUBLIC ZLIB::ZLIB)
+# target_compile_options(rtl PRIVATE "-DSCABBARD_USE_COMPRESSION=\"${SCABBARD_COMPRESSION_LEVEL}\"")
+# endif()
 
 
 add_library(rtl.device STATIC

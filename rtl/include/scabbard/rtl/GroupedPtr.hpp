@@ -226,7 +226,7 @@ public:
   }
 
   // Creates a new pointer, copying the value into the next available slot
-  inline GroupedPtr<T> create(const T& value)
+  inline GroupedPtr<T> create(const T_t& value)
   {
     Slot_t* target_slot = getSlot();
     target_slot->data = value; // Copy the data into the slot
@@ -237,7 +237,7 @@ public:
   inline GroupedPtr<T> create(T_t&& __value)
   {
     Slot_t* target_slot = getSlot();
-    target_slot->data = __value; // move the data into the slot
+    target_slot->data = std::exchange(__value, T_t()); // move the data into the slot
     return GroupedPtr<T>(target_slot);
   }
 

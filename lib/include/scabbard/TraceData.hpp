@@ -153,8 +153,8 @@ struct TraceData {
   //DATA TYPE         NAME          DEFAULT VALUE          SIZE       W/PADDING (64b arch)
   std::size_t         time_stamp  = 0ull;               //  8B ( 64b)  8B ( 64b)
   InstrData           data        = InstrData::NEVER;   //  2B ( 16b)  8B ( 64b)
-  ThreadId            threadId    = ((void*)nullptr);   // 24B (192b) 24B (192b)
   std::uintptr_t      ptr         = 0ull;               //  8B ( 64b)  8B ( 64b)
+  ThreadId            threadId    = ((void*)nullptr);   // 24B (192b) 24B (192b)
   const SrcMetadata*  metadata    = nullptr;            //  8B ( 64b)  8B ( 64b)
   std::size_t         _OPT_DATA   = 0ull;               //  8B ( 64b)  8B ( 64b)
   //                                               TOTALS: 58B (464b) 64B (512b)
@@ -166,12 +166,14 @@ struct TraceData {
 
   [[clang::disable_sanitizer_instrumentation, gnu::flatten, gnu::always_inline]] 
   __host__ __device__
-  explicit TraceData(const TraceData& other) = default;
+  TraceData(const TraceData& other) = default;
+  // explicit TraceData(const TraceData& other)
   // { std::memcpy(this, &other, sizeof(TraceData)); }
 
   [[clang::disable_sanitizer_instrumentation, gnu::flatten, gnu::always_inline]] 
   __host__ __device__
-  explicit TraceData(TraceData&& other) = default;
+  TraceData(TraceData&& other) = default;
+  // explicit TraceData(TraceData&& other)
   //   : time_stamp(std::exchange(other.time_stamp, 0ull)), 
   //     data(std::exchange(other.data, InstrData::NONE)), 
   //     threadId(std::exchange(other.threadId, ((void*)nullptr))),

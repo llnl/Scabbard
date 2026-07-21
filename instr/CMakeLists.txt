@@ -32,8 +32,6 @@ target_include_directories(instr
 target_link_libraries(instr
     PUBLIC
     LLVMSupport
-    $<BUILD_INTERFACE:${SCABBARD_PATH}/libscabbard.so>
-    $<INSTALL_INTERFACE:${CMAKE_INSTALL_LIBDIR}/libscabbard.so>
   )
 
 target_compile_features(instr PRIVATE cxx_range_for cxx_auto_type)

@@ -126,6 +126,7 @@ def executeCommandWithFlags(argv: list[str], env: dict[str,str]) -> None:
             if DEBUG:
                 prCyan(f"[scabbard.py:DBG] instrumented cmd: ```\n[scabbard.py:DBG]    {new_cmd}\n[scabbard.py:DBG]  ```")
             prGreen('Running Instrumented command\n')
+            # cmdOutput = subprocess.run(f"/usr/share/lmod/lmod/libexec/ml_cmd rocm/6.4.2 && {new_cmd}", shell=True, check=True, env=env) #, text=True,
             cmdOutput = subprocess.run(new_cmd, shell=True, check=True, env=env) #, text=True,
                                         # stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
             # print(cmdOutput.stdout)
@@ -142,11 +143,33 @@ def executeCommandWithFlags(argv: list[str], env: dict[str,str]) -> None:
 
 def instr_mode(scabbard_args, args) -> None:
     env = dict(os.environ)
+    # if ('lmod_load' in scabbard_args or "lmod-load" in scabbard_args or "--lmod-load" in scabbard_args) \
+    #         and scabbard_args.lmod_load is not None and len(scabbard_args.lmod_load) > 0:
+    #     lmod_load_modules = ' '.join(x.strip(' ') for x in scabbard_args.lmod_load).strip(' ').strip('"').strip("'").strip(' ')
+    #     lmod_load_cmd = f"/usr/share/lmod/lmod/libexec/ml_cmd {lmod_load_modules}"
+    #     try:
+    #         #running this lmod load command and getting the updated env variable form it
+    #         cmdOutput = subprocess.run(lmod_load_cmd, shell=True, check=True, env=env) #, text=True,
+    #                                     # stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    #     except Exception as e:
+    #         raise Exception(lmod_load_cmd) from e
     executeCommandWithFlags(args, env)
     
     
 def build_mode(scabbard_args, args) -> None:
     env = dict(os.environ)
+    
+    if ('lmod_load' in scabbard_args or "lmod-load" in scabbard_args or "--lmod-load" in scabbard_args) \
+            and scabbard_args.lmod_load is not None and len(scabbard_args.lmod_load) > 0:
+        lmod_load_modules = ' '.join(x.strip(' ') for x in scabbard_args.lmod_load).strip(' ').strip('"').strip("'").strip(' ')
+        lmod_load_cmd = f"/usr/share/lmod/lmod/libexec/ml_cmd {lmod_load_modules}"
+        try:
+            #running this lmod load command and getting the updated env variable form it
+            cmdOutput = subprocess.run(lmod_load_cmd, shell=True, check=True, env=env) #, text=True,
+                                        # stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        except Exception as e:
+            raise Exception(lmod_load_cmd) from e
+        
     
     if len(args) < 1:
         prRed("[scabbard.build:ERR] No build command received")
@@ -180,11 +203,11 @@ def run_instrumented_exe_mode(scabbard_args, args) -> None:
     if len(args) < 1:
         prRed("[scabbard.run:ERR] provide a command to run a trace on (must eventually run an executable instrumented by scabbard)")
         exit(-1)
-    if len(args) == 1:
-        args.append('"dummy-arg"')
     if 'SCABBARD_INSTRUMENTED_EXE_NAME' not in env:
         env.update({'SCABBARD_INSTRUMENTED_EXE_NAME':os.path.abspath(args[0])})
     new_cmd = ' '.join(args)
+    if DEBUG:
+        prCyan(f"[scabbard.cli.run:DBG] executing: `{new_cmd}`")
     try:
         cmdOutput = subprocess.run(new_cmd, shell=True, check=True, env=env)
     except subprocess.CalledProcessError as cpe:

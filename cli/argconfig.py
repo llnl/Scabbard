@@ -120,6 +120,25 @@ VerifArgParser = _SubArgParser.add_parser('verif',
     )
 VerifArgParser.set_defaults(mode='verif')
 
+BuildArgParser.add_argument('--lmod-load','-lml',
+        nargs=1,
+        default=None,
+        metavar='<str:LModModule>',
+        required=False,
+        help="LMod module(s) to load before running the commands."
+             "Can be an \" enclosed string of multiple space separated"
+             "LMod modules.  Using '/' with specific version numbers is recommended."
+    )
+InstrArgParser.add_argument('--lmod-load','-lml',
+        nargs=1,
+        default=None,
+        metavar='<str:LModModule>',
+        required=False,
+        help="LMod module(s) to load before running the commands."
+             "Can be an \" enclosed string of multiple space separated"
+             "LMod modules.  Using '/' with specific version numbers is recommended."
+    )
+
 
 RunArgParser.add_argument('--device-buff-size','-b',
         nargs=1,

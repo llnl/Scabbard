@@ -43,6 +43,7 @@
 
 #include <unordered_set>
 #include <functional>
+#include <bitset>
 
 #define DEBUG_TYPE "scabbard"
 

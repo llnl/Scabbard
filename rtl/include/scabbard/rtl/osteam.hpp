@@ -38,13 +38,15 @@ struct SetLogType {
   SetLogType(const std::string& x_) : x(x_) {}
   SetLogType(std::string&& x_) : x(std::exchange(x_,std::string())) {}
 };
+struct ShowLabel {};
+struct HideLabel {};
 
 /// @brief Provide a simple singleton interface that allows replacing the value
 ///        in global space after initialization without adding too much extra overhead.
 class ostream {
 
   std::ostream* out = nullptr;
-  bool print_label = false;
+  bool print_label = true;
   std::string label = "scabbard.rtl";
   std::string type = "INFO";
   std::size_t _indent = 0u;
@@ -70,6 +72,10 @@ public:
     return out == &std::cout || out == &std::cerr;
   }
 
+  inline bool do_print_label() const {
+    return is_stdio();
+  }
+
   /// @brief Replace whatever \c std::ostream* is currently underpinning this object, 
   ///        with \param new_out and return a pointer to the old one (may be \c nullptr ).
   ///        If the old \c std::ostream was \c std::cout or \c std::cerr it will return
@@ -79,7 +85,7 @@ public:
   inline std::ostream* replace(std::ostream* new_out) {
     std::ostream* old_out = ((is_stdio()) ? nullptr : out);
     out = new_out;
-    print_label = is_stdio() || old_out == &std::cerr;
+    print_label = do_print_label() || old_out == &std::cerr;
     return old_out;
   }
 
@@ -94,6 +100,8 @@ public:
   inline ostream& setIndent(std::size_t n=0) { _indent = n; return *this; }
   inline ostream& setLabel(std::string&& label_) { label = std::exchange(label_,std::string()); return *this; }
   inline ostream& setLogType(std::string&& logType_) { type = std::exchange(logType_, std::string()); return *this; }
+  inline ostream& hideLabel() { print_label = false; return *this; }
+  inline ostream& showLabel() { print_label = true; return *this; }
   inline ostream& setLabel(const std::string& label_) { label = label_; return *this; }
   inline ostream& setLogType(const std::string& logType_) { type = logType_; return *this; }
   inline ostream& reset() {
@@ -108,6 +116,8 @@ public:
   friend class dedent;
   friend class SetLabel;
   friend class SetLogType;
+  friend class ShowLabel;
+  friend class HideLabel;
 
   // template<typename _CharT, typename _Traits>
   // inline ostream& operator << (std::basic_ostream<_CharT, _Traits>& (*manipulator)(std::basic_ostream<_CharT, _Traits>&)) {
@@ -125,7 +135,7 @@ public:
 
   inline ostream& operator << (scabbard::rtl::nl&&) {
     if (print_label)
-      *out << "\n[" << label << ':' << type << "] " << std::string(' ', _indent);
+      *out << "\n[" << label << ':' << type << "] " << std::string(_indent, ' ');
     else
       *out << '\n' << std::string(' ', _indent);
     return *this;
@@ -134,6 +144,7 @@ public:
     *out << '\n' << std::flush;
     label = "scabbard.rtl";
     type = "INFO";
+    // print_label = do_print_label();
     return *this;
   }
   inline ostream& operator << (scabbard::rtl::flush&&) {
@@ -150,6 +161,12 @@ public:
   }
   inline ostream& operator << (scabbard::rtl::SetLogType&& logType_) {
     return setLogType(logType_.x);
+  }
+  inline ostream& operator << (scabbard::rtl::ShowLabel&&) {
+    return showLabel();
+  }
+  inline ostream& operator << (scabbard::rtl::HideLabel&&) {
+    return hideLabel();
   }
   // template<>
   // inline ostream& operator << (std::ostream& (*manipulator)(std::ostream&)) {

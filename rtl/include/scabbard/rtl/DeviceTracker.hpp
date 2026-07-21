@@ -55,10 +55,11 @@ namespace device {
     DeviceTracker(const jobId_t& JOB_ID_, std::uint64_t vClk_)
       : JOB_ID(JOB_ID_), vClk(vClk_), 
         _BUF_SIZE(DeviceTracker::BUFFER_SIZE),
-        buffer((TraceData*)(this+1u))
+        buffer(nullptr)
     {
+      buffer = (TraceData*)(((std::uintptr_t)(&buffer))+sizeof(std::uintptr_t));
       // initialize the cycle buffer by zero-ing it out
-      std::memset(buffer, 0u, getBuffAllocSizeBytes());
+      std::memset(buffer, 0u, getBuffAllocSizeBytes()+sizeof(TraceData)*2u);
     }
     __host__
     static inline size_t getAllocSizeBytes();

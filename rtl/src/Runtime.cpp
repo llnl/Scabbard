@@ -40,10 +40,22 @@ namespace scabbard {
     {
       stop();
       for (auto dt : device_trackers)
-        if (dt != nullptr)
-          if (hipFree(dt) != hipSuccess)
-            SCAB_SERR << "\n[scabbard.rtl.dtor:ERROR] could not deallocate a device side buffer!\n" 
+        if (dt != nullptr) {
+          auto hr = hipFree(dt);
+          if (hr != hipSuccess) {
+            const char* _errN, *_errM;
+            std::string errN = (hipDrvGetErrorName(hr,&_errN) != hipSuccess)
+                                ? std::to_string(hr)
+                                : std::string(_errN);
+            std::string errM = (hipDrvGetErrorString(hr,&_errM) != hipSuccess)
+                                ? std::string("<unknown>")
+                                : std::string(_errM);
+            SCAB_SERR << "\n[scabbard.rtl.dtor:ERR] could not deallocate a device side buffer!"
+                         "\n[scabbard.rtl.dtor:ERR]   hipError: {\""<< errN <<"\":\""<< errM <<"\"}\n" 
                       << endl();
+          }
+          dt = nullptr;
+        }
       if (SM) delete SM;
       if (GPF) delete GPF;
     }
@@ -71,6 +83,7 @@ namespace scabbard {
         run_worker = false;
         worker_thread->join();
         delete worker_thread;
+        worker_thread = nullptr;
       }
     }
 
@@ -98,6 +111,7 @@ namespace scabbard {
     __host__
     void Runtime::report()
     {
+      SM->run(0);
       print_report(SM->get_results());
     }
 
@@ -167,7 +181,7 @@ namespace scabbard {
         const size_t SPAN = (TRUE_SPAN < DeviceTracker::BUFFER_SIZE) ? TRUE_SPAN : DeviceTracker::BUFFER_SIZE;
         const size_t MAX = dt->next_read + DeviceTracker::BUFFER_SIZE;
         for (size_t i = dt->next_read; i < MAX && i < NEXT; ++i)
-          SM->append(std::move(GPF->create(dt->buffer[i%DeviceTracker::BUFFER_SIZE])));
+          SM->append(GPF->create(std::move(dt->buffer[i%DeviceTracker::BUFFER_SIZE])));
         dt->next_read = NEXT;
         if (TRUE_SPAN)
           SCAB_SERR << "\n[scabbard.rtl:INFO] reading " << SPAN << '/' << TRUE_SPAN << " data points from GPU s:" << dt->JOB_ID.STREAM << " j:" << dt->JOB_ID.JOB << flush();
@@ -212,7 +226,7 @@ namespace scabbard {
       __host__
       inline size_t DeviceTracker::getBuffAllocSizeBytes()
       {
-        return (size_t)((sizeof(TraceData)*(DeviceTracker::BUFFER_SIZE+3ull))/((size_t)__WORDSIZE/8ull));
+        return (size_t)((sizeof(TraceData)*(DeviceTracker::BUFFER_SIZE+3ull))/*/((size_t)__WORDSIZE/8ull)*/);
       }
     } //?namespace device
   

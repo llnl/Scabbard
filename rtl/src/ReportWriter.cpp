@@ -42,6 +42,23 @@ void print_report(const StateMachine::ResultList_t& results) {
       case StateMachine::Result::Status::RACE_HD:
       case StateMachine::Result::Status::POS_RACE_DH:
       case StateMachine::Result::Status::POS_RACE_HD:
+      case StateMachine::Result::Status::READ_UNINIT_D:
+      case StateMachine::Result::Status::READ_UNINIT_H:
+        SCAB_SOUT << nl()
+                  << "- {" << indent(4u) << nl()
+                  << "RESULT: " << res.first.status << nl()
+                  << "INFO: \"" << res.first.msg << '"' << nl()
+                  << "OCCURRENCE_COUNT: " << res.second << nl();
+        if (not res.first.write) 
+          SCAB_SOUT << "READ: " << indent(4u) << res.first.read << dedent(4u) << nl()
+                    << "WRITE: null" << dedent(4u) << nl();
+        else if (res.first.read->time_stamp < res.first.write->time_stamp)
+          SCAB_SOUT << "READ: " << indent(4u) << res.first.read  << dedent(4u) << nl()
+                    << "WRITE: " << indent(4u) << res.first.write << dedent(8u) << nl();
+        else
+          SCAB_SOUT << "WRITE: " << indent(4u) << res.first.write << dedent(4u) << nl()
+                    << "READ: " << indent(4u) << res.first.read  << dedent(8u) << nl();
+        SCAB_SOUT << '}';
         break;
 
       case StateMachine::Result::Status::GOOD:
@@ -67,23 +84,6 @@ void print_report(const StateMachine::ResultList_t& results) {
         // exit(EXIT_FAILURE);
         return;   
     }
-
-    SCAB_SOUT << nl()
-              << "- {" << indent(2u) << nl()
-              << "RESULT: " << res.first.status << nl()
-              << "INFO: \"" << res.first.msg << '"' << nl()
-              << "OCCURRENCE_COUNT: " << res.second << nl();
-    if (not res.first.write) 
-      SCAB_SOUT << "READ: " << indent(4u) << res.first.read << dedent(4u) << nl()
-                << "WRITE: null" << dedent(2u) << nl();
-    else if (res.first.read->time_stamp < res.first.write->time_stamp)
-      SCAB_SOUT << "READ: " << indent(4u) << res.first.read  << dedent(4u) << nl()
-                << "WRITE: " << indent(4u) << res.first.write << dedent(6u) << nl();
-    else
-      SCAB_SOUT << "WRITE: " << indent(4u) << res.first.write << dedent(4u) << nl()
-                << "READ: " << indent(4u) << res.first.read  << dedent(6u) << nl();
-
-    SCAB_SOUT << '}';
   }
   SCAB_SOUT.reset();
   return;
@@ -138,7 +138,7 @@ ostream& operator << (ostream& out, const InstrData& data) {
         << std::string((data & InstrData::FREE) ? "FREE, " : "")
         << std::string((data & InstrData::_OPT_USED) ? "OPT_DATA, " : "")
         << std::string((data & InstrData::ASYNC) ? "ASYNC_OP, " : "")
-        << "(0b" << bs << ")");
+        << "0b" << bs);
 }
 
 inline ostream& operator << (ostream& out, const TraceData& td) {
@@ -148,7 +148,7 @@ inline ostream& operator << (ostream& out, const TraceData& td) {
         << "device: HOST / CPU" << nl()
         << "address: 0x" << std::hex << td.ptr << std::dec << nl() 
         << "srcLoc: " << *td.metadata << nl()
-        << "metadata: {" << td.data << '}' << nl()
+        << "metadata: [" << td.data << ']' << nl()
         << "threadID: " << td.threadId.host
         << dedent(2u) << nl() << '}';
   } else {

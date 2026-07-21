@@ -33,7 +33,7 @@ namespace scabbard {
     namespace device {
 
       
-      [[clang::disable_sanitizer_instrumentation, gnu::flatten, gnu::always_inline, gnu::used, gnu::retain]] 
+      [[clang::disable_sanitizer_instrumentation, gnu::used, gnu::retain]] 
       __device__
       void trace_append$mem(void* deviceTracker, const InstrData DATA, const void*const PTR, const void*const SRC_ID)
       {
@@ -44,7 +44,7 @@ namespace scabbard {
                                                       (std::uint64_t)PTR, SRC_ID,  0ull);
       }
 
-      [[clang::disable_sanitizer_instrumentation, gnu::flatten, gnu::always_inline, gnu::used, gnu::retain]] 
+      [[clang::disable_sanitizer_instrumentation, gnu::used, gnu::retain]] 
       __device__
       void trace_append$alloc(void* deviceTracker, const InstrData DATA, const void*const PTR, 
                               const void*const SRC_ID, const std::size_t SIZE)

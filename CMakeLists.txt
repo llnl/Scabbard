@@ -47,7 +47,7 @@ endif()
 # we need LLVM_HOME in order to automatically set LLVM_DIR
 if(NOT DEFINED ENV{LLVM_HOME})
     message(WARNING "$LLVM_HOME was not defined (looking for valid values)")
-    # look for possibel values for llvm in the default locations (for linux)
+    # look for possible values for llvm in the default locations (for linux)
     if (EXISTS "$ENV{ROCM_PATH}/llvm") # try to use the default rocm llvm install
         set(ENV{LLVM_HOME} "$ENV{ROCM_PATH}/llvm")
         message("[NOTE] $LLVM_HOME was set to `$ENV{ROCM_PATH}/llvm` for a version of amd-llvm\n")
@@ -55,20 +55,20 @@ if(NOT DEFINED ENV{LLVM_HOME})
         set(ENV{LLVM_HOME} "../../llvm-project/build")
         message("[NOTE] $LLVM_HOME was set to `../../llvm-project/build` for a local debug build of llvm\n")
     else() # try using a normal llvm install
-        # list instead of range to select prefered values (15 or 12) before other/future values
+        # list instead of range to select preferred values before other/future values
         foreach(I IN ITEMS 16 17 18 19 20 21 22 23 24 25 15 12 14 13 11 10) 
             if(EXISTS "/usr/lib/llvm-${I}")
                 set(ENV{LLVM_HOME} "/usr/lib/llvm-${I}")
                 message("[NOTE] $LLVM_HOME was set to `/usr/lib/llvm-${I}` for llvm v${I}\n") 
-                if(i GREATER 16)
-                    message(AUTHOR_WARNING "[WARNING] LLVM versions >16 are not officialy supported!")
+                if(i GREATER 24)
+                    message(AUTHOR_WARNING "[WARNING] LLVM versions >24 are not officially supported!")
                 endif()
                 break()
             endif()
         endforeach()
     endif()
     if(NOT DEFINED ENV{LLVM_HOME})
-        message(FATAL_ERROR "[ERROR] $LLVM_HOME could not be found or infered (is LLVM installed?)")
+        message(FATAL_ERROR "[ERROR] $LLVM_HOME could not be found or inferred (is LLVM installed?)")
     endif()
 endif()
 set(ENV{LLVM_DIR} $ENV{LLVM_HOME}/lib/cmake/llvm)
@@ -98,9 +98,9 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${SCABBARD_PATH})
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${SCABBARD_PATH})
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${SCABBARD_PATH})
 
-option(SCABBARD_USE_COMPRESSION 
-        "set compression level of trace files using zlib file notation i.e. /[1-9][hf]?/ in SCABBARD_COMPRESSION_LEVEL var" 
-        ON)
+# option(SCABBARD_USE_COMPRESSION 
+#         "set compression level of trace files using zlib file notation i.e. /[1-9][hf]?/ in SCABBARD_COMPRESSION_LEVEL var" 
+#         OFF)
 
 configure_file(${CMAKE_SOURCE_DIR}/scabbard.cmake ${SCABBARD_PATH}/scabbard.cmake @ONLY)
 # configure_file(${CMAKE_SOURCE_DIR}/scabbard.cmake ${SCABBARD_PATH}/cmake/scabbard.cmake @ONLY)

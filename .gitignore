@@ -38,6 +38,8 @@
 
 # LLNL flux files
 *.core
+gpucore.*
+**/gpucore.*
 
 # data stores
 *.zip
