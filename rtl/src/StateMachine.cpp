@@ -378,7 +378,7 @@ inline bool operator < (const StateMachine::Result& l, const StateMachine::Resul
 
 // inline void StateMachine::move_append(StateMachine::DataPtr_t&& __Ptr) 
 // {
-//   trace.emplace(__Ptr);
+//   trace.emplace(std::move(__Ptr));
 // }
 // inline void StateMachine::copy_append(const StateMachine::DataPtr_t& Ptr)
 // {
@@ -387,7 +387,7 @@ inline bool operator < (const StateMachine::Result& l, const StateMachine::Resul
 
 inline StateMachine& operator << (StateMachine& SM, StateMachine::DataPtr_t&& __Ptr)
 {
-  SM.trace.emplace(__Ptr);
+  SM.trace.emplace(std::move(__Ptr));
   return SM;
 }
 

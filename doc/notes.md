@@ -1,6 +1,39 @@
   Scabbard Dev Notes
 ====================================================================================================
 
+Thought: change data race algorithm to be good time bad time for each kind of HR,DR,HW,DW event.
+Could this work?
+how does intra host/device threads complicate thing?
+
+Reason: pure host side or pure device side data fighting can hide the existence of a H<->D data race
+especially if I were to use one mem data-structure.
+- this might not be valid though -- brain to foggy must come back to this thought after a little break.
+
+Design: start (valid: HW,HR) -> kernel launch (v: DR,DW) -> sync (v: HW,HR) -> kl again
+Problems:
+ - no support for kernel launches (no different from current design)
+ - during start can't tell if events happen on memory of real concern or not (as no DR/DW in mem to confirm)
+   - likely not an issue as all HR/HW are valid before a kernel launch
+ - will need to confirm that where logical clocks sync is valid across all threads and devices
+   - might need to lock all host threads on launch instead of just unifying with a callback
+ - possibly more sensitive to the trace getting out of order insertions during live runs
+ - the use of callbacks will always result in a false positive
+   - would need to introduce support for callbacks to avoid this issue.
+
+What I need:
+  - Interval map containing the last DR/DW to occur on a piece of memory
+    - could just be streamID, 
+      - might reduce the richness of our results if no workaround could be found
+        - could greatly simplify memory usage by not storing `TraceData` objects and always releasing them after they are processed in the state machine.
+    - would be better to still be the smart pointer to DR/DW `TraceData` objects
+  - a map of stream_id to state of valid host or device control of memory
+  - change state in launch and sync zones
+  - a check of the current state in read and wrote zones
+  - add wrapper around callback registry to establish callback control of memory on a thread per for a stream
+    - change the way we store `HostThreadID` to be a integer rather than stdlib struct
+
+
+
  TODO:
 ----------------------------------------------------------------------------------------------------
 

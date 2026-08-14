@@ -124,7 +124,7 @@ namespace rtl {
     Result::Status check_race_write_hd(const DataPtr_t& w, const DataPtr_t& o);
 
 
-    inline void move_append(DataPtr_t&& __Ptr) { trace.emplace(__Ptr); }
+    inline void move_append(DataPtr_t&& __Ptr) { trace.emplace(std::move(__Ptr)); }
     inline void copy_append(const DataPtr_t& Ptr) { trace.push(Ptr); }
 
 

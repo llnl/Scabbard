@@ -89,7 +89,7 @@ struct jobId_t {
   [[clang::disable_sanitizer_instrumentation, gnu::flatten, gnu::always_inline]] 
   __host__
   static inline uint16_t hash_stream_ptr(const HostThreadId& STREAM) 
-  { return hash_stream_ptr(std::hash<std::thread::id>()(STREAM)); }
+  { return hash_stream_ptr(std::hash<std::thread::id>{}(STREAM)); }
   [[clang::disable_sanitizer_instrumentation, gnu::flatten, gnu::always_inline]] 
   __host__
   inline bool isDefaultStream() const { return not STREAM; }
@@ -112,7 +112,7 @@ struct DeviceThreadId {
   inline bool isDefaultStream() { return job.isDefaultStream(); }
 };
 // static_assert(sizeof(DeviceThreadId) <= __WORDSIZE*2, "DeviceThreadID is of the correct size");
-static_assert(sizeof(HostThreadId) <= sizeof(DeviceThreadId), "HostThreadId is of the correct size");
+static_assert(sizeof(HostThreadId) <= sizeof(DeviceThreadId), "HostThreadId is too large in size");
 
 union ThreadId {
   HostThreadId host;
