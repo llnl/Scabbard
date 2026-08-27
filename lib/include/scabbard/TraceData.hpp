@@ -63,7 +63,8 @@ struct threadId_t {
 #pragma pack()
 static_assert(sizeof(threadId_t) <= __WORDSIZE, "threadId_t is of the correct size");
 
-typedef std::thread::id HostThreadId;
+// typedef std::thread::id HostThreadId;
+typedef size_t HostThreadId;
 
 #pragma pack(1)
 struct jobId_t {
@@ -73,23 +74,28 @@ struct jobId_t {
   [[clang::disable_sanitizer_instrumentation, gnu::flatten, gnu::always_inline]] 
   __host__
   jobId_t(uint16_t JOB_, const hipStream_t STREAM_)
-    : JOB(JOB_), STREAM(jobId_t::hash_stream_ptr(STREAM_))
+    : JOB(JOB_), STREAM(jobId_t::hash_stream_ptr((const std::uintptr_t)STREAM_))
   {}
   [[clang::disable_sanitizer_instrumentation, gnu::flatten, gnu::always_inline]] 
   __host__
-  static inline uint16_t hash_stream_ptr(const hipStream_t STREAM) 
-  {
+  static inline uint16_t hash_stream_ptr(const std::uintptr_t STREAM) 
+  { 
     if (not STREAM) return 0u;
     return (((std::uint64_t)STREAM) % (UINT16_MAX-1u)) + 1u;
   }
   [[clang::disable_sanitizer_instrumentation, gnu::flatten, gnu::always_inline]] 
   __host__
-  static inline uint16_t hash_stream_ptr(const std::uintptr_t STREAM) 
-  { return hash_stream_ptr((hipStream_t)STREAM); }
+  static inline uint16_t hash_stream_ptr(const hipStream_t STREAM) 
+  {
+    return hash_stream_ptr((const std::uintptr_t)STREAM); 
+  }
   [[clang::disable_sanitizer_instrumentation, gnu::flatten, gnu::always_inline]] 
   __host__
-  static inline uint16_t hash_stream_ptr(const HostThreadId& STREAM) 
-  { return hash_stream_ptr(std::hash<std::thread::id>{}(STREAM)); }
+  static inline uint16_t hash_stream_ptr(const HostThreadId HOST_THREAD)
+  { return hash_stream_ptr((std::uintptr_t)HOST_THREAD); }
+  __host__
+  static inline uint16_t hash_stream_ptr(const std::thread::id& HOST_THREAD)
+  { return hash_stream_ptr((std::uintptr_t)std::hash<std::thread::id>{}(HOST_THREAD)); }
   [[clang::disable_sanitizer_instrumentation, gnu::flatten, gnu::always_inline]] 
   __host__
   inline bool isDefaultStream() const { return not STREAM; }
@@ -123,7 +129,7 @@ union ThreadId {
   { device = DeviceThreadId(job_, blockId_, threadId_); }
   [[clang::disable_sanitizer_instrumentation, gnu::flatten, gnu::always_inline]] 
   __host__
-  ThreadId() { this->host = ::std::this_thread::get_id(); }
+  ThreadId() { this->host = std::hash<std::thread::id>{}(std::this_thread::get_id()); }
   [[clang::disable_sanitizer_instrumentation, gnu::flatten, gnu::always_inline]] 
   __host__ __device__
   ThreadId(void* _) { std::memset(this,0u,sizeof(ThreadId)); }
@@ -146,12 +152,13 @@ inline const T& reading_cast(const char* buffer, const std::size_t index, const 
 //   return *static_cast<T*>(reinterpret_cast<oldT*>(buffer[offset]));
 // }
 
+using LTime_t = std::size_t;
 
 
 struct TraceData {
 
   //DATA TYPE         NAME          DEFAULT VALUE          SIZE       W/PADDING (64b arch)
-  std::size_t         time_stamp  = 0ull;               //  8B ( 64b)  8B ( 64b)
+  LTime_t             time_stamp  = 0ull;               //  8B ( 64b)  8B ( 64b)
   InstrData           data        = InstrData::NEVER;   //  2B ( 16b)  8B ( 64b)
   std::uintptr_t      ptr         = 0ull;               //  8B ( 64b)  8B ( 64b)
   ThreadId            threadId    = ((void*)nullptr);   // 24B (192b) 24B (192b)
@@ -184,7 +191,7 @@ struct TraceData {
 
   [[clang::disable_sanitizer_instrumentation, gnu::flatten, gnu::always_inline]]
   __device__ 
-  TraceData(const std::size_t time_stamp_, InstrData data_, 
+  TraceData(const LTime_t time_stamp_, InstrData data_, 
             const jobId_t& JOB_ID, const dim3& blockId_, const dim3 threadId_,
             const std::uintptr_t ptr_, const void*const metadata_, 
             const std::size_t size_=0ull)
@@ -194,7 +201,7 @@ struct TraceData {
 
   [[clang::disable_sanitizer_instrumentation, gnu::flatten, gnu::always_inline]]
   __host__
-  TraceData(const size_t time_stamp_, const InstrData data_, const ThreadId& threadId_,
+  TraceData(const LTime_t time_stamp_, const InstrData data_, const ThreadId& threadId_,
                     const std::uintptr_t ptr_, const SrcMetadata*const metadata_, 
                     const std::size_t opt_data)
     : time_stamp(time_stamp_), data(data_), threadId(threadId_),

@@ -38,10 +38,10 @@ void print_report(const StateMachine::ResultList_t& results) {
   for (auto res : results) { 
     switch (res.first.status)
     {
-      case StateMachine::Result::Status::RACE_DH:
-      case StateMachine::Result::Status::RACE_HD:
-      case StateMachine::Result::Status::POS_RACE_DH:
-      case StateMachine::Result::Status::POS_RACE_HD:
+      case StateMachine::Result::Status::RACE_DR_HW:
+      case StateMachine::Result::Status::RACE_HR_DW:
+      case StateMachine::Result::Status::POS_RACE_DR_HW:
+      case StateMachine::Result::Status::POS_RACE_HR_DW:
       case StateMachine::Result::Status::READ_UNINIT_D:
       case StateMachine::Result::Status::READ_UNINIT_H:
         SCAB_SOUT << nl()
@@ -49,15 +49,15 @@ void print_report(const StateMachine::ResultList_t& results) {
                   << "RESULT: " << res.first.status << nl()
                   << "INFO: \"" << res.first.msg << '"' << nl()
                   << "OCCURRENCE_COUNT: " << res.second << nl();
-        if (not res.first.write) 
-          SCAB_SOUT << "READ: " << indent(4u) << res.first.read << dedent(4u) << nl()
-                    << "WRITE: null" << dedent(4u) << nl();
-        else if (res.first.read->time_stamp < res.first.write->time_stamp)
-          SCAB_SOUT << "READ: " << indent(4u) << res.first.read  << dedent(4u) << nl()
-                    << "WRITE: " << indent(4u) << res.first.write << dedent(8u) << nl();
+        if (not res.first.second_td) 
+          SCAB_SOUT << "EVENT 1: " << indent(4u) << res.first.first_td << dedent(4u) << nl()
+                    << "EVENT 2: null" << dedent(4u) << nl();
+        else if (res.first.first_td->time_stamp < res.first.second_td->time_stamp)
+          SCAB_SOUT << "EVENT 1: " << indent(4u) << res.first.first_td  << dedent(4u) << nl()
+                    << "EVENT 2: " << indent(4u) << res.first.second_td << dedent(8u) << nl();
         else
-          SCAB_SOUT << "WRITE: " << indent(4u) << res.first.write << dedent(4u) << nl()
-                    << "READ: " << indent(4u) << res.first.read  << dedent(8u) << nl();
+          SCAB_SOUT << "EVENT 1: " << indent(4u) << res.first.second_td << dedent(4u) << nl()
+                    << "EVENT 2: " << indent(4u) << res.first.first_td  << dedent(8u) << nl();
         SCAB_SOUT << '}';
         break;
 
@@ -69,10 +69,10 @@ void print_report(const StateMachine::ResultList_t& results) {
         SCAB_SOUT.setLogType("ERROR");
         SCAB_SOUT << nl() << nl() << "- { ERROR_MSG: \"" << res.first.msg
                   << "\", COUNT: " << res.second;
-        if (res.first.read)
+        if (res.first.first_td)
           SCAB_SOUT << indent(4u) << nl()
-                    << "FROM: " << *res.first.read->metadata << nl()
-                    << "  AT: " << res.first.read->time_stamp 
+                    << "FROM: " << *res.first.first_td->metadata << nl()
+                    << "  AT: " << res.first.first_td->time_stamp 
                     << dedent(4u) << nl();
         SCAB_SOUT.setLogType("REPORT");
         //exit(EXIT_FAILURE);
@@ -121,24 +121,24 @@ inline ostream& operator << (ostream& out, const DeviceThreadId& threadId) {
 }
 ostream& operator << (ostream& out, const InstrData& data) {
   std::bitset<16u> bs(data);
-  return (out << std::string((data & InstrData::_RUNTIME_CONDITIONAL) ? "RT_COND, " : "")
-        << std::string((data & InstrData::ON_DEVICE) ? "ON_DEVICE, " : "")
-        << std::string((data & InstrData::ON_HOST) ? "ON_HOST, " : "")
-        << std::string((data & InstrData::UNKNOWN_HEAP) ? "UNKNOWN_HEAP, " : "")
-        << std::string((data & InstrData::DEVICE_HEAP) ? "DEVICE_HEAP, " : "")
-        << std::string((data & InstrData::HOST_HEAP) ? "HOST_HEAP, " : "")
-        << std::string((data & InstrData::ATOMIC) ? "ATOMIC, " : "")
-        << std::string((data & InstrData::MANAGED_MEM) ? "MANAGED_MEM, " : "")
-        << std::string((data & InstrData::READ) ? "READ, " : "")
-        << std::string((data & InstrData::WRITE) ? "WRITE, " : "")
-        << std::string((data & InstrData::ALLOCATE) ? "ALLOCATE, " : "")
-        << std::string((data & InstrData::FREE) ? "FREE, " : "")
-        << std::string((data & InstrData::LAUNCH_EVENT) ? "KERNEL_LAUNCH, " : "")
-        << std::string((data & InstrData::SYNC_EVENT) ? "SYNC_EVENT, " : "")
-        << std::string((data & InstrData::FREE) ? "FREE, " : "")
-        << std::string((data & InstrData::_OPT_USED) ? "OPT_DATA, " : "")
-        << std::string((data & InstrData::ASYNC) ? "ASYNC_OP, " : "")
-        << "0b" << bs);
+  return (out 
+    << std::string((data & InstrData::ON_DEVICE) ? "ON_DEVICE, " : "")
+    << std::string((data & InstrData::ON_HOST) ? "ON_HOST, " : "")
+    << std::string((data & InstrData::ATOMIC) ? "ATOMIC, " : "")
+    << std::string((data & InstrData::READ) ? "READ, " : "")
+    << std::string((data & InstrData::WRITE) ? "WRITE, " : "")
+    << std::string((data & InstrData::ASYNC) ? "ASYNC_OP, " : "")
+    << std::string((data & InstrData::ALLOCATE) ? "ALLOCATE, " : "")
+    << std::string((data & InstrData::FREE) ? "FREE, " : "")
+    << std::string((data & InstrData::LAUNCH_EVENT) ? "KERNEL_LAUNCH, " : "")
+    << std::string((data & InstrData::SYNC_EVENT) ? "SYNC_EVENT, " : "")
+    << std::string((data & InstrData::UNKNOWN_HEAP) ? "UNKNOWN_HEAP, " : "")
+    << std::string((data & InstrData::DEVICE_HEAP) ? "DEVICE_HEAP, " : "")
+    << std::string((data & InstrData::HOST_HEAP) ? "HOST_HEAP, " : "")
+    << std::string((data & InstrData::MANAGED_MEM) ? "MANAGED_MEM, " : "")
+    << std::string((data & InstrData::_OPT_USED) ? "OPT_DATA, " : "")
+    << std::string((data & InstrData::_RUNTIME_CONDITIONAL) ? "RT_COND, " : "")
+    << "0b" << bs);
 }
 
 inline ostream& operator << (ostream& out, const TraceData& td) {

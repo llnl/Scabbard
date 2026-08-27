@@ -11,6 +11,7 @@ especially if I were to use one mem data-structure.
 
 Design: start (valid: HW,HR) -> kernel launch (v: DR,DW) -> sync (v: HW,HR) -> kl again
 Problems:
+ - assumes device has custody of any data accessible to it over the host
  - no support for kernel launches (no different from current design)
  - during start can't tell if events happen on memory of real concern or not (as no DR/DW in mem to confirm)
    - likely not an issue as all HR/HW are valid before a kernel launch
@@ -19,6 +20,12 @@ Problems:
  - possibly more sensitive to the trace getting out of order insertions during live runs
  - the use of callbacks will always result in a false positive
    - would need to introduce support for callbacks to avoid this issue.
+ - Report in read sections where both read and write `TraceData` points are available
+ - Can we tell if a race occurs if the write happens after the read in logical order?
+   - I don't think we can rn, might be able to change that though.
+     - might be able to make it work with a more reliable data processing model 
+     (aka when and how much of the trace we process through the state-machine).
+     - would recording host reads that occur without host control fix the issue for one direction?
 
 What I need:
   - Interval map containing the last DR/DW to occur on a piece of memory
@@ -31,6 +38,50 @@ What I need:
   - a check of the current state in read and wrote zones
   - add wrapper around callback registry to establish callback control of memory on a thread per for a stream
     - change the way we store `HostThreadID` to be a integer rather than stdlib struct
+  - Zone rules (curr, prev):
+    - Init:
+      - (HR,null): good
+      - (HR,...): good
+      - (HW,...): good
+      - (DR,...): not possible - `iError` zone state was not changed before DR occurred
+      - (DW,...): not possible - `iError` zone state was not updated before DR occurred
+    - Host Control:
+      - (HR,null): warn - read from uninitialized memory (suppress)
+      - (HR,HR): good\*\* - don't store new HR in mem?
+      - (HR,HW): good\*\*
+      - (HR,DR): if DR is not stagnant re-evaluate in zone associated with DR's stream; else good
+        - Host Control: good  /  Device Control: warn - HR occurred in unprotected zone
+      - (HR,DW): if DW is not stagnant re-evaluate in zone associated with DW's stream; else good
+        - Host Control: good  /  Device Control: warn - possible HR->DW race occurred (unprotected HR)
+      - (HW,HR): good\*\*
+      - (HW,HW): good\*\*
+      - (HW,DR): if DR is not stagnant re-evaluate in zone associated with DR's stream; else good
+        - Host Control: good  /  Device Control: bad - DR->HW data race occurred (unprotected HW) 
+          - is this (DC) guaranteed to be a race in all situations
+      - (HW,DW): if DW is not stagnant re-evaluate in zone associated with DW's stream; else good
+        - Host Control: good  /  Device Control: bad - HW occurred in unprotected zone
+      - (DR,null): warn - read from uninitialized memory
+      - (DR,...): not possible `iError`
+      - (DW,...): not possible `iError`
+      - DW: not possible (takes ownership of the data)
+    - Device Control:
+      - (HR,null): warn - read from uninitialized memory (suppress)
+      - (HR,...): warn - possible HR->DW race occurred (unprotected HR)
+      - (HW,...): warn - possible DR->HW race occurred (unprotected HW)
+      - (DR,null): warn - read from uninitialized memory
+      - (DR,HR): good
+      - (DR,HW): bad if not stagnant* - possible DR->HW data race occurred
+        - The order is correct but the write was in an unprotected zone
+      - (DR,DR): good
+      - (DR,DW): good
+      - (DW,HR): bad if not stagnant\* - HR->DW data race occurred
+      - (DW,HW): bad if not stagnant\* - unprotected host write
+      - (DW,DR): good
+      - (DW,DW): good
+    - \*stagnant means that the R/W event in prev ownership is older than last zone change on the "owning" stream
+    - \*\* technically we don't know what zone we are in if curr and prev are both host so we are just going off of default stream to determine zone state
+    - We declare that all data known to be accessible to a kernel belongs to the kernel until the host regains control by syncing the kernels stream.
+      - this assumption might break validity -- consider it some more before moving on
 
 
 

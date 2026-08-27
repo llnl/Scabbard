@@ -179,6 +179,11 @@ private:
   /// @return a constant int of the line column index
   inline ConstantInt* getSourceCol(const DILocation* Loc, LLVMContext& C) const;
 
+  /// @brief Get the default value for the lazy load ID of this metadata entry
+  /// @param C (required for generating constants for the module)
+  /// @return a constant int of 0 64bits wide
+  inline ConstantInt* getLazyID(LLVMContext& C) const;
+
   /// @brief Retrieve the name of the original function containing the instruction in question
   ///        try to register the string with \c registerString,
   ///        and return the offset to the desired string in the global string array
@@ -2312,8 +2317,8 @@ Constant* MetadataHandler::getGEP(GlobalVariable* GV, size_t Index) const {
 // }
 
 GlobalVariable* MetadataHandler::initializeMetadata(Module& M, unsigned AddrSpace, IRHelper* IRH) {
-  EntryTy = StructType::create(std::array<Type*,4>{
-                                  IRH->PtrTy, IRH->PtrTy, IRH->u64Ty, IRH->u32Ty
+  EntryTy = StructType::create(std::array<Type*,5>{
+                                  IRH->u64Ty, IRH->PtrTy, IRH->PtrTy, IRH->u64Ty, IRH->u64Ty
                                 }, "scabbard.metadata.entryTy", false);
   const auto ArrTy = ArrayType::get(EntryTy, UINT32_MAX); // temp type
   const auto Arr = ConstantArray::get(ArrTy, {});         // temp contents
@@ -2338,26 +2343,30 @@ void MetadataHandler::finalizeMetadata(Module& M) {
         const DIFile* dFile = dScope->getFile();
         if (dFile) {
           Contents[ID] = ConstantStruct::get(
-                          EntryTy, {getGEP(stringsVar, getSourceFile(dFile)), 
+                          EntryTy, {getLazyID(M.getContext()),
+                                    getGEP(stringsVar, getSourceFile(dFile)), 
                                     getGEP(stringsVar, getCalledFn(dSubPro->getName())),
                                     getSourceLine(dLoc.get(), M.getContext()), getSourceCol(dLoc.get(), M.getContext())});
         } else
           Contents[ID] = ConstantStruct::get(
-                          EntryTy, {getGEP(stringsVar, registerString(Twine("<UNKNOWN_SRC_FILE>{LLVM_IR_Module=\"")
+                          EntryTy, {getLazyID(M.getContext()),
+                                    getGEP(stringsVar, registerString(Twine("<UNKNOWN_SRC_FILE>{LLVM_IR_Module=\"")
                                                                       + M.getSourceFileName() + "\"}")), 
                                     getGEP(stringsVar, getCalledFn(dSubPro->getName())),
                                     getSourceLine(dLoc.get(), M.getContext()), getSourceCol(dLoc.get(), M.getContext())});
         
       } else
         Contents[ID] = ConstantStruct::get(
-                          EntryTy, {getGEP(stringsVar, registerString(Twine("<UNKNOWN_SRC_FILE>{LLVM_IR_Module=\"")
+                          EntryTy, {getLazyID(M.getContext()),
+                                    getGEP(stringsVar, registerString(Twine("<UNKNOWN_SRC_FILE>{LLVM_IR_Module=\"")
                                                                       + M.getSourceFileName() + "\"}")), 
                                     getGEP(stringsVar, registerString(Twine("<UNKNOWN_SRC_FN>{LLVM_IR_SCOPE=\"")
                                                                         + dScope->getName() + "\"}")),
                                     getSourceLine(dLoc.get(), M.getContext()), getSourceCol(dLoc.get(), M.getContext())});
     } else 
       Contents[ID] = ConstantStruct::get(
-                      EntryTy, {getGEP(stringsVar, registerString(Twine("<UNKNOWN_SRC_FILE>{Module=\"")
+                      EntryTy, {getLazyID(M.getContext()),
+                                getGEP(stringsVar, registerString(Twine("<UNKNOWN_SRC_FILE>{Module=\"")
                                                                   + M.getSourceFileName() + "\"}")), 
                                 getGEP(stringsVar, registerString(Twine("<UNKNOWN_SRC_FN>{LLVM_IR_Fn=\"")
                                                                     + I->getFunction()->getName() + "\"}")),
@@ -2405,11 +2414,15 @@ inline size_t MetadataHandler::getSourceFile(const DIFile* File/* , LLVMContext&
 }
 
 inline ConstantInt* MetadataHandler::getSourceLine(const DILocation* Loc, LLVMContext& C) const {
-  return cast<ConstantInt>(Constant::getIntegerValue(EntryTy->getTypeAtIndex(2ul), APInt(64ul,Loc->getLine())));
+  return cast<ConstantInt>(Constant::getIntegerValue(EntryTy->getTypeAtIndex(2u), APInt(64ul,Loc->getLine())));
 }
 
 inline ConstantInt* MetadataHandler::getSourceCol(const DILocation* Loc, LLVMContext& C) const {
-  return cast<ConstantInt>(Constant::getIntegerValue(EntryTy->getTypeAtIndex(3ul), APInt(64ul,Loc->getColumn())));
+  return cast<ConstantInt>(Constant::getIntegerValue(EntryTy->getTypeAtIndex(3u), APInt(64ul,Loc->getColumn())));
+}
+
+inline ConstantInt* MetadataHandler::getLazyID(LLVMContext& C) const {
+  return cast<ConstantInt>(Constant::getIntegerValue(EntryTy->getTypeAtIndex(0u), APInt(64ul,0ul)));
 }
 
 inline size_t MetadataHandler::getCalledFn(const StringRef& FnName/* , LLVMContext& C */) {

@@ -31,6 +31,10 @@
 
 
 namespace scabbard {
+
+  std::size_t SrcMetadata::next_id = 1ul;
+  SrcMetadata::SeenList_t SrcMetadata::seen;
+
   namespace rtl {
 
 
@@ -202,12 +206,12 @@ namespace scabbard {
     __host__
     void* register_job(hipStream_t STREAM)
     {
-      if (STREAM == nullptr)
+      if (STREAM == nullptr)  // I think state machine now handles all concerns of this
         STREAM = (hipStream_t) DEFAULT_STREAM_BEHAVIOR();
       if (STREAM == hipStreamLegacy) //TODO: double check this still works later
         return ((void*) SCAB_RUNTIME.add_job(nullptr));
       if (STREAM == hipStreamPerThread)
-        return ((void*) SCAB_RUNTIME.add_job((hipStream_t)std::hash<std::thread::id>()(std::this_thread::get_id())));
+        return ((void*) SCAB_RUNTIME.add_job((hipStream_t)std::hash<std::thread::id>{}(std::this_thread::get_id())));
       return ((void*) SCAB_RUNTIME.add_job(STREAM));
     }
 

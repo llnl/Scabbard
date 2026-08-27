@@ -14,6 +14,7 @@
 #include <scabbard/TraceData.hpp>
 #include <scabbard/rtl/GroupedPtr.hpp>
 #include <scabbard/rtl/IntervalMap.hpp>
+#include <scabbard/rtl/DualKeyTable.hpp>
 
 // #include <llvm/ADT/IntervalMap.h>
 
@@ -35,35 +36,45 @@ namespace rtl {
                                         DataPtr_t::priority_less>;
     using MemTable_t = IntervalMap<std::uintptr_t, DataPtr_t>;
     using AllocTable_t = std::unordered_map<std::uintptr_t, std::size_t>;
-    using SyncTable_t = std::unordered_map<std::uintptr_t, std::size_t>;
+    using StreamList_t = std::unordered_map<HostThreadId, std::unordered_set<std::uintptr_t>>;
+    using ThreadList_t = std::unordered_map<std::uintptr_t, std::unordered_map<HostThreadId,LTime_t>>;
+    
 
     struct Result {
       enum Status { 
         GOOD=0, 
-        READ_UNINIT_D=1, READ_UNINIT_H=2,
-        POS_RACE_DH=3, POS_RACE_HD=4,
-        RACE_DH=6, RACE_HD=5,
+        READ_UNINIT_D, READ_UNINIT_H,
+        POS_RACE_DR_HW, POS_RACE_HR_DW,
+        UNPROTECTED_HW, UNPROTECTED_HR,
+        RACE_DR_HW, RACE_HR_DW,
         INTERNAL_ERROR=-1 
       };
       Status status;
-      DataPtr_t read = nullptr; 
-      DataPtr_t write = nullptr;
+      DataPtr_t first_td = nullptr; 
+      DataPtr_t second_td = nullptr;
       std::string msg = "";
       friend inline bool operator == (const Result& L, const Result& R);
       friend inline bool operator < (const Result& L, const Result& R);
     };
 
-    using ResultList_t = std::map<const StateMachine::Result, std::size_t>;
+    using ResultList_t = std::map<const StateMachine::Result, LTime_t>;
+
+    struct Zone_t {
+      enum State { INIT_ZONE, HOST_CONTROL, DEVICE_CONTROL };
+      State state;
+      LTime_t transition_time;
+    };
+
+    using ZoneTable_t = std::unordered_map<std::uintptr_t, Zone_t>;
     
   private:
     Trace_t trace;
-    MemTable_t mem_dh;
-    MemTable_t mem_hd;
+    MemTable_t mem;
     AllocTable_t allocs;
-    size_t last_global_sync = __UINT64_MAX__;
-    SyncTable_t last_stream_sync;
-    size_t last_global_launch = __UINT64_MAX__;
-    SyncTable_t last_stream_launch;
+    Zone_t default_stream_zone = {INIT_ZONE, 0ull};
+    ZoneTable_t stream_zone;
+    StreamList_t streams_per_thread;
+    ThreadList_t threads_per_stream;
     ResultList_t results;
 
   public:
@@ -91,37 +102,33 @@ namespace rtl {
 
   private:
 
-    /**
-     * @brief check if a race has occurred if the current trace is a READ event (for d->h races)
-     * @param r - the current trace data being processed that is known to be a read event
-     * @param o  - the other trace data from the mem_dh object (known to exist)
-     * @return \c const ResultStatus - the resulting condition
-     */
-    Result::Status check_race_read_dh(const DataPtr_t& r, const DataPtr_t& o);
+    const InstrData FILTER = (
+            InstrData::ON_HOST | InstrData::ON_DEVICE
+          | InstrData::SYNC_EVENT | InstrData::DESYNC_EVENT
+          | InstrData::READ | InstrData::WRITE
+          | InstrData::ALLOCATE | InstrData::FREE
+        );
+
+    Result::Status check_race_DR(const DataPtr_t& DR, const DataPtr_t& o);
+    Result::Status check_race_HR(const DataPtr_t& HR, const DataPtr_t& o);
+    Result::Status check_race_DW(const DataPtr_t& DW, const DataPtr_t& o);
+    Result::Status check_race_HW(const DataPtr_t& HW, const DataPtr_t& o);
 
     /**
-     * @brief check if a race has occurred if the current trace is a READ event (for h->d races)
-     * @param r - the current trace data being processed that is known to be a read event
-     * @param o  - the other trace data from the mem_dh object (known to exist)
-     * @return \c const ResultStatus - the resulting condition
+     * @brief modify the state to reflect that a sync/de-sync event occurs transfering control as indicated
+     * @param td - the trace data indicating the sync/de-sync event
+     * @param zone - where the control is being handed off to
      */
-    Result::Status check_race_read_hd(const DataPtr_t& r, const DataPtr_t& o);
+    template<Zone_t::State ZS>
+    inline void sync_to_zone(const DataPtr_t& td);
 
+    inline const Zone_t& get_host_zone(const DataPtr_t& td) const;
+    inline const Zone_t& get_device_zone(const DataPtr_t& td) const;
     /**
-     * @brief check if a race has occurred if the current trace is a WRITE event (for d->h races)
-     * @param r - the current trace data being processed that is known to be a read event
-     * @param o  - the other trace data from the mem_dh object (known to exist)
-     * @return \c const ResultStatus - the resulting condition
+     * @brief Get the host zone per stream object
+     *        NOTE: assumes that you have called \c get_host_zone() this cycle already
      */
-    Result::Status check_race_write_dh(const DataPtr_t& w, const DataPtr_t& o);
-
-    /**
-     * @brief check if a race has occurred if the current trace is a WRITE event (for h->d races)
-     * @param r - the current trace data being processed that is known to be a read event
-     * @param o  - the other trace data from the mem_dh object (known to exist)
-     * @return \c const ResultStatus - the resulting condition
-     */
-    Result::Status check_race_write_hd(const DataPtr_t& w, const DataPtr_t& o);
+    inline const Zone_t& get_host_zone_per_stream(const DataPtr_t& H, const DataPtr_t& D) const;
 
 
     inline void move_append(DataPtr_t&& __Ptr) { trace.emplace(std::move(__Ptr)); }
@@ -146,7 +153,7 @@ namespace rtl {
 //     return ((
 //             std::hash<int>()(res.status)
 //             ^ (((res.read) ? std::hash<scabbard::LocationMetadata>()(res.read->metadata) : 0ul) << 1u) >> 1u)
-//           ^ (((res.write) ? std::hash<scabbard::LocationMetadata>()(res.write->metadata) : 0ul) << 1u
+//           ^ (((res.second) ? std::hash<scabbard::LocationMetadata>()(res.second->metadata) : 0ul) << 1u
 //         )
 //       );
 //   }
