@@ -363,7 +363,9 @@ protected:
             && not F.getName().starts_with("llvm.")         // exclude intrinsics
             && not F.getName().starts_with("scabbard.")     // exclude name mangled scabbard rtl functions
             && not F.getName().contains("__device_stub__")  // exclude device stubFn's from regular instruction instr
-            && not F.hasFnAttribute("disable_sanitizer_instrumentation")); // any fn marked as not to be instrumented
+            // any fn marked as not to be instrumented
+            && not (F.hasFnAttribute(Attribute::AttrKind::DisableSanitizerInstrumentation)
+                    || F.hasFnAttribute(Attribute::AttrKind::NoSanitizeCoverage))); 
   }
 
 
@@ -479,8 +481,9 @@ protected:
       if (Function* APIFn = M.getFunction(APIName))
         for (auto user : APIFn->users())
           if (auto _CI = dyn_cast<CallInst>(user))
-            if (APIFn == _CI->getCalledFunction())
-              changed |= InstrumenterFn(*_CI, FAM);
+            if (isInstrumentableFn(*_CI->getFunction()))
+              if (APIFn == _CI->getCalledFunction())
+                changed |= InstrumenterFn(*_CI, FAM);
     return changed;
   }
 
@@ -731,7 +734,9 @@ protected:
             && not NO_INSTR_FNS.count(F.getName().str()) // a manually excluded function (usually c++ builtin)
             && not isDeviceVendorBuiltin(F)              // a device/vendor specific function. (should be intrinsics
             // and -> undeclared)
-            && not F.hasFnAttribute("disable_sanitizer_instrumentation")); // any fn marked as not to be instrumented
+            // any fn marked as not to be instrumented
+            && not (F.hasFnAttribute(Attribute::AttrKind::DisableSanitizerInstrumentation)
+                    || F.hasFnAttribute(Attribute::AttrKind::NoSanitizeCoverage))); 
   }
 
   /// @brief Return if the address-space of a global variable is in the
@@ -1421,6 +1426,12 @@ const StringMap<CallCheck_t> funcsOfInterest {
   };
 } //? namespace HostPtrOriginHelpers
 
+bool IsGlobalVarOnIgnoreList(const GlobalVariable* GV) {
+  return (GV->hasAttribute(Attribute::AttrKind::DisableSanitizerInstrumentation)
+            || GV->hasAttribute(Attribute::AttrKind::NoSanitizeCoverage));
+          
+}
+
 IScabbardInstrPass::PtrOrigin IScabbardHostPass::getPtrOrigin(LoopInfo& LI, Value* Ptr, const Value** Object) const {
   // derived from
   // https://github.com/jdoerfert/llvm-project/blob/b416d0c996bc01aeb6708c715bfe5e53bcac998d/llvm/lib/Transforms/Instrumentation/GPUSan.cpp#L592
@@ -1435,6 +1446,8 @@ IScabbardInstrPass::PtrOrigin IScabbardHostPass::getPtrOrigin(LoopInfo& LI, Valu
     switch (Obj->getValueID()) {
       case Value::GlobalVariableVal: {
         GlobalVariable* GV = (GlobalVariable*) Obj;
+        if (IsGlobalVarOnIgnoreList(GV))
+          break; // maybe set to never and return instead?
         auto res = GlobalUnifiedMemVar.find(GV->getName());
         ObjPO = ((res != GlobalUnifiedMemVar.end()) ? res->second : UNKNOWN_HEAP); 
         //TODO remove globals not known to be on device or managed
@@ -1446,6 +1459,8 @@ IScabbardInstrPass::PtrOrigin IScabbardHostPass::getPtrOrigin(LoopInfo& LI, Valu
       case Instruction::Load + Value::InstructionVal: {
         LoadInst* Load = (LoadInst*) Obj;
         if (auto* Global = dyn_cast<GlobalVariable>(Load->getPointerOperand())) {
+          if (IsGlobalVarOnIgnoreList(Global))
+            break; // maybe set to never and return instead?
           if (Global->getName().ends_with(".device") 
               || _M.getGlobalVariable(Global->getName().str()+".device"))
             ObjPO = DEVICE_HEAP;
@@ -2197,6 +2212,8 @@ IScabbardDevicePass::PtrOrigin IScabbardDevicePass::getPtrOrigin(LoopInfo& LI, V
     PtrOrigin ObjPO = HasAllocas ? LOCAL : UNKNOWN_HEAP;
     switch (Obj->getValueID()) {
       case Value::GlobalVariableVal:
+        if (IsGlobalVarOnIgnoreList(GV))
+          break; // maybe set to never and return instead?
         ObjPO = DEVICE_HEAP;
         break;
       case Value::ArgumentVal: {
@@ -2211,6 +2228,8 @@ IScabbardDevicePass::PtrOrigin IScabbardDevicePass::getPtrOrigin(LoopInfo& LI, V
       case Instruction::Load + Value::InstructionVal: {
         LoadInst* Load = (LoadInst*) Obj;
         if (auto* Global = dyn_cast<GlobalVariable>(Load->getPointerOperand())) {
+          if (IsGlobalVarOnIgnoreList(Global))
+            break; // maybe set to never and return instead?
           if (Global->getName().ends_with(".device") 
               || _M.getGlobalVariable(Global->getName().str()+".device"))
             ObjPO = DEVICE_HEAP;
@@ -2324,6 +2343,8 @@ GlobalVariable* MetadataHandler::initializeMetadata(Module& M, unsigned AddrSpac
   const auto Arr = ConstantArray::get(ArrTy, {});         // temp contents
   MetadataVar = new GlobalVariable(M, cast<Type>(ArrTy), /*IsConstant=*/true, GlobalValue::ExternalLinkage, Arr,
                                     "scabbard.metadata.tmp", nullptr, GlobalValue::NotThreadLocal, AddrSpace);
+  MetadataVar->addAttribute(Attribute::AttrKind::DisableSanitizerInstrumentation);
+  MetadataVar->addAttribute(Attribute::AttrKind::NoSanitizeCoverage);
   return MetadataVar;
 }
 
@@ -2385,6 +2406,10 @@ void MetadataHandler::finalizeMetadata(Module& M) {
                                           GlobalValue::NotThreadLocal, MetadataVar->getAddressSpace());
   MetadataVar->replaceAllUsesWith(_MetadataVar);  // replace with completed version
   MetadataVar->eraseFromParent();                // cleanup old temp
+  _MetadataVar->addAttribute(Attribute::AttrKind::DisableSanitizerInstrumentation);
+  _MetadataVar->addAttribute(Attribute::AttrKind::NoSanitizeCoverage);
+  _strVar->addAttribute(Attribute::AttrKind::DisableSanitizerInstrumentation);
+  _strVar->addAttribute(Attribute::AttrKind::NoSanitizeCoverage);
   appendToUsed(M, {_MetadataVar,_strVar});       // register them as used variables
 }
 

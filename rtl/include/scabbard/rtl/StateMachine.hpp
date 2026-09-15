@@ -36,8 +36,6 @@ namespace rtl {
                                         DataPtr_t::priority_less>;
     using MemTable_t = IntervalMap<std::uintptr_t, DataPtr_t>;
     using AllocTable_t = std::unordered_map<std::uintptr_t, std::size_t>;
-    using StreamList_t = std::unordered_map<HostThreadId, std::unordered_set<std::uintptr_t>>;
-    using ThreadList_t = std::unordered_map<std::uintptr_t, std::unordered_map<HostThreadId,LTime_t>>;
     
 
     struct Result {
@@ -65,16 +63,16 @@ namespace rtl {
       LTime_t transition_time;
     };
 
-    using ZoneTable_t = std::unordered_map<std::uintptr_t, Zone_t>;
+    using ZoneTable_t = DualKeyTable<HostThreadId, StreamId, Zone_t>;
+    using PerThreadZoneList_t = std::unordered_map<StreamId, Zone_t>;
     
   private:
     Trace_t trace;
     MemTable_t mem;
     AllocTable_t allocs;
     Zone_t default_stream_zone = {INIT_ZONE, 0ull};
-    ZoneTable_t stream_zone;
-    StreamList_t streams_per_thread;
-    ThreadList_t threads_per_stream;
+    PerThreadZoneList_t per_thread_zones;
+    ZoneTable_t zones;
     ResultList_t results;
 
   public:
@@ -85,10 +83,10 @@ namespace rtl {
      * @brief Run the StateMachine on the trace data.
      * @param remainder_proportion how much of the trace to leave unprocessed,
      *                             so that timings left in the buffers can be sorted appropriately. \n 
-     *                             Value is expressed in a left bit-shift format ( \c >> ),
-     *                             Such that \c 0 will process all of the current trace;
-     *                             \c 1 will leave 1/2 of the current trace un-processed;
-     *                             \c 2 will leave 1/4 of the current trace un-processed;
+     *                             Value is expressed in a left bit-shift format ( `>>` ),
+     *                             Such that `0` will process all of the current trace;
+     *                             `1` will leave 1/2 of the current trace un-processed;
+     *                             `2` will leave 1/4 of the current trace un-processed;
      *                             and so on with the form (1/(x+1)). 
      */
     void run(std::uint64_t remainder_proportion=0);
@@ -126,9 +124,9 @@ namespace rtl {
     inline const Zone_t& get_device_zone(const DataPtr_t& td) const;
     /**
      * @brief Get the host zone per stream object
-     *        NOTE: assumes that you have called \c get_host_zone() this cycle already
+     *        NOTE: assumes that you have called `get_host_zone()` this cycle already
      */
-    inline const Zone_t& get_host_zone_per_stream(const DataPtr_t& H, const DataPtr_t& D) const;
+    inline const Zone_t& get_zone(const DataPtr_t& H, const DataPtr_t& D) const;
 
 
     inline void move_append(DataPtr_t&& __Ptr) { trace.emplace(std::move(__Ptr)); }

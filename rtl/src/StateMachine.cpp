@@ -12,6 +12,8 @@
 #include <scabbard/rtl/StateMachine.hpp>
 #include <scabbard/rtl/calls.hpp>
 
+#include <algorithm>
+
 #define hipStreamLegacy_ull 1u
 #ifndef hipStreamLegacy
 #define hipStreamLegacy ((hipStream_t)hipStreamLegacy_ull)
@@ -203,10 +205,9 @@ void StateMachine::run(std::uint64_t remainder_quotient)
 void StateMachine::reset()
 {
   mem.clear();
-  default_stream_zone = INIT_ZONE;
-  stream_zone.clear();
-  threads_per_stream.clear();
-  streams_per_thread.clear();
+  default_stream_zone = {INIT_ZONE, 0ull};
+  per_thread_zones.clear();
+  zones.clear();
 }
 
 template<>
@@ -214,52 +215,51 @@ inline void StateMachine::sync_to_zone<StateMachine::Zone_t::HOST_CONTROL>(const
 {
   std::uintptr_t stream = (td->ptr) ? td->ptr : DEFAULT_STREAM_BEHAVIOR();
   switch (stream) {
-    case hipStreamLegacy_ull:
+    case hipStreamLegacy_ull: {
       default_stream_zone = {Zone_t::HOST_CONTROL, td->time_stamp};
-      stream_zone.clear();
-      threads_per_stream[stream][td->threadId.host] = td->time_stamp;
+      auto sids = zones.allKeys2();
+      for (const StreamId sid : sids)
+        zones[td->threadId.host][sid] = {Zone_t::HOST_CONTROL, td->time_stamp};
       break;
-    case hipStreamPerThread_ull:
-      stream_zone[jobId_t::hash_stream_ptr(td->threadId.host)] = {Zone_t::HOST_CONTROL, td->time_stamp};
-      auto _sids = streams_per_thread.find(td->threadId.host);
-      if (_sids != streams_per_thread.end()) {
-        for (std::uintptr_t sid : _sids->second) {
-          auto i = stream_zone.find(sid);
-          if (i == stream_zone.end() || i->second.state == Zone_t::DEVICE_CONTROL)
-            stream_zone[sid] = {Zone_t::HOST_CONTROL, td->time_stamp};
-            threads_per_stream[sid][td->threadId.host] = td->time_stamp;
-        }
-        _sids->second.clear();
-      }
+    }
+    case hipStreamPerThread_ull: {
+      per_thread_zones[jobId_t::hash_stream_ptr(td->threadId.host)] = Zone_t{Zone_t::HOST_CONTROL, td->time_stamp};
+      auto rows = zones.findByKey1(td->threadId.host);
+      for (auto& row : rows)
+        row.data = Zone_t{Zone_t::HOST_CONTROL, td->time_stamp};
       break;
+    }
     default:
-      stream_zone[jobId_t::hash_stream_ptr(stream)] = {Zone_t::HOST_CONTROL, td->time_stamp};
-      if (DEFAULT_STREAM_BEHAVIOR()==hipStreamPerThread_ull)
-        streams_per_thread[td->threadId.host].erase(jobId_t::hash_stream_ptr(stream));
-      threads_per_stream[jobId_t::hash_stream_ptr(stream)][td->threadId.host] = td->time_stamp;
+      zones[td->threadId.host][jobId_t::hash_stream_ptr(stream)] = {Zone_t::HOST_CONTROL, td->time_stamp};
       break;
   }
 }
 template<>
 inline void StateMachine::sync_to_zone<StateMachine::Zone_t::DEVICE_CONTROL>(const StateMachine::DataPtr_t& td)
 {
+  per_thread_zones[jobId_t::hash_stream_ptr(td->threadId.host)] = Zone_t{Zone_t::DEVICE_CONTROL, td->time_stamp};
   std::uintptr_t stream = (td->ptr) ? td->ptr : DEFAULT_STREAM_BEHAVIOR();
   switch (stream) {
     case hipStreamLegacy_ull:
-      default_stream_zone = {Zone_t::DEVICE_CONTROL, td->time_stamp};
-      threads_per_stream.clear();
+      default_stream_zone = Zone_t{Zone_t::DEVICE_CONTROL, td->time_stamp};
+      for (auto& e : zones)
+        e.data = Zone_t{Zone_t::DEVICE_CONTROL, td->time_stamp};
       break;
-    case hipStreamPerThread_ull:
-      stream_zone[jobId_t::hash_stream_ptr(td->threadId.host)] = {Zone_t::DEVICE_CONTROL, td->time_stamp};
-      streams_per_thread[td->threadId.host].insert(jobId_t::hash_stream_ptr(td->ptr));
-      threads_per_stream[jobId_t::hash_stream_ptr(td->ptr)].clear();
+    case hipStreamPerThread_ull: {
+      auto rows = zones.findByKey1(td->threadId.host);
+      for (auto& row : rows)
+        row.data = Zone_t{Zone_t::DEVICE_CONTROL, td->time_stamp};
+      // /* NOTE: will flow into default case to finish all updates; and some rows may be redundantly updated */
+      // stream = (std::uintptr_t) td->threadId.host;
+      
+    }
+    default: {
+      auto rows = zones.findByKey2(jobId_t::hash_stream_ptr(stream));
+      for (auto& row : rows)
+        row.data = {Zone_t::DEVICE_CONTROL, td->time_stamp};
       break;
-    default:
-      stream_zone[jobId_t::hash_stream_ptr(stream)] = {Zone_t::DEVICE_CONTROL, td->time_stamp};
-      if (DEFAULT_STREAM_BEHAVIOR()==hipStreamPerThread_ull)
-        streams_per_thread[td->threadId.host].insert(jobId_t::hash_stream_ptr(td->ptr));
-      threads_per_stream[jobId_t::hash_stream_ptr(stream)].clear();
-      break;
+    }
+      
   }
 }
 
@@ -268,47 +268,25 @@ inline const StateMachine::Zone_t& StateMachine::get_host_zone(const StateMachin
   if (DEFAULT_STREAM_BEHAVIOR() == hipStreamLegacy_ull)
     return default_stream_zone;
 
-  const auto& i = stream_zone.find(jobId_t::hash_stream_ptr(td->threadId.host));
-  if (i != stream_zone.end())
+  const auto& i = per_thread_zones.find(jobId_t::hash_stream_ptr(td->threadId.host));
+  if (i != per_thread_zones.end())
     return i->second;
-  return default_stream_zone;
+  
+  return Zone_t{Zone_t::INIT_ZONE, 0u};
 }
 
 inline const StateMachine::Zone_t& StateMachine::get_device_zone(const StateMachine::DataPtr_t& td) const
 {
-  uintptr_t stream = (td->threadId.device.job.STREAM) 
-                      ? td->threadId.device.job.STREAM 
-                      : DEFAULT_STREAM_BEHAVIOR();
-  switch (stream) {
-    case hipStreamLegacy_ull:
-      return default_stream_zone;
-
-    case hipStreamPerThread_ull:
-      assert(false && "per thread default recorded in TraceData::threadID instead of host thread mask");
-      break;
-    default: {
-      const auto& i = stream_zone.find(stream);
-      if (i != stream_zone.end())
-        return i->second;
-    }
-      break;
-  }
-  assert(false && "failed to keep track of stream state (try disabling per thread default streams)");
+  if (DEFAULT_STREAM_BEHAVIOR() == hipStreamPerThread_ull)
 }
 
-inline const StateMachine::Zone_t& StateMachine::get_host_zone_per_stream(const StateMachine::DataPtr_t& H,
-                                                                          const StateMachine::DataPtr_t& D) const
+inline const StateMachine::Zone_t& StateMachine::get_zone(const StateMachine::DataPtr_t& H,
+                                                          const StateMachine::DataPtr_t& D) const
 {
-  const Zone_t& dz = get_device_zone(D);
-  if (dz.state == Zone_t::DEVICE_CONTROL)
-    return dz;
-  const auto& _i = threads_per_stream.find(D->threadId.device.job.STREAM);
-  if (_i == threads_per_stream.end())  //TODO: determine if I should replace all my data structures with one table
-    return ....;
-  const auto& i = _i->second.find(H->threadId.host);
-  if (i == _i->second.end())
-    return ....;
-  return {Zone_t::HOST_CONTROL, i->second};
+  const auto i = zones.find(H->threadId.host, D->threadId.device.job.STREAM);
+  if (i)
+    return i->data;
+  return {Zone_t::INIT_ZONE, 0u};
 }
 
 
@@ -318,7 +296,9 @@ inline const StateMachine::Zone_t& StateMachine::get_host_zone_per_stream(const 
 StateMachine::Result::Status StateMachine::check_race_HR(const StateMachine::DataPtr_t& HR, 
                                                          const StateMachine::DataPtr_t& o) 
 {
-  Zone_t zone = get_host_zone(HR);
+  Zone_t zone = ((o->data & ON_HOST) 
+                  ? get_host_zone(HR)
+                  : get_zone(HR, o));
   switch (zone.state) {
     case Zone_t::INIT_ZONE:
       return Result::GOOD;
@@ -334,18 +314,18 @@ StateMachine::Result::Status StateMachine::check_race_HR(const StateMachine::Dat
         case ON_DEVICE | READ:
           if (o->time_stamp < zone.transition_time) // is this device operation stagnant?
             return Result::GOOD;
-          zone = get_host_zone_per_stream(HR, o);
+          zone = get_zone(HR, o);
           if (zone.state == Zone_t::HOST_CONTROL)
             return Result::GOOD;
           return add_result(results,{Result::UNPROTECTED_HR, HR, nullptr, "WARN: Host read from memory still controlled by a Device"});
       
 
-          /* NOTE: this section only differs in what result status it returns form the above look into if the difference matters */
+          /* TODO: this section only differs in what result status it returns form the above look into if the difference matters */
         case ON_DEVICE | WRITE:
         case ON_DEVICE | READ | WRITE: //for atomicrmw instructions
           if (o->time_stamp < zone.transition_time) // is this device operation stagnant?
             return Result::GOOD;
-          zone = get_host_zone_per_stream(HR, o);
+          zone = get_zone(HR, o);
           if (zone.state == Zone_t::HOST_CONTROL)
             return Result::GOOD;
           return add_result(results,{Result::POS_RACE_HR_DW,HR,o, "WARN: Host Read from memory still controlled by a Device"});
@@ -367,7 +347,9 @@ StateMachine::Result::Status StateMachine::check_race_HR(const StateMachine::Dat
 StateMachine::Result::Status StateMachine::check_race_HW(const StateMachine::DataPtr_t& HW, 
                                                          const StateMachine::DataPtr_t& o) 
 {
-  Zone_t& zone = get_host_zone(HW);
+  Zone_t zone = ((o->data & ON_HOST) 
+                  ? get_host_zone(HW)
+                  : get_zone(HW, o));
   switch (zone.state) {
     case Zone_t::INIT_ZONE:
       return Result::GOOD;
@@ -383,7 +365,7 @@ StateMachine::Result::Status StateMachine::check_race_HW(const StateMachine::Dat
         case ON_DEVICE | READ | WRITE: // for atomicrmw instructions
           if (o->time_stamp < zone.transition_time) // is this device operation stagnant
             return Result::GOOD;
-          zone = get_host_zone_per_stream(HW, o);
+          zone = get_zone(HW, o);
           if (zone.state == Zone_t::HOST_CONTROL)
             return Result::GOOD;
           return add_result(results,{Result::RACE_DR_HW, o, HW, "RACE FOUND: Host Wrote to a memory location controlled by a Device after the Device Read from it"});
@@ -391,7 +373,7 @@ StateMachine::Result::Status StateMachine::check_race_HW(const StateMachine::Dat
         case ON_DEVICE | WRITE:
           if (o->time_stamp < zone.transition_time) // is this device operation stagnant
             return Result::GOOD;
-          zone = get_host_zone_per_stream(HW, o);
+          zone = get_zone(HW, o);
           if (zone.state == Zone_t::HOST_CONTROL)
             return Result::GOOD;
           return add_result(results,{Result::UNPROTECTED_HW, o, HW, "WARN: Host Wrote to memory still controlled by a Device"});
@@ -414,7 +396,9 @@ StateMachine::Result::Status StateMachine::check_race_HW(const StateMachine::Dat
 StateMachine::Result::Status StateMachine::check_race_DR(const StateMachine::DataPtr_t& DR, 
                                                          const StateMachine::DataPtr_t& o) 
 {
-  Zone_t& zone = get_device_zone(DR);
+  Zone_t zone = ((o->data & ON_DEVICE) 
+                  ? get_device_zone(DR)
+                  : get_zone(o, DR));
   if (zone.state == Zone_t::HOST_CONTROL)
     return add_result(results,{Result::INTERNAL_ERROR,DR,o,"[scabbard.rtl.sm.checkDR:ERR] a Device kernel did not get ownership of its zone"});
   
@@ -444,7 +428,9 @@ StateMachine::Result::Status StateMachine::check_race_DR(const StateMachine::Dat
 StateMachine::Result::Status StateMachine::check_race_DW(const StateMachine::DataPtr_t& DW, 
                                                          const StateMachine::DataPtr_t& o) 
 {
-  Zone_t& zone = get_device_zone(DW);
+  Zone_t zone = ((o->data & ON_DEVICE) 
+                  ? get_device_zone(DR)
+                  : get_zone(o, DR));
   if (zone.state == Zone_t::HOST_CONTROL)
     return add_result(results,{Result::INTERNAL_ERROR,DW,o,"[scabbard.rtl.sm.checkDW:ERR] a Device kernel did not get ownership of its zone"});
   switch (o->data & FILTER) 

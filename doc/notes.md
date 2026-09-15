@@ -36,6 +36,8 @@ What I need:
   - a map of stream_id to state of valid host or device control of memory
   - change state in launch and sync zones
   - a check of the current state in read and wrote zones
+  - ? - move desync trace event into a callback registered into the stream queue before the kernel
+    - Might not be necessary as you should consider all operations after a launch call out of host control until a sync is called
   - add wrapper around callback registry to establish callback control of memory on a thread per for a stream
     - change the way we store `HostThreadID` to be a integer rather than stdlib struct
   - Zone rules (curr, prev):
@@ -82,6 +84,75 @@ What I need:
     - \*\* technically we don't know what zone we are in if curr and prev are both host so we are just going off of default stream to determine zone state
     - We declare that all data known to be accessible to a kernel belongs to the kernel until the host regains control by syncing the kernels stream.
       - this assumption might break validity -- consider it some more before moving on
+  - Zone Rules (Curr Event, Prev Event) [swapping order of zone and events in the comparisons]
+    - (HR,nul):
+      - ...: WARN - HOst Read from uninitialized memory
+    - (HR,HR): 
+      - ...: good; Any Issues Already Reported (AIAR)
+    - (HR,HW): 
+      - UnInit: good
+      - HostControl: good; AIAR
+      - DeviceControl: good; AIAR / true zone not known without device event (NTZ)
+    - (HR,DR): 
+      - UnInit: good; AIAR
+      - HostControl: good
+      - DeviceControl: WARN - HR in unprotected zone! (possible shared ro data)
+    - (HR,DW):
+      - UnInit: null
+      - HostControl: good
+      - DeviceControl: WARN/RACE - HR in unprotected zone - HR->DW Race
+    - (HW,nul):
+      - UnInit: good
+      - ...: null
+    - (HW,HR):
+      - UnInit: good; AIAR
+      - HostControl: good
+      - DeviceControl: good; AIAR / NTZ
+    - (HW,HW):
+      - UnInit: good
+      - HostControl: good
+      - DeviceControl: good; AIAR / NTZ
+    - (HW,DR):
+      - UnInit: null
+      - HostControl: good
+      - DeviceControl: RACE - HW in unprotected zone - DR->HW Race
+    - (HW,DW):
+      - UnInit: null
+      - HostControl: good
+      - DeviceControl: WARN/RACE - HW in unprotected zone - both kinds of races poss
+    - (DR,nul):
+      - ...: WARN - DR from uninitiated memory
+    - (DR,HR):
+      - ...: null
+      - DeviceControl: good
+    - (DR,HW):
+      - ...: null
+      - DeviceControl: if HW.time >= zone.time -> 
+        - WARN/RACE - HW in unprotected zone - DR->HW race
+    - (DR,DR):
+      - DeviceControl: good; AIAR
+      - ...: null
+    - (DR,DW):
+      - DeviceControl: good
+      - ...: null
+    - (DW,nul):
+      - HostControl: null
+      - ...: good
+    - (DW,HR):
+      - ...: null
+      - DeviceControl: if HR.time >= zone.time -> RACE - HR->DW Race
+    - (DW,HW):
+      - ...: null
+      - DeviceControl: if HW.time >= zone.time -> WARN - Unprotected HW
+    - (DW,DR):
+      - ...: null
+      - DeviceControl: good; AIAR
+    - (DW,DW):
+      - ...: null
+      - DeviceControl: good
+  - Putting zones in a 2 key table, with a legacy default stream and per thread default stream list separate
+    - Might only need to update table entries when they specifically get called and rely on just picking the most recently updated zone from the defaults list.
+      - Issues include needing to interpret legacy default stream per thread for sync but not desync, and might cause issues. 
 
 
 

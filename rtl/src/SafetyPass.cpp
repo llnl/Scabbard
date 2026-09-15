@@ -20,7 +20,7 @@
 
 namespace /* anon */ {
 
-/// Add the \c disable_sanitizer_instrumentation attribute to all
+/// Add the `disable_sanitizer_instrumentation` attribute to all
 ///  functions in a module so that they don't get instrumented 
 ///  by a sanitizer instrumenter like asan, tsan or scabbard.
 struct SafetyPass : llvm::PassInfoMixin<SafetyPass> {

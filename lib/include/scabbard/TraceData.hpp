@@ -64,11 +64,12 @@ struct threadId_t {
 static_assert(sizeof(threadId_t) <= __WORDSIZE, "threadId_t is of the correct size");
 
 // typedef std::thread::id HostThreadId;
-typedef size_t HostThreadId;
+typedef std::size_t HostThreadId;
+typedef std::uint16_t StreamId;
 
 #pragma pack(1)
 struct jobId_t {
-  uint16_t JOB = 0u;
+  StreamId JOB = 0u;
   uint16_t STREAM = 0u;
 
   [[clang::disable_sanitizer_instrumentation, gnu::flatten, gnu::always_inline]] 
@@ -78,23 +79,23 @@ struct jobId_t {
   {}
   [[clang::disable_sanitizer_instrumentation, gnu::flatten, gnu::always_inline]] 
   __host__
-  static inline uint16_t hash_stream_ptr(const std::uintptr_t STREAM) 
+  static inline StreamId hash_stream_ptr(const std::uintptr_t STREAM) 
   { 
     if (not STREAM) return 0u;
     return (((std::uint64_t)STREAM) % (UINT16_MAX-1u)) + 1u;
   }
   [[clang::disable_sanitizer_instrumentation, gnu::flatten, gnu::always_inline]] 
   __host__
-  static inline uint16_t hash_stream_ptr(const hipStream_t STREAM) 
+  static inline StreamId hash_stream_ptr(const hipStream_t STREAM) 
   {
     return hash_stream_ptr((const std::uintptr_t)STREAM); 
   }
   [[clang::disable_sanitizer_instrumentation, gnu::flatten, gnu::always_inline]] 
   __host__
-  static inline uint16_t hash_stream_ptr(const HostThreadId HOST_THREAD)
+  static inline StreamId hash_stream_ptr(const HostThreadId HOST_THREAD)
   { return hash_stream_ptr((std::uintptr_t)HOST_THREAD); }
   __host__
-  static inline uint16_t hash_stream_ptr(const std::thread::id& HOST_THREAD)
+  static inline StreamId hash_stream_ptr(const std::thread::id& HOST_THREAD)
   { return hash_stream_ptr((std::uintptr_t)std::hash<std::thread::id>{}(HOST_THREAD)); }
   [[clang::disable_sanitizer_instrumentation, gnu::flatten, gnu::always_inline]] 
   __host__
