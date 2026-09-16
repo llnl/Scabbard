@@ -60,7 +60,7 @@ namespace rtl {
     struct Zone_t {
       enum State { INIT_ZONE, HOST_CONTROL, DEVICE_CONTROL };
       State state;
-      LTime_t transition_time;
+      LTime_t trans_time;
     };
 
     using ZoneTable_t = DualKeyTable<HostThreadId, StreamId, Zone_t>;

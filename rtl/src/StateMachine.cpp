@@ -210,25 +210,69 @@ void StateMachine::reset()
   zones.clear();
 }
 
+// template<>
+// inline void StateMachine::sync_to_zone<StateMachine::Zone_t::HOST_CONTROL>(const StateMachine::DataPtr_t& td)
+// {
+//   std::uintptr_t stream = (td->ptr) ? td->ptr : DEFAULT_STREAM_BEHAVIOR();
+//   switch (stream) {
+//     case hipStreamLegacy_ull: {
+//       default_stream_zone = {Zone_t::HOST_CONTROL, td->time_stamp};
+//       auto sids = zones.allKeys2();
+//       for (const StreamId sid : sids)
+//         zones[td->threadId.host][sid] = {Zone_t::HOST_CONTROL, td->time_stamp};
+//       break;
+//     }
+//     case hipStreamPerThread_ull: {
+//       per_thread_zones[jobId_t::hash_stream_ptr(td->threadId.host)] = Zone_t{Zone_t::HOST_CONTROL, td->time_stamp};
+//       auto rows = zones.findByKey1(td->threadId.host);
+//       for (auto& row : rows)
+//         row.data = Zone_t{Zone_t::HOST_CONTROL, td->time_stamp};
+//       break;
+//     }
+//     default:
+//       zones[td->threadId.host][jobId_t::hash_stream_ptr(stream)] = {Zone_t::HOST_CONTROL, td->time_stamp};
+//       break;
+//   }
+// }
+// template<>
+// inline void StateMachine::sync_to_zone<StateMachine::Zone_t::DEVICE_CONTROL>(const StateMachine::DataPtr_t& td)
+// {
+//   per_thread_zones[jobId_t::hash_stream_ptr(td->threadId.host)] = Zone_t{Zone_t::DEVICE_CONTROL, td->time_stamp};
+//   std::uintptr_t stream = (td->ptr) ? td->ptr : DEFAULT_STREAM_BEHAVIOR();
+//   switch (stream) {
+//     case hipStreamLegacy_ull:
+//       default_stream_zone = Zone_t{Zone_t::DEVICE_CONTROL, td->time_stamp};
+//       for (auto& e : zones)
+//         e.data = Zone_t{Zone_t::DEVICE_CONTROL, td->time_stamp};
+//       break;
+//     case hipStreamPerThread_ull: {
+//       auto rows = zones.findByKey1(td->threadId.host);
+//       for (auto& row : rows)
+//         row.data = Zone_t{Zone_t::DEVICE_CONTROL, td->time_stamp};
+//       // /* NOTE: will flow into default case to finish all updates; and some rows may be redundantly updated */
+//       // stream = (std::uintptr_t) td->threadId.host;
+      
+//     }
+//     default: {
+//       auto rows = zones.findByKey2(jobId_t::hash_stream_ptr(stream));
+//       for (auto& row : rows)
+//         row.data = {Zone_t::DEVICE_CONTROL, td->time_stamp};
+//       break;
+//     }
+      
+//   }
+// }
 template<>
 inline void StateMachine::sync_to_zone<StateMachine::Zone_t::HOST_CONTROL>(const StateMachine::DataPtr_t& td)
 {
+  /* NOTE: this implementation does not support Non-BLocking Streams */
   std::uintptr_t stream = (td->ptr) ? td->ptr : DEFAULT_STREAM_BEHAVIOR();
   switch (stream) {
-    case hipStreamLegacy_ull: {
-      default_stream_zone = {Zone_t::HOST_CONTROL, td->time_stamp};
-      auto sids = zones.allKeys2();
-      for (const StreamId sid : sids)
-        zones[td->threadId.host][sid] = {Zone_t::HOST_CONTROL, td->time_stamp};
-      break;
-    }
-    case hipStreamPerThread_ull: {
+    case hipStreamLegacy_ull:
+      default_stream_zone = Zone_t{Zone_t::HOST_CONTROL, td->time_stamp};
+    case hipStreamPerThread_ull:
       per_thread_zones[jobId_t::hash_stream_ptr(td->threadId.host)] = Zone_t{Zone_t::HOST_CONTROL, td->time_stamp};
-      auto rows = zones.findByKey1(td->threadId.host);
-      for (auto& row : rows)
-        row.data = Zone_t{Zone_t::HOST_CONTROL, td->time_stamp};
       break;
-    }
     default:
       zones[td->threadId.host][jobId_t::hash_stream_ptr(stream)] = {Zone_t::HOST_CONTROL, td->time_stamp};
       break;
@@ -237,56 +281,82 @@ inline void StateMachine::sync_to_zone<StateMachine::Zone_t::HOST_CONTROL>(const
 template<>
 inline void StateMachine::sync_to_zone<StateMachine::Zone_t::DEVICE_CONTROL>(const StateMachine::DataPtr_t& td)
 {
-  per_thread_zones[jobId_t::hash_stream_ptr(td->threadId.host)] = Zone_t{Zone_t::DEVICE_CONTROL, td->time_stamp};
+  /* NOTE: this implementation does not support Non-BLocking Streams */
+  /* NOTE: DEVICE_CONTROL should not update zone transition time if the zone was already in DEVICE_CONTROL */
   std::uintptr_t stream = (td->ptr) ? td->ptr : DEFAULT_STREAM_BEHAVIOR();
   switch (stream) {
     case hipStreamLegacy_ull:
-      default_stream_zone = Zone_t{Zone_t::DEVICE_CONTROL, td->time_stamp};
-      for (auto& e : zones)
-        e.data = Zone_t{Zone_t::DEVICE_CONTROL, td->time_stamp};
-      break;
+      if (default_stream_zone.state != Zone_t::DEVICE_CONTROL)
+        default_stream_zone = Zone_t{Zone_t::DEVICE_CONTROL, td->time_stamp};
     case hipStreamPerThread_ull: {
-      auto rows = zones.findByKey1(td->threadId.host);
-      for (auto& row : rows)
-        row.data = Zone_t{Zone_t::DEVICE_CONTROL, td->time_stamp};
-      // /* NOTE: will flow into default case to finish all updates; and some rows may be redundantly updated */
-      // stream = (std::uintptr_t) td->threadId.host;
-      
+      auto _i = per_thread_zones.find(jobId_t::hash_stream_ptr(td->threadId.host));
+      if (_i == per_thread_zones.end())
+        per_thread_zones.emplace(jobId_t::hash_stream_ptr(td->threadId.host),
+                                  Zone_t{Zone_t::DEVICE_CONTROL, td->time_stamp});
+      else if (_i->second.state != Zone_t::DEVICE_CONTROL)
+        _i->second = Zone_t{Zone_t::DEVICE_CONTROL, td->time_stamp};
+      break;  
     }
     default: {
       auto rows = zones.findByKey2(jobId_t::hash_stream_ptr(stream));
       for (auto& row : rows)
-        row.data = {Zone_t::DEVICE_CONTROL, td->time_stamp};
+        if (row.data.state != Zone_t::DEVICE_CONTROL)
+          row.data = {Zone_t::DEVICE_CONTROL, td->time_stamp};
       break;
     }
       
   }
 }
 
-inline const StateMachine::Zone_t& StateMachine::get_host_zone(const StateMachine::DataPtr_t& td) const
+inline const StateMachine::Zone_t& StateMachine::get_host_zone(const StateMachine::DataPtr_t& HE) const
 {
-  if (DEFAULT_STREAM_BEHAVIOR() == hipStreamLegacy_ull)
-    return default_stream_zone;
+  if (DEFAULT_STREAM_BEHAVIOR() == hipStreamLegacy_ull) {
+    auto _ptz = per_thread_zones.find(jobId_t::hash_stream_ptr(HE->threadId.host));
+    if (_ptz == per_thread_zones.end())
+      return default_stream_zone;
+    return ((default_stream_zone.trans_time > _ptz->second.trans_time)
+            ? default_stream_zone
+            : _ptz->second);
+  }
 
-  const auto& i = per_thread_zones.find(jobId_t::hash_stream_ptr(td->threadId.host));
+  const auto& i = per_thread_zones.find(jobId_t::hash_stream_ptr(HE->threadId.host));
   if (i != per_thread_zones.end())
     return i->second;
   
   return Zone_t{Zone_t::INIT_ZONE, 0u};
 }
 
-inline const StateMachine::Zone_t& StateMachine::get_device_zone(const StateMachine::DataPtr_t& td) const
+inline const StateMachine::Zone_t& StateMachine::get_device_zone(const StateMachine::DataPtr_t& DE) const
 {
-  if (DEFAULT_STREAM_BEHAVIOR() == hipStreamPerThread_ull)
+  /* NOTE: current implementation has all stored device thread id's are a hashed versions of the
+      calling host's threadId rather than 0 if hipStreamPerThread is enabled */
+  const StreamId stream = DE->threadId.device.job.STREAM;
+  if (stream == 0u)
+    return default_stream_zone;
+  
+  auto _ptz = per_thread_zones.find(stream);
+  if (_ptz != per_thread_zones.end())
+    return _ptz->second; // case: default stream job
+
+  // hard method: look for last transition time that fits this kernel launch
+  Zone_t& most_recent = {Zone_t::INIT_ZONE, 0u};
+  for (auto& row : zones.findByKey2(stream))
+    if (row.data.state == Zone_t::DEVICE_CONTROL
+         && row.data.trans_time > most_recent.trans_time)
+      most_recent = row.data;
+  return most_recent;
+
+  // // lazy method: assume device was meant to have control over the data
+  // return {Zone_t::DEVICE_CONTROL, DE->time_stamp};
 }
 
-inline const StateMachine::Zone_t& StateMachine::get_zone(const StateMachine::DataPtr_t& H,
-                                                          const StateMachine::DataPtr_t& D) const
+inline const StateMachine::Zone_t& StateMachine::get_zone(const StateMachine::DataPtr_t& HE,
+                                                          const StateMachine::DataPtr_t& DE) const
 {
-  const auto i = zones.find(H->threadId.host, D->threadId.device.job.STREAM);
+  const auto i = zones.find(HE->threadId.host, DE->threadId.device.job.STREAM);
   if (i)
     return i->data;
-  return {Zone_t::INIT_ZONE, 0u};
+  return get_host_zone(HE); // might need to get device zone separately then compare for most recent?
 }
 
 
@@ -296,98 +366,60 @@ inline const StateMachine::Zone_t& StateMachine::get_zone(const StateMachine::Da
 StateMachine::Result::Status StateMachine::check_race_HR(const StateMachine::DataPtr_t& HR, 
                                                          const StateMachine::DataPtr_t& o) 
 {
-  Zone_t zone = ((o->data & ON_HOST) 
-                  ? get_host_zone(HR)
-                  : get_zone(HR, o));
-  switch (zone.state) {
-    case Zone_t::INIT_ZONE:
-      return Result::GOOD;
+  // Zone_t zone = ((o->data & ON_HOST) 
+  //                 ? get_host_zone(HR)
+  //                 : get_zone(HR, o));
 
-    case Zone_t::HOST_CONTROL:
-      switch (o->data & FILTER) {
-        case ON_HOST | READ: 
-        case ON_HOST | WRITE:
-        case ON_HOST | READ | WRITE:
-          return Result::GOOD;
+  if (o->data & ON_HOST) 
+    return Result::GOOD;
+  
+  Zone_t zone = get_zone(HR, o);
+
+  if (zone.state != Zone_t::DEVICE_CONTROL  // not a critical zone
+      || zone.trans_time > o->time_stamp)   // OR the previous device event is stale/out-of-date
+    return Result::GOOD;
+
+  switch (o->data & FILTER) {
+    case ON_DEVICE | READ:
+      return add_result(results,{Result::UNPROTECTED_HR, HR, nullptr, "WARN: Host Read from memory currently controlled by a Device"});
+  
+    case ON_DEVICE | WRITE:
+    case ON_DEVICE | READ | WRITE: //for atomicrmw instructions
+      return add_result(results,{Result::POS_RACE_HR_DW,HR,o, "WARN: Host Read from memory still controlled by a Device (no protections from HR->DW Race)"});
       
-
-        case ON_DEVICE | READ:
-          if (o->time_stamp < zone.transition_time) // is this device operation stagnant?
-            return Result::GOOD;
-          zone = get_zone(HR, o);
-          if (zone.state == Zone_t::HOST_CONTROL)
-            return Result::GOOD;
-          return add_result(results,{Result::UNPROTECTED_HR, HR, nullptr, "WARN: Host read from memory still controlled by a Device"});
-      
-
-          /* TODO: this section only differs in what result status it returns form the above look into if the difference matters */
-        case ON_DEVICE | WRITE:
-        case ON_DEVICE | READ | WRITE: //for atomicrmw instructions
-          if (o->time_stamp < zone.transition_time) // is this device operation stagnant?
-            return Result::GOOD;
-          zone = get_zone(HR, o);
-          if (zone.state == Zone_t::HOST_CONTROL)
-            return Result::GOOD;
-          return add_result(results,{Result::POS_RACE_HR_DW,HR,o, "WARN: Host Read from memory still controlled by a Device"});
-          
-        default:
-          return add_result(results,{Result::INTERNAL_ERROR,HR,o,"[scabbard.rtl.sm.checkHR:ERR] unknown event data stored in state `mem` variable"});
-      }
-      break;
-
-    case Zone_t::DEVICE_CONTROL:
-      return add_result(results,{Result::UNPROTECTED_HR, HR, o, "WARN: Host Read form memory still controlled by a Device"});
-
     default:
-      return add_result(results,{Result::INTERNAL_ERROR,HR,o,"[scabbard.rtl.sm.checkHR:ERR] zone state could not be determined"});
+      return add_result(results,{Result::INTERNAL_ERROR,HR,o,"[scabbard.rtl.sm.checkHR:ERR] unknown event data stored in state `mem` variable"});
   }
+
 }
 
 
 StateMachine::Result::Status StateMachine::check_race_HW(const StateMachine::DataPtr_t& HW, 
                                                          const StateMachine::DataPtr_t& o) 
 {
-  Zone_t zone = ((o->data & ON_HOST) 
-                  ? get_host_zone(HW)
-                  : get_zone(HW, o));
-  switch (zone.state) {
-    case Zone_t::INIT_ZONE:
-      return Result::GOOD;
+  // Zone_t zone = ((o->data & ON_HOST) 
+  //                 ? get_host_zone(HR)
+  //                 : get_zone(HR, o));
 
-    case Zone_t::HOST_CONTROL:
-      switch (o->data & FILTER) {
-        case ON_HOST | READ: 
-        case ON_HOST | WRITE:
-        case ON_HOST | READ | WRITE:
-          return Result::GOOD;
+  if (o->data & ON_HOST) 
+    return Result::GOOD;
+  
+  Zone_t zone = get_zone(HR, o);
 
-        case ON_DEVICE | READ: 
-        case ON_DEVICE | READ | WRITE: // for atomicrmw instructions
-          if (o->time_stamp < zone.transition_time) // is this device operation stagnant
-            return Result::GOOD;
-          zone = get_zone(HW, o);
-          if (zone.state == Zone_t::HOST_CONTROL)
-            return Result::GOOD;
-          return add_result(results,{Result::RACE_DR_HW, o, HW, "RACE FOUND: Host Wrote to a memory location controlled by a Device after the Device Read from it"});
+  if (zone.state != Zone_t::DEVICE_CONTROL  // not a critical zone
+      || zone.trans_time > o->time_stamp)   // OR the previous device event is stale/out-of-date
+    return Result::GOOD;
 
-        case ON_DEVICE | WRITE:
-          if (o->time_stamp < zone.transition_time) // is this device operation stagnant
-            return Result::GOOD;
-          zone = get_zone(HW, o);
-          if (zone.state == Zone_t::HOST_CONTROL)
-            return Result::GOOD;
-          return add_result(results,{Result::UNPROTECTED_HW, o, HW, "WARN: Host Wrote to memory still controlled by a Device"});
+  switch (o->data & FILTER) {
+    case ON_DEVICE | READ: 
+    case ON_DEVICE | READ | WRITE: // for atomicrmw instructions
+      return add_result(results,{Result::RACE_DR_HW, o, HW, "RACE FOUND: DR->HW - Host Wrote to a memory location currently controlled by a Device after the Device Read from it"});
 
-        default:
-          return add_result(results,{Result::INTERNAL_ERROR, o, HW,"[scabbard.rtl.sm.checkHW:ERR] unknown event data stored in state `mem` variable"});
-      }
-      break;
-
-  case Zone_t::DEVICE_CONTROL:
-      return add_result(results,{Result::POS_RACE_DR_HW, o, HW, "WARN: Host Wrote to memory still controlled by a Device"});
+    case ON_DEVICE | WRITE:
+      return add_result(results,{Result::UNPROTECTED_HW, o, HW, "WARN: Host Wrote to memory still controlled by a Device"});
 
     default:
-      return add_result(results,{Result::INTERNAL_ERROR, o, HW,"[scabbard.rtl.sm.checkHW:ERR] zone state could not be determined"});
+      return add_result(results,{Result::INTERNAL_ERROR, o, HW,"[scabbard.rtl.sm.checkHW:ERR] unknown event data stored in state `mem` variable"});
   }
 }
 
@@ -396,27 +428,29 @@ StateMachine::Result::Status StateMachine::check_race_HW(const StateMachine::Dat
 StateMachine::Result::Status StateMachine::check_race_DR(const StateMachine::DataPtr_t& DR, 
                                                          const StateMachine::DataPtr_t& o) 
 {
-  Zone_t zone = ((o->data & ON_DEVICE) 
-                  ? get_device_zone(DR)
-                  : get_zone(o, DR));
-  if (zone.state == Zone_t::HOST_CONTROL)
+  // Zone_t zone = ((o->data & ON_DEVICE) 
+  //                 ? get_device_zone(DR)
+  //                 : get_zone(o, DR));
+
+  if (o->data & ON_DEVICE)
+    return Result::GOOD;
+
+  Zone_t zone = get_zone(o, DR);
+
+  if (zone.state != Zone_t::DEVICE_CONTROL)
     return add_result(results,{Result::INTERNAL_ERROR,DR,o,"[scabbard.rtl.sm.checkDR:ERR] a Device kernel did not get ownership of its zone"});
   
+  if (zone.trans_time > o->time_stamp)
+    return Result::GOOD;
+
   switch (o->data & FILTER) 
   {
     case ON_HOST | READ: 
-      return Result::GOOD;
+      return add_result(results,{Result::UNPROTECTED_HR,DR,o,"WARN: Host Read from memory currently controlled by a Device"});
 
     case ON_HOST | WRITE:
     case ON_HOST | READ | WRITE:
-      if (o->time_stamp < zone.transition_time)
-        return Result::GOOD;
-      return add_result(results,{Result::POS_RACE_DR_HW,DR,o,"WARN: a Device Read from the the same location the Host Wrote to unprotected"});
-
-    case ON_DEVICE | READ: 
-    case ON_DEVICE | WRITE:
-    case ON_DEVICE | READ | WRITE:
-      return Result::GOOD;
+      return add_result(results,{Result::POS_RACE_DR_HW,DR,o,"WARN: a Device Read from the the same location the Host Wrote to unprotected (no protection from DR->HW Race)"});
 
     default:
       return add_result(results,{Result::INTERNAL_ERROR,DR,o,"[scabbard.rtl.sm.checkDR:ERR] unknown event data stored in state `mem` variable"});
@@ -428,29 +462,30 @@ StateMachine::Result::Status StateMachine::check_race_DR(const StateMachine::Dat
 StateMachine::Result::Status StateMachine::check_race_DW(const StateMachine::DataPtr_t& DW, 
                                                          const StateMachine::DataPtr_t& o) 
 {
-  Zone_t zone = ((o->data & ON_DEVICE) 
-                  ? get_device_zone(DR)
-                  : get_zone(o, DR));
+  // Zone_t zone = ((o->data & ON_DEVICE) 
+  //                 ? get_device_zone(DW)
+  //                 : get_zone(o, DW));
+
+  if (o->data & ON_DEVICE)
+    return Result::GOOD;
+
+  Zone_t zone = get_zone(o, DW);
+
   if (zone.state == Zone_t::HOST_CONTROL)
     return add_result(results,{Result::INTERNAL_ERROR,DW,o,"[scabbard.rtl.sm.checkDW:ERR] a Device kernel did not get ownership of its zone"});
+  
+  if (zone.trans_time > o->time_stamp)
+    return Result::GOOD;
+    
   switch (o->data & FILTER) 
   {
     case ON_HOST | READ:
     case ON_HOST | READ | WRITE:  // treating atomicrmw as reads in this case
-      if (o->time_stamp < zone.transition_time)
-        return Result::GOOD;
-      return add_result(results,{Result::RACE_HR_DW,o,DW,"RACE FOUND: The Host Read from memory controlled by a Device before it Wrote to it"});
+      return add_result(results,{Result::RACE_HR_DW,o,DW,"RACE FOUND: HR->DW - The Host Read from memory controlled by a Device before it Wrote to it"});
     
     case ON_HOST | WRITE:
-      if (o->time_stamp < zone.transition_time)
-        return Result::GOOD;
       return add_result(results,{Result::UNPROTECTED_HW,o,DW,"WARN: the Host Wrote to memory controlled by a Device"});
 
-    case ON_DEVICE | READ: 
-    case ON_DEVICE | WRITE:
-    case ON_DEVICE | READ | WRITE:
-      return Result::GOOD;
-      
     default:
       return add_result(results,{Result::INTERNAL_ERROR,o,DW,"[scabbard.rtl.sm.checkDW:ERR] unknown event data stored in state `mem` variable"});
   }

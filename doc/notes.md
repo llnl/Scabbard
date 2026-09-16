@@ -100,7 +100,7 @@ What I need:
     - (HR,DW):
       - UnInit: null
       - HostControl: good
-      - DeviceControl: WARN/RACE - HR in unprotected zone - HR->DW Race
+      - DeviceControl: WARN/RACE - HR in unprotected zone - DW->HR Race
     - (HW,nul):
       - UnInit: good
       - ...: null
