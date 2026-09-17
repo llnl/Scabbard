@@ -247,6 +247,29 @@ namespace scabbard {
         );
     }
 
+    [[clang::disable_sanitizer_instrumentation, gnu::used, gnu::retain, gnu::noinline]] 
+    __host__
+    hipError_t register_user_callback(hipStream_t stream, const hipStreamCallback_t usrCallbackFn, 
+                                const void*const usrData, unsigned int flags, const void* const SRC_ID)
+    {
+      struct DataWrapper_t {
+        hipStreamCallback_t usrCallbackFn = usrCallbackFn;
+        void* usrData = usrData;
+        const void* const SRC_ID = SRC_ID;
+      };
+      hipStreamCallback_t wrapper = [](hipStream_t _stream, hipError_t _err, void* data) -> void {
+        DataWrapper_t* dataWrapper = (DataWrapper_t*)data;
+        host::trace_append$mem((InstrData)(InstrData::ON_HOST | InstrData::SYNC_EVENT),
+                                _stream,
+                                dataWrapper->SRC_ID);
+        dataWrapper->usrCallbackFn(_stream, _err, dataWrapper->usrData);
+        delete dataWrapper;
+      };
+      DataWrapper_t* dataWrapper = new DataWrapper_t();
+
+      return hipStreamAddCallback(stream, wrapper, dataWrapper, flags);
+    }
+
     
     
     // << ======================================== Device ========================================== >> 

@@ -66,15 +66,16 @@ static_assert(sizeof(threadId_t) <= __WORDSIZE, "threadId_t is of the correct si
 // typedef std::thread::id HostThreadId;
 typedef std::size_t HostThreadId;
 typedef std::uint16_t StreamId;
+typedef std::uint16_t StreamJobId;
 
 #pragma pack(1)
 struct jobId_t {
-  StreamId JOB = 0u;
-  uint16_t STREAM = 0u;
+  StreamJobId JOB = 0u;
+  StreamId STREAM = 0u;
 
   [[clang::disable_sanitizer_instrumentation, gnu::flatten, gnu::always_inline]] 
   __host__
-  jobId_t(uint16_t JOB_, const hipStream_t STREAM_)
+  jobId_t(StreamJobId JOB_, const hipStream_t STREAM_)
     : JOB(JOB_), STREAM(jobId_t::hash_stream_ptr((const std::uintptr_t)STREAM_))
   {}
   [[clang::disable_sanitizer_instrumentation, gnu::flatten, gnu::always_inline]] 
@@ -82,7 +83,7 @@ struct jobId_t {
   static inline StreamId hash_stream_ptr(const std::uintptr_t STREAM) 
   { 
     if (not STREAM) return 0u;
-    return (((std::uint64_t)STREAM) % (UINT16_MAX-1u)) + 1u;
+    return (((StreamId)STREAM) % (UINT16_MAX-1u)) + 1u;
   }
   [[clang::disable_sanitizer_instrumentation, gnu::flatten, gnu::always_inline]] 
   __host__

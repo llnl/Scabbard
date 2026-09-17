@@ -17,6 +17,7 @@
 #include <llvm/IR/PassManager.h>
 #include <llvm/IR/Module.h>
 #include <llvm/IR/Function.h>
+#include <llvm/IR/Attributes.h>
 
 namespace /* anon */ {
 
@@ -26,9 +27,22 @@ namespace /* anon */ {
 struct SafetyPass : llvm::PassInfoMixin<SafetyPass> {
     SafetyPass() = default;
     llvm::PreservedAnalyses run(llvm::Module& M, llvm::ModuleAnalysisManager& FAM) {
-      for (llvm::Function& F : M)
-        if (not F.hasFnAttribute("disable_sanitizer_instrumentation"))
-          F.addFnAttr("disable_sanitizer_instrumentation");
+      for (llvm::Function& F : M) {
+        if (F.isDeclaration())
+          continue;
+        if (not F.hasFnAttribute(Attribute::AttrKind::DisableSanitizerInstrumentation)
+          F.addFnAttr(Attribute::AttrKind::DisableSanitizerInstrumentation);
+        if (not F.hasFnAttribute(Attribute::AttrKind::NoSanitizeCoverage)
+          F.addFnAttr(Attribute::AttrKind::NoSanitizeCoverage);
+      }
+      for (GlobalVariable& GV : M.globals()) {
+        if (GV.isDeclaration())
+          continue;
+        if (not GV.hasAttribute(Attribute::AttrKind::DisableSanitizerInstrumentation)
+          GV.addAttribute(Attribute::AttrKind::DisableSanitizerInstrumentation);
+        if (not GV.hasAttribute(Attribute::AttrKind::NoSanitizeCoverage)
+          GV.addAttribute(Attribute::AttrKind::NoSanitizeCoverage);
+      }
       return llvm::PreservedAnalyses::all();
     }
     static bool isRequired() { return true; }

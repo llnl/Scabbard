@@ -66,7 +66,7 @@ namespace scabbard {
       std::vector<device::DeviceTracker*> device_trackers;
 
       /// @brief a map connecting counters to each stream's jobs
-      std::map<hipStream_t,uint16_t> stream_job_counters;
+      std::map<hipStream_t,StreamJobId> stream_job_counters;
 
       /// @brief the mutex protecting access to the device side volatiles
       std::mutex mx_device;

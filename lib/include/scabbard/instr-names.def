@@ -20,6 +20,8 @@
 
 #define SCABBARD_CALLBACK_REGISTER_JOB "scabbard.rtl.register_job"
 #define SCABBARD_CALLBACK_REGISTER_JOB_CALLBACK "scabbard.rtl.register_job_callback"
+#define SCABBARD_CALLBACK_REGISTER_USER_CALLBACK "scabbard.rtl.register_user_callback"
+#define SCABBARD_CALLBACK_USER_CALLBACK_WRAPPER "scabbard.rtl.user_callback_wrapper"
 
 #define SCABBARD_DEVICE_CALLBACK_APPEND_MEM_NAME "scabbard.rtl.device.trace_append$mem"
 #define SCABBARD_DEVICE_CALLBACK_APPEND_ALLOC_NAME "scabbard.rtl.device.trace_append$alloc"

@@ -260,6 +260,7 @@ protected:
   IntegerType* const u64Ty = nullptr;
   /// @brief a handy pointer to the oft used IR Integer Type unsigned 32-bit.
   IntegerType* const u32Ty = nullptr;
+  StructType* const UserCallbackDataWrapperTy = nullptr;
 public:
   IRHelper() = delete;
   IRHelper(Module& M) :
@@ -270,7 +271,11 @@ public:
     LocDataTy(PointerType::get(M.getContext(), 0ull)),
     ExtraDataTy(IntegerType::get(M.getContext(), 64u)),
     u64Ty(IntegerType::get(M.getContext(), 64u)),
-    u32Ty(IntegerType::get(M.getContext(), 64u))
+    u32Ty(IntegerType::get(M.getContext(), 64u)),
+    UserCallbackDataWrapperTy(StructType::create(M.getContext(),
+          std::array<Type*,2u>{PtrTy, PtrTy},
+          "scabbard.instr.userCallbackDataWrapperTy",
+          false))
     {}
 
   friend class MetadataHandler;
@@ -338,6 +343,8 @@ protected:
     const std::string register_job_name = SCABBARD_CALLBACK_REGISTER_JOB;
     llvm::FunctionCallee register_job_callback;
     const std::string register_job_callback_name = SCABBARD_CALLBACK_REGISTER_JOB_CALLBACK;
+    llvm::FunctionCallee register_user_callback;
+    const std::string register_user_callback_name = SCABBARD_CALLBACK_REGISTER_USER_CALLBACK;
     MetadataHandler Metadata;
   } ScabbardRTL;
 
@@ -350,7 +357,7 @@ protected:
   using APIInstrumenterFn_t = std::function<bool(CallInst&,FunctionAnalysisManager&)>;
 
   /// @brief List of {APIFnName, APIHandlerFn} that will proccess the relevant GPU Driver API calls.
-  SmallVector<std::pair<const StringRef,APIInstrumenterFn_t>,21u> APIInstrumenters;
+  SmallVector<std::pair<const StringRef,APIInstrumenterFn_t>,23u> APIInstrumenters;
 
   /// @brief Returns \c false if the function should not be instrumented. \n
   ///        Used by the top level run method to determine if the pass will run on a fn. \n 
@@ -621,6 +628,9 @@ protected:
   bool APIInstr_Unsupported(const CallInst& CI, const StringRef APIName) const;
   bool APIInstr_LaunchKernel(CallInst& CI);
   GetElementPtrInst* expand_param_args_alloc(AllocaInst& alloc) const;
+  GetElementPtrInst* create_or_expand_param_args_alloc(Value* arg) const;
+  Constant* getBestLocIDForUserCallback(CallInst& RegCallbackCI);
+  bool APIInstr_HostCallback(CallInst& CI);
 public:
   ScabbardHostPassHip() = delete;
   ScabbardHostPassHip(Module& M_, const Triple& T_) :
@@ -1233,6 +1243,16 @@ void IScabbardHostPass::registerRTL(Module& M) {
           false
         )
     );
+  ScabbardRTL.register_user_callback = M.getOrInsertFunction(
+      ScabbardRTL.register_user_callback_name,
+      FunctionType::get(
+          u32Ty,
+          std::array<Type*,5ull>{
+              PtrTy, PtrTy, PtrTy, u32Ty, LocDataTy
+            },
+          false
+        )
+    );
 }
 
 inline void IScabbardHostPass::registerGlobalVarsInUnifiedMemory(const Module& M) {
@@ -1742,6 +1762,30 @@ GetElementPtrInst* ScabbardHostPassHip::expand_param_args_alloc(AllocaInst& allo
           );
 }
 
+GetElementPtrInst* ScabbardHostPassHip::create_or_expand_param_args_alloc(Value* ARG) const {
+  GetElementPtrInst* paramPtr = nullptr;
+  if (auto argElmPtr = dyn_cast<GetElementPtrInst>(ARG)) { // case: >=2 function parameter length
+    if (auto argAlloc = dyn_cast<AllocaInst>(argElmPtr->getPointerOperand())) {
+      paramPtr = expand_param_args_alloc(*argAlloc);
+      if (paramPtr != nullptr)
+        argElmPtr->replaceAllUsesWith(paramPtr);
+    } else {
+      errs() << "\n[scabbard.instr.host.amdhip:ERROR] kernel launch user args could not be traced to param args construct allocation\n";
+    }
+  } else if (auto argAlloc = dyn_cast<AllocaInst>(ARG)) { // case: single or zero function parameter length
+    paramPtr = expand_param_args_alloc(*argAlloc);
+  } else {
+    errs() << "\n[scabbard.instr.host.amdhip:DBG] kernel launch user args are not loaded from local frame\n```\n";
+    ARG->print(errs());
+    errs() << "\n```\n\n";
+  }
+  if (paramPtr == nullptr) {
+    errs() << "\n[scabbard.instr.host.amdhip:ERROR] could not instrument kernel call (instrumentation failed)\n";
+  }
+  return paramPtr;
+}
+
+
 bool ScabbardHostPassHip::APIInstr_LaunchKernel(CallInst& CI) {
   // instrument in `scabbard.trace.register_job` before this function and instrument in `scabbard.trace.register_job_callback` after this function call
   auto regFn = CallInst::Create(
@@ -1771,26 +1815,7 @@ bool ScabbardHostPassHip::APIInstr_LaunchKernel(CallInst& CI) {
   regCbFn->setDebugLoc(CI.getDebugLoc()); //might cause issues if in a device stub
   //TODO? modify the type of the last operand (should be a global or function pass)
   // trace back args var and expand it to include the pointer to the DeviceTracker that is returned as the result of `scabbard.trace.register_job` as the last parameter
-  GetElementPtrInst* paramPtr = nullptr;
-  if (auto argElmPtr = dyn_cast<GetElementPtrInst>(CI.getArgOperand(5ull))) { // case: >=2 function parameter length
-    if (auto argAlloc = dyn_cast<AllocaInst>(argElmPtr->getPointerOperand())) {
-      paramPtr = expand_param_args_alloc(*argAlloc);
-      if (paramPtr != nullptr)
-        argElmPtr->replaceAllUsesWith(paramPtr);
-    } else {
-      errs() << "\n[scabbard.instr.host.amdhip:ERROR] kernel launch user args could not be traced to param args construct allocation\n";
-    }
-  } else if (auto argAlloc = dyn_cast<AllocaInst>(CI.getArgOperand(5ull))) { // case: single or zero function parameter length
-    paramPtr = expand_param_args_alloc(*argAlloc);
-  } else {
-    errs() << "\n[scabbard.instr.host.amdhip:DBG] kernel launch user args are not loaded from local frame\n```\n";
-    CI.getArgOperand(5ull)->print(errs());
-    errs() << "\n```\n\n";
-  }
-  if (paramPtr == nullptr) {
-    errs() << "\n[scabbard.instr.host.amdhip:ERROR] could not instrument kernel call (instrumentation failed)\n";
-    return true;
-  }
+  GetElementPtrInst* paramPtr = create_or_expand_param_args_alloc(CI.getArgOperand(5ull));
   auto dtAlloc = new AllocaInst(PtrTy, 0u, "dtPtr", regFn);
   dtAlloc->setDebugLoc(CI.getDebugLoc()); //might cause issues if in a device stub
   paramPtr->insertAfter(regFn);
@@ -1799,6 +1824,30 @@ bool ScabbardHostPassHip::APIInstr_LaunchKernel(CallInst& CI) {
   dtStore->setDebugLoc(CI.getDebugLoc()); //might cause issues if in a device stub
   auto dtParamStore = new StoreInst(dtAlloc, paramPtr, &CI);
   dtParamStore->setDebugLoc(CI.getDebugLoc()); //might cause issues if in a device stub
+  return true;
+}
+
+Constant* ScabbardHostPassHip::getBestLocIDForUserCallback(CallInst& RegisterCallbackCI) {
+  if (const auto* UsrFn = dyn_cast<Function>(RegisterCallbackCI.getArgOperand(1u))) {
+    for (auto& i : instructions(*UsrFn))
+      if (i.getDebugLoc())
+        return ScabbardRTL.Metadata.insert(&i).first;
+  }
+  return ScabbardRTL.Metadata.insert(&RegisterCallbackCI).first;
+}
+
+bool ScabbardHostPassHip::APIInstr_HostCallback(CallInst& CI) {
+  auto regUsrCallbackCI = CallInst::Create(
+          ScabbardRTL.register_user_callback.getFunctionType(),
+          ScabbardRTL.register_user_callback.getCallee(),
+          std::array<Value*,5u>{CI.getArgOperand(0u), CI.getArgOperand(1u), 
+                                CI.getArgOperand(2u), CI.getArgOperand(3u),
+                                getBestLocIDForUserCallback(CI)},
+          (Twine("scabbard.instr.usrcallbackdata.")+CI.getName()).toStringRef(),
+          &CI
+        );
+  CI.replaceAllUsesWith(regUsrCallbackCI);
+  CI.eraseFromParent();
   return true;
 }
 
@@ -1945,7 +1994,15 @@ void ScabbardHostPassHip::registerAPIInstrumenters() {
     {
       "hipExtLaunchKernel",
       [this](CallInst& CI, FunctionAnalysisManager& FAM) -> bool { return APIInstr_LaunchKernel(CI); }
-    }
+    },
+    {
+      "hipStreamAddCallback",
+      [this](CallInst& CI, FunctionAnalysisManager& FAM) -> bool { return APIInstr_HostCallback(CI); }
+    }/* ,
+    {
+      "hipLaunchHostFunc",
+      [this](CallInst& CI, FunctionAnalysisManager& FAM) -> bool { return APIInstr_HostCallback(CI); }
+    } */
   };
   // APIInstrumenters = _APIInstrumenters;
 }

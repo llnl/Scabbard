@@ -88,6 +88,16 @@ namespace scabbard {
     void register_job_callback(void* dt, hipStream_t stream, const void*const SRC_ID)
       asm (SCABBARD_CALLBACK_REGISTER_JOB_CALLBACK);
 
+    /**
+     * @brief Register a user defined job stream callback with the rtl
+     *        it will replace the call to 
+     */
+    __host__
+    hipError_t register_user_callback(hipStream_t stream, const hipStreamCallback_t usrCallbackFn, const void*const usrData,  
+                                      unsigned int flags, const void*const SRC_ID)
+      asm (SCABBARD_CALLBACK_REGISTER_USER_CALLBACK);
+
+
 
     /**
      * @brief register a source file at the requested hash key 
