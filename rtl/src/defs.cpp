@@ -201,10 +201,11 @@ namespace scabbard {
 #   define hipStreamPerThread ((hipStream_t)2u)
 #   endif
 
+  namespace reg {
 
     [[clang::disable_sanitizer_instrumentation, gnu::used, gnu::retain, gnu::noinline]] 
     __host__
-    void* register_job(hipStream_t STREAM)
+    void* job(hipStream_t STREAM)
     {
       if (STREAM == nullptr)  // I think state machine now handles all concerns of this
         STREAM = (hipStream_t) DEFAULT_STREAM_BEHAVIOR();
@@ -230,7 +231,7 @@ namespace scabbard {
 
     [[clang::disable_sanitizer_instrumentation, gnu::used, gnu::retain, gnu::noinline]] 
     __host__
-    void register_job_callback(void* dt_, hipStream_t stream, const void* const SRC_ID)
+    void job_callback(void* dt_, hipStream_t stream, const void* const SRC_ID)
     {
       device::DeviceTracker* dt = (device::DeviceTracker*) dt_;
       auto hipRes = hipStreamAddCallback(stream, scabbard_stream_callback, dt, 0u);
@@ -249,8 +250,8 @@ namespace scabbard {
 
     [[clang::disable_sanitizer_instrumentation, gnu::used, gnu::retain, gnu::noinline]] 
     __host__
-    hipError_t register_user_callback(hipStream_t stream, const hipStreamCallback_t usrCallbackFn, 
-                                     void*const usrData, unsigned int flags, const void* const SRC_ID)
+    hipError_t user_callback(hipStream_t stream, const hipStreamCallback_t usrCallbackFn, 
+                              void*const usrData, unsigned int flags, const void* const SRC_ID)
     {
       struct DataWrapper_t {
         const hipStreamCallback_t usrCallbackFn;
@@ -269,6 +270,32 @@ namespace scabbard {
 
       return hipStreamAddCallback(stream, wrapper, dataWrapper, flags);
     }
+
+    [[clang::disable_sanitizer_instrumentation, gnu::used, gnu::retain, gnu::noinline]] 
+    __host__
+    hipError_t user_hostFn_launch(hipStream_t stream, const hipHostFn_t usrCallbackFn, 
+                                void*const usrData, const void* const SRC_ID)
+    {
+      struct DataWrapper_t {
+        const hipStream_t stream;
+        const hipHostFn_t usrCallbackFn;
+        void* const usrData;
+        const void* const SRC_ID;
+      };
+      hipHostFn_t wrapper = [](void* data) -> void {
+        DataWrapper_t* dataWrapper = (DataWrapper_t*)data;
+        host::trace_append$mem((InstrData)(InstrData::ON_HOST | InstrData::SYNC_EVENT),
+                                dataWrapper->stream,
+                                dataWrapper->SRC_ID);
+        dataWrapper->usrCallbackFn(dataWrapper->usrData);
+        delete dataWrapper;
+      };
+      DataWrapper_t* dataWrapper = new DataWrapper_t{stream, usrCallbackFn, usrData, SRC_ID};
+
+      return hipLaunchHostFunc(stream, wrapper, dataWrapper);
+    }
+
+    } //?namespace reg
 
     
     

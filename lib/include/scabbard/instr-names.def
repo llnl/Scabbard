@@ -18,19 +18,19 @@
 #define SCABBARD_CALLBACK_INIT_NAME "scabbard.rtl.scabbard_init"
 #define SCABBARD_CALLBACK_CLOSE_NAME "scabbard.rtl.scabbard_close"
 
-#define SCABBARD_CALLBACK_REGISTER_JOB "scabbard.rtl.register_job"
-#define SCABBARD_CALLBACK_REGISTER_JOB_CALLBACK "scabbard.rtl.register_job_callback"
-#define SCABBARD_CALLBACK_REGISTER_USER_CALLBACK "scabbard.rtl.register_user_callback"
-#define SCABBARD_CALLBACK_USER_CALLBACK_WRAPPER "scabbard.rtl.user_callback_wrapper"
+#define SCABBARD_CALLBACK_REGISTER_JOB "scabbard.rtl.register.job"
+#define SCABBARD_CALLBACK_REGISTER_JOB_CALLBACK "scabbard.rtl.register.job_callback"
+#define SCABBARD_CALLBACK_REGISTER_USER_CALLBACK "scabbard.rtl.register.user_callback"
+#define SCABBARD_CALLBACK_REGISTER_USER_HOST_FN_LAUNCH "scabbard.rtl.register.user_hostFn_launch"
 
-#define SCABBARD_DEVICE_CALLBACK_APPEND_MEM_NAME "scabbard.rtl.device.trace_append$mem"
-#define SCABBARD_DEVICE_CALLBACK_APPEND_ALLOC_NAME "scabbard.rtl.device.trace_append$alloc"
+#define SCABBARD_DEVICE_CALLBACK_APPEND_MEM_NAME "scabbard.rtl.device.trace_append"
+#define SCABBARD_DEVICE_CALLBACK_APPEND_ALLOC_NAME "scabbard.rtl.device.trace_append$ext"
 
 
-#define SCABBARD_HOST_CALLBACK_APPEND_MEM_NAME "scabbard.rtl.host.trace_append$mem"
-#define SCABBARD_HOST_CALLBACK_APPEND_MEM_COND_NAME "scabbard.rtl.host.trace_append$mem$cond"
-#define SCABBARD_HOST_CALLBACK_APPEND_ALLOC_NAME "scabbard.rtl.host.trace_append$alloc"
-#define SCABBARD_HOST_CALLBACK_APPEND_ALLOC_COND_NAME "scabbard.rtl.host.trace_append$alloc$cond"
+#define SCABBARD_HOST_CALLBACK_APPEND_MEM_NAME "scabbard.rtl.host.trace_append"
+#define SCABBARD_HOST_CALLBACK_APPEND_MEM_COND_NAME "scabbard.rtl.host.trace_append$cond"
+#define SCABBARD_HOST_CALLBACK_APPEND_ALLOC_NAME "scabbard.rtl.host.trace_append$ext"
+#define SCABBARD_HOST_CALLBACK_APPEND_ALLOC_COND_NAME "scabbard.rtl.host.trace_append$ext$cond"
 
 #define SCABBARD_DEVICE_DUMMY_FUNC_NAME "scabbard.rtl.device.dummyFunc"
 

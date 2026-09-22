@@ -345,6 +345,8 @@ protected:
     const std::string register_job_callback_name = SCABBARD_CALLBACK_REGISTER_JOB_CALLBACK;
     llvm::FunctionCallee register_user_callback;
     const std::string register_user_callback_name = SCABBARD_CALLBACK_REGISTER_USER_CALLBACK;
+    llvm::FunctionCallee register_user_hostFn_launch;
+    const std::string register_user_hostFn_launch_name = SCABBARD_CALLBACK_REGISTER_USER_HOST_FN_LAUNCH;
     MetadataHandler Metadata;
   } ScabbardRTL;
 
@@ -631,6 +633,7 @@ protected:
   GetElementPtrInst* create_or_expand_param_args_alloc(Value* arg) const;
   Constant* getBestLocIDForUserCallback(CallInst& RegCallbackCI);
   bool APIInstr_HostCallback(CallInst& CI);
+  bool APIInstr_HostFnLaunch(CallInst& CI);
 public:
   ScabbardHostPassHip() = delete;
   ScabbardHostPassHip(Module& M_, const Triple& T_) :
@@ -1253,6 +1256,16 @@ void IScabbardHostPass::registerRTL(Module& M) {
           false
         )
     );
+  ScabbardRTL.register_user_hostFn_launch = M.getOrInsertFunction(
+      ScabbardRTL.register_user_hostFn_launch_name,
+      FunctionType::get(
+          u32Ty,
+          std::array<Type*,4ull>{
+              PtrTy, PtrTy, PtrTy, LocDataTy
+            },
+          false
+        )
+    );
 }
 
 inline void IScabbardHostPass::registerGlobalVarsInUnifiedMemory(const Module& M) {
@@ -1843,7 +1856,23 @@ bool ScabbardHostPassHip::APIInstr_HostCallback(CallInst& CI) {
           std::array<Value*,5u>{CI.getArgOperand(0u), CI.getArgOperand(1u), 
                                 CI.getArgOperand(2u), CI.getArgOperand(3u),
                                 getBestLocIDForUserCallback(CI)},
-          Twine("scabbard.instr.usrcallbackdata.")+CI.getName(),
+          Twine("scabbard.instr.usrcallbackdata.0")+CI.getName(),
+          &CI
+        );
+  CI.replaceAllUsesWith(regUsrCallbackCI);
+  CI.eraseFromParent();
+  return true;
+}
+
+bool ScabbardHostPassHip::APIInstr_HostFnLaunch(CallInst& CI) {
+  auto regUsrCallbackCI = CallInst::Create(
+          ScabbardRTL.register_user_hostFn_launch.getFunctionType(),
+          ScabbardRTL.register_user_hostFn_launch.getCallee(),
+          std::array<Value*,4u>{CI.getArgOperand(0u),
+                                CI.getArgOperand(1u), 
+                                CI.getArgOperand(2u),
+                                getBestLocIDForUserCallback(CI)},
+          Twine("scabbard.instr.usrHostFnLaunch.0")+CI.getName(),
           &CI
         );
   CI.replaceAllUsesWith(regUsrCallbackCI);
@@ -1998,11 +2027,11 @@ void ScabbardHostPassHip::registerAPIInstrumenters() {
     {
       "hipStreamAddCallback",
       [this](CallInst& CI, FunctionAnalysisManager& FAM) -> bool { return APIInstr_HostCallback(CI); }
-    }/* ,
+    },
     {
       "hipLaunchHostFunc",
-      [this](CallInst& CI, FunctionAnalysisManager& FAM) -> bool { return APIInstr_HostCallback(CI); }
-    } */
+      [this](CallInst& CI, FunctionAnalysisManager& FAM) -> bool { return APIInstr_HostFnLaunch(CI); }
+    }
   };
   // APIInstrumenters = _APIInstrumenters;
 }
