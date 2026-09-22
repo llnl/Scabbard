@@ -58,9 +58,10 @@ namespace rtl {
     using ResultList_t = std::map<const StateMachine::Result, LTime_t>;
 
     struct Zone_t {
-      enum State { INIT_ZONE, HOST_CONTROL, DEVICE_CONTROL };
+      enum State { INITIALIZATION_PHASE, HOST_CONTROL, DEVICE_CONTROL };
       State state;
       LTime_t trans_time;
+      static Zone_t DEFAULT_ZONE;
     };
 
     using ZoneTable_t = DualKeyTable<HostThreadId, StreamId, Zone_t>;
@@ -70,7 +71,7 @@ namespace rtl {
     Trace_t trace;
     MemTable_t mem;
     AllocTable_t allocs;
-    Zone_t default_stream_zone = {INIT_ZONE, 0ull};
+    Zone_t default_stream_zone = Zone_t::DEFAULT_ZONE;
     PerThreadZoneList_t per_thread_zones;
     ZoneTable_t zones;
     ResultList_t results;

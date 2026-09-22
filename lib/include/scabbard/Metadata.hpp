@@ -23,13 +23,13 @@ namespace scabbard {
   private:
     const std::size_t lazy_id = 0ul;
   public:
-    char* const srcFile;
-    char* const fnName;
+    const char* const srcFile;
+    const char* const fnName;
     const std::size_t line;
     const std::size_t col;
 
     struct Hash {
-      inline std::uint64_t operator () (const SrcMetadata* data) {
+      inline std::uint64_t operator () (const SrcMetadata* const & data) const {
         uint64_t hash = 14695981039346656037ULL; // FNV offset basis
         uint64_t prime = 1099511628211ULL;       // FNV prime
 
@@ -52,11 +52,13 @@ namespace scabbard {
         }
         return hash;
       }
-      inline bool operator () (const SrcMetadata* l, const SrcMetadata* r) {
+    };
+    struct Equal {
+      inline bool operator () (const SrcMetadata* const & l, const SrcMetadata* const & r) const {
         return l->line == r->line && l->col == r->col && std::strcmp(l->srcFile,r->srcFile);
       }
     };
-    using SeenList_t = std::unordered_map<const SrcMetadata*,const std::size_t,SrcMetadata::Hash,SrcMetadata::Hash>;
+    using SeenList_t = std::unordered_map<const SrcMetadata*,const std::size_t,SrcMetadata::Hash,SrcMetadata::Equal>;
 
     static std::size_t next_id;
     static SeenList_t seen;
@@ -87,6 +89,10 @@ namespace scabbard {
     inline bool operator >= (const SrcMetadata& other) const {
       return get_id() >= other.get_id();
     }
+
+    SrcMetadata(const char* const srcFile_, const char* const fnName_, std::size_t line_, std::size_t col_)
+      : lazy_id(next_id++), srcFile(srcFile_), fnName(fnName_), line(line_), col(col_)
+    {}
 
     // NLOHMANN_DEFINE_TYPE_INTRUSIVE(SrcMetadata, srcID, srcFile, line, col, modType) //TODO: remove
   };

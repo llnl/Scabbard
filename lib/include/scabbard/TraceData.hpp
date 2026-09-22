@@ -91,10 +91,10 @@ struct jobId_t {
   {
     return hash_stream_ptr((const std::uintptr_t)STREAM); 
   }
-  [[clang::disable_sanitizer_instrumentation, gnu::flatten, gnu::always_inline]] 
-  __host__
-  static inline StreamId hash_stream_ptr(const HostThreadId HOST_THREAD)
-  { return hash_stream_ptr((std::uintptr_t)HOST_THREAD); }
+  // [[clang::disable_sanitizer_instrumentation, gnu::flatten, gnu::always_inline]] 
+  // __host__
+  // static inline StreamId hash_stream_ptr(const HostThreadId HOST_THREAD)
+  // { return hash_stream_ptr((std::uintptr_t)HOST_THREAD); }
   __host__
   static inline StreamId hash_stream_ptr(const std::thread::id& HOST_THREAD)
   { return hash_stream_ptr((std::uintptr_t)std::hash<std::thread::id>{}(HOST_THREAD)); }

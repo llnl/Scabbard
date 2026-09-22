@@ -43,6 +43,7 @@ inline void StateMachine::sync_to_zone<StateMachine::Zone_t::HOST_CONTROL>(const
 template<>
 inline void StateMachine::sync_to_zone<StateMachine::Zone_t::DEVICE_CONTROL>(const StateMachine::DataPtr_t& td);
 
+StateMachine::Zone_t StateMachine::Zone_t::DEFAULT_ZONE = {StateMachine::Zone_t::INITIALIZATION_PHASE, 0ull};
 
 void StateMachine::run(std::uint64_t remainder_quotient)
 {
@@ -205,7 +206,7 @@ void StateMachine::run(std::uint64_t remainder_quotient)
 void StateMachine::reset()
 {
   mem.clear();
-  default_stream_zone = {INIT_ZONE, 0ull};
+  default_stream_zone = Zone_t::DEFAULT_ZONE;
   per_thread_zones.clear();
   zones.clear();
 }
@@ -323,7 +324,7 @@ inline const StateMachine::Zone_t& StateMachine::get_host_zone(const StateMachin
   if (i != per_thread_zones.end())
     return i->second;
   
-  return Zone_t{Zone_t::INIT_ZONE, 0u};
+  return Zone_t::DEFAULT_ZONE;
 }
 
 inline const StateMachine::Zone_t& StateMachine::get_device_zone(const StateMachine::DataPtr_t& DE) const
@@ -339,7 +340,8 @@ inline const StateMachine::Zone_t& StateMachine::get_device_zone(const StateMach
     return _ptz->second; // case: default stream job
 
   // hard method: look for last transition time that fits this kernel launch
-  Zone_t& most_recent = {Zone_t::INIT_ZONE, 0u};
+  Zone_t default_zone = {Zone_t::INITIALIZATION_PHASE, 0u};
+  Zone_t& most_recent = Zone_t::DEFAULT_ZONE;
   for (auto& row : zones.findByKey2(stream))
     if (row.data.state == Zone_t::DEVICE_CONTROL
          && row.data.trans_time > most_recent.trans_time)
@@ -404,7 +406,7 @@ StateMachine::Result::Status StateMachine::check_race_HW(const StateMachine::Dat
   if (o->data & ON_HOST) 
     return Result::GOOD;
   
-  Zone_t zone = get_zone(HR, o);
+  Zone_t zone = get_zone(HW, o);
 
   if (zone.state != Zone_t::DEVICE_CONTROL  // not a critical zone
       || zone.trans_time > o->time_stamp)   // OR the previous device event is stale/out-of-date
@@ -505,8 +507,8 @@ inline std::ostream& operator << (std::ostream& out, const StateMachine::Result:
       break;
     case StateMachine::Result::Status::POS_RACE_DR_HW:
     case StateMachine::Result::Status::POS_RACE_HR_DW:
-    case: StateMachine::Result::Status::UNPROTECTED_HR:
-    case: StateMachine::Result::Status::UNPROTECTED_HW:
+    case StateMachine::Result::Status::UNPROTECTED_HR:
+    case StateMachine::Result::Status::UNPROTECTED_HW:
       return (out << "POSSIBLE Data Race Found");
     case StateMachine::Result::Status::GOOD:
       return (out << "NO data races detected");

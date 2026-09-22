@@ -250,12 +250,12 @@ namespace scabbard {
     [[clang::disable_sanitizer_instrumentation, gnu::used, gnu::retain, gnu::noinline]] 
     __host__
     hipError_t register_user_callback(hipStream_t stream, const hipStreamCallback_t usrCallbackFn, 
-                                const void*const usrData, unsigned int flags, const void* const SRC_ID)
+                                     void*const usrData, unsigned int flags, const void* const SRC_ID)
     {
       struct DataWrapper_t {
-        hipStreamCallback_t usrCallbackFn = usrCallbackFn;
-        void* usrData = usrData;
-        const void* const SRC_ID = SRC_ID;
+        const hipStreamCallback_t usrCallbackFn;
+        void* const usrData;
+        const void* const SRC_ID;
       };
       hipStreamCallback_t wrapper = [](hipStream_t _stream, hipError_t _err, void* data) -> void {
         DataWrapper_t* dataWrapper = (DataWrapper_t*)data;
@@ -265,7 +265,7 @@ namespace scabbard {
         dataWrapper->usrCallbackFn(_stream, _err, dataWrapper->usrData);
         delete dataWrapper;
       };
-      DataWrapper_t* dataWrapper = new DataWrapper_t();
+      DataWrapper_t* dataWrapper = new DataWrapper_t{usrCallbackFn, usrData, SRC_ID};
 
       return hipStreamAddCallback(stream, wrapper, dataWrapper, flags);
     }

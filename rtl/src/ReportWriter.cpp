@@ -95,7 +95,7 @@ inline ostream& operator << (ostream& out, const SrcMetadata& data) {
   return out;
 }
 inline ostream& operator << (ostream& out, const HostThreadId& threadId) {
-  out << "0x" << std::hex << std::hash<std::thread::id>()(threadId) << std::dec;
+  out << "0x" << std::hex << threadId << std::dec;
   return out;
 }
 inline ostream& operator << (ostream& out, const jobId_t& jobId) {

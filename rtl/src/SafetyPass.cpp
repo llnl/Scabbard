@@ -30,18 +30,18 @@ struct SafetyPass : llvm::PassInfoMixin<SafetyPass> {
       for (llvm::Function& F : M) {
         if (F.isDeclaration())
           continue;
-        if (not F.hasFnAttribute(Attribute::AttrKind::DisableSanitizerInstrumentation)
-          F.addFnAttr(Attribute::AttrKind::DisableSanitizerInstrumentation);
-        if (not F.hasFnAttribute(Attribute::AttrKind::NoSanitizeCoverage)
-          F.addFnAttr(Attribute::AttrKind::NoSanitizeCoverage);
+        if (not F.hasFnAttribute(llvm::Attribute::AttrKind::DisableSanitizerInstrumentation))
+          F.addFnAttr(llvm::Attribute::AttrKind::DisableSanitizerInstrumentation);
+        if (not F.hasFnAttribute(llvm::Attribute::AttrKind::NoSanitizeCoverage))
+          F.addFnAttr(llvm::Attribute::AttrKind::NoSanitizeCoverage);
       }
-      for (GlobalVariable& GV : M.globals()) {
+      for (llvm::GlobalVariable& GV : M.globals()) {
         if (GV.isDeclaration())
           continue;
-        if (not GV.hasAttribute(Attribute::AttrKind::DisableSanitizerInstrumentation)
-          GV.addAttribute(Attribute::AttrKind::DisableSanitizerInstrumentation);
-        if (not GV.hasAttribute(Attribute::AttrKind::NoSanitizeCoverage)
-          GV.addAttribute(Attribute::AttrKind::NoSanitizeCoverage);
+        if (not GV.hasAttribute(llvm::Attribute::AttrKind::DisableSanitizerInstrumentation))
+          GV.addAttribute(llvm::Attribute::AttrKind::DisableSanitizerInstrumentation);
+        if (not GV.hasAttribute(llvm::Attribute::AttrKind::NoSanitizeCoverage))
+          GV.addAttribute(llvm::Attribute::AttrKind::NoSanitizeCoverage);
       }
       return llvm::PreservedAnalyses::all();
     }

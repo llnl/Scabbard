@@ -93,7 +93,7 @@ namespace scabbard {
      *        it will replace the call to 
      */
     __host__
-    hipError_t register_user_callback(hipStream_t stream, const hipStreamCallback_t usrCallbackFn, const void*const usrData,  
+    hipError_t register_user_callback(hipStream_t stream, const hipStreamCallback_t usrCallbackFn, void*const usrData,  
                                       unsigned int flags, const void*const SRC_ID)
       asm (SCABBARD_CALLBACK_REGISTER_USER_CALLBACK);
 

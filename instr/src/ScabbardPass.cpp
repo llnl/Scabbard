@@ -1843,7 +1843,7 @@ bool ScabbardHostPassHip::APIInstr_HostCallback(CallInst& CI) {
           std::array<Value*,5u>{CI.getArgOperand(0u), CI.getArgOperand(1u), 
                                 CI.getArgOperand(2u), CI.getArgOperand(3u),
                                 getBestLocIDForUserCallback(CI)},
-          (Twine("scabbard.instr.usrcallbackdata.")+CI.getName()).toStringRef(),
+          Twine("scabbard.instr.usrcallbackdata.")+CI.getName(),
           &CI
         );
   CI.replaceAllUsesWith(regUsrCallbackCI);
@@ -2269,7 +2269,7 @@ IScabbardDevicePass::PtrOrigin IScabbardDevicePass::getPtrOrigin(LoopInfo& LI, V
     PtrOrigin ObjPO = HasAllocas ? LOCAL : UNKNOWN_HEAP;
     switch (Obj->getValueID()) {
       case Value::GlobalVariableVal:
-        if (IsGlobalVarOnIgnoreList(GV))
+        if (IsGlobalVarOnIgnoreList((GlobalVariable*)Obj))
           break; // maybe set to never and return instead?
         ObjPO = DEVICE_HEAP;
         break;
