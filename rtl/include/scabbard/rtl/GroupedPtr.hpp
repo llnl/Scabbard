@@ -135,8 +135,8 @@ public:
 
   T& operator*() { return slot->data; }
   T* operator->() { return &slot->data; }
-  T* get() { return (slot && slot->ref_count) ? &slot->data : nullptr; }
-  T* blind_get() { return slot ? &slot->data : nullptr; }
+  T* get() { return (slot && slot->ref_count) ? &(slot->data) : nullptr; }
+  T* blind_get() { return slot ? &(slot->data) : nullptr; }
   T* unsafe_get() { return (T*)slot; }
   const T& operator*() const { return slot->data; }
   const T* operator->() const { return &slot->data; }

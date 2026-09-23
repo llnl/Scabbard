@@ -142,24 +142,58 @@ ostream& operator << (ostream& out, const InstrData& data) {
 }
 
 inline ostream& operator << (ostream& out, const TraceData& td) {
+  const InstrData FILTER = ON_CPU | ON_GPU | _OPT_DATA_USED;
+  switch (td.data & FILTER) {
+    case ON_CPU:
+      out << '{' << indent(2u) << nl()
+          << "time: " << td.time_stamp << nl()
+          << "device: HOST / CPU" << nl()
+          << "address: 0x" << std::hex << td.ptr << std::dec << nl() 
+          << "srcLoc: " << *td.metadata << nl()
+          << "metadata: [" << td.data << ']' << nl()
+          << "threadID: " << td.threadId.host
+          << dedent(2u) << nl() << '}';
+      break;
+    case ON_CPU | _OPT_DATA_USED:
+      out << '{' << indent(2u) << nl()
+          << "time: " << td.time_stamp << nl()
+          << "device: HOST / CPU" << nl()
+          << "address: [0x" << std::hex << td.ptr << ", " 
+                       "0x" << td.ptr + td._OPT_DATA << std::dec << ')' << nl()
+          << "size: " << td._OPT_DATA << nl()
+          << "srcLoc: " << *td.metadata << nl()
+          << "metadata: [" << td.data << ']' << nl()
+          << "threadID: " << td.threadId.host
+          << dedent(2u) << nl() << '}';
+      break;
+    case ON_GPU:
+      out << '{' << indent(2u) << nl()
+          << "time: " << td.time_stamp << nl()
+          << "device: DEVICE / GPU" << nl()
+          << "address: 0x" << std::hex << td.ptr << std::dec << nl() 
+          << "srcLoc: " << *td.metadata << nl() //might cause issues with memory accessibility
+          << "metadata: [" << td.data << ']' << nl()
+          << "threadID: " << td.threadId.device
+          << dedent(2u) << nl() << '}';
+      break;
+    case ON_GPU | _OPT_DATA_USED:
+      out << '{' << indent(2u) << nl()
+          << "time: " << td.time_stamp << nl()
+          << "device: DEVICE / GPU" << nl()
+          << "address: [0x" << std::hex << td.ptr << ", " 
+                       "0x" << td.ptr + td._OPT_DATA << std::dec << ')' << nl()
+          << "size: " << td._OPT_DATA << nl()
+          << "srcLoc: " << *td.metadata << nl() //might cause issues with memory accessibility
+          << "metadata: [" << td.data << ']' << nl()
+          << "threadID: " << td.threadId.device
+          << dedent(2u) << nl() << '}';
+      break;
+    default:
+  } 
   if (td.data & ON_CPU) {
-    out << '{' << indent(2u) << nl()
-        << "time: " << td.time_stamp << nl()
-        << "device: HOST / CPU" << nl()
-        << "address: 0x" << std::hex << td.ptr << std::dec << nl() 
-        << "srcLoc: " << *td.metadata << nl()
-        << "metadata: [" << td.data << ']' << nl()
-        << "threadID: " << td.threadId.host
-        << dedent(2u) << nl() << '}';
+    
   } else {
-    out << '{' << indent(2u) << nl()
-        << "time: " << td.time_stamp << nl()
-        << "device: DEVICE / GPU" << nl()
-        << "address: 0x" << std::hex << td.ptr << std::dec << nl() 
-        << "srcLoc: " << *td.metadata << nl() //might cause issues with memory accessibility
-        << "metadata: [" << td.data << ']' << nl()
-        << "threadID: " << td.threadId.device
-        << dedent(2u) << nl() << '}';
+    
   }
   return out;
 }

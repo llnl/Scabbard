@@ -40,13 +40,21 @@ struct SetLogType {
 };
 struct ShowLabel {};
 struct HideLabel {};
+template<typename T_t, typename F_t>
+struct CondChoice {
+  bool cond;
+  const T_t& valTrue;
+  const F_t& valFalse;
+  CondChoice(bool cond_, const T_t& valTrue_, const F_t& valFalse_)
+    : cond(cond_), valTrue(valTrue_), valFalse(valFalse_) {}
+};
 
 /// @brief Provide a simple singleton interface that allows replacing the value
 ///        in global space after initialization without adding too much extra overhead.
 class ostream {
 
   std::ostream* out = nullptr;
-  bool print_label = true;
+  bool print_label;
   std::string label = "scabbard.rtl";
   std::string type = "INFO";
   std::size_t _indent = 0u;
@@ -55,8 +63,8 @@ public:
 
   ostream() = default;
 
-  ostream(std::ostream& out_) : out(&out_) {}
-  ostream(std::ostream* out_) : out( out_) {}
+  ostream(std::ostream& out_) : out(&out_) { print_label = do_print_label(); }
+  ostream(std::ostream* out_) : out( out_) { print_label = do_print_label(); }
 
   ~ostream() {
     if (not out || is_stdio())
@@ -167,6 +175,12 @@ public:
   }
   inline ostream& operator << (scabbard::rtl::HideLabel&&) {
     return hideLabel();
+  }
+  template<typename T_t, typename F_t>
+  inline ostream& operator << (scabbard::rtl::CondChoice<T_t,F_t>&& cond) {
+    if (cond.cond)
+      return (*this << cond.valTrue);
+    return (*this << cond.valFalse);
   }
   // template<>
   // inline ostream& operator << (std::ostream& (*manipulator)(std::ostream&)) {
