@@ -146,7 +146,7 @@ namespace scabbard {
     void Runtime::append(TraceData&& tData)
     {
       mx_host.lock();
-      hostQ.push(std::move(GPF->create(tData)));
+      hostQ.push(std::move(GPF->create(std::move(tData))));
       mx_host.unlock();
     }
 

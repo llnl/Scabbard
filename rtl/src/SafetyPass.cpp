@@ -17,18 +17,32 @@
 #include <llvm/IR/PassManager.h>
 #include <llvm/IR/Module.h>
 #include <llvm/IR/Function.h>
+#include <llvm/IR/Attributes.h>
 
 namespace /* anon */ {
 
-/// Add the \c disable_sanitizer_instrumentation attribute to all
+/// Add the `disable_sanitizer_instrumentation` attribute to all
 ///  functions in a module so that they don't get instrumented 
 ///  by a sanitizer instrumenter like asan, tsan or scabbard.
 struct SafetyPass : llvm::PassInfoMixin<SafetyPass> {
     SafetyPass() = default;
     llvm::PreservedAnalyses run(llvm::Module& M, llvm::ModuleAnalysisManager& FAM) {
-      for (llvm::Function& F : M)
-        if (not F.hasFnAttribute("disable_sanitizer_instrumentation"))
-          F.addFnAttr("disable_sanitizer_instrumentation");
+      for (llvm::Function& F : M) {
+        if (F.isDeclaration())
+          continue;
+        if (not F.hasFnAttribute(llvm::Attribute::AttrKind::DisableSanitizerInstrumentation))
+          F.addFnAttr(llvm::Attribute::AttrKind::DisableSanitizerInstrumentation);
+        if (not F.hasFnAttribute(llvm::Attribute::AttrKind::NoSanitizeCoverage))
+          F.addFnAttr(llvm::Attribute::AttrKind::NoSanitizeCoverage);
+      }
+      for (llvm::GlobalVariable& GV : M.globals()) {
+        if (GV.isDeclaration())
+          continue;
+        if (not GV.hasAttribute(llvm::Attribute::AttrKind::DisableSanitizerInstrumentation))
+          GV.addAttribute(llvm::Attribute::AttrKind::DisableSanitizerInstrumentation);
+        if (not GV.hasAttribute(llvm::Attribute::AttrKind::NoSanitizeCoverage))
+          GV.addAttribute(llvm::Attribute::AttrKind::NoSanitizeCoverage);
+      }
       return llvm::PreservedAnalyses::all();
     }
     static bool isRequired() { return true; }

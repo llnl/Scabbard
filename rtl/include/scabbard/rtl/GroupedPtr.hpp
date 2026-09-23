@@ -251,7 +251,7 @@ public:
   }
 
   /// @brief Free/delete all memory allocated by this factory \n
-  ///        \em WARNING: all \c GroupedPtr 's still around are now invalid.
+  ///        \em WARNING: all `GroupedPtr` 's still around are now invalid.
   void free_all() 
   {
     if (root_chunk)

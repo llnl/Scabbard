@@ -19,7 +19,7 @@ namespace scabbard {
 
    /**
     * @brief ENUM BYTE MAP\n
-    *   \code{.txt}
+    *   ```.txt
     *     0b_0000_0000_0000_0000
     *        ^^^^ ^^^^ ^^^^ ^^^^
     *        |||| |||| |||| |||L Runtime Conditional
@@ -38,7 +38,7 @@ namespace scabbard {
     *        ||L Ptr is in DEVICE HEAP memory
     *        |L Ptr is in (registered) HOST HEAP memory
     *        L Operation performed ASYNC
-    *   \endcode
+    *   ```
     */
   enum InstrData : std::uint16_t {
     // This inst should never be instrumented (no chance of being of interest in traces)

@@ -28,14 +28,14 @@ namespace device {
   /// @brief A object to pass into a device kernel to bring in relevant information about 
   ///        the stream, job, and logical time.  As well as implement a cycle buffer to 
   ///        store the rtl data from the kernel job it belongs too. \n
-  ///        It is expected to allocate the memory for this object using \c hipMallocManaged()
+  ///        It is expected to allocate the memory for this object using `hipMallocManaged()`
   ///        The size of the allocation should be retrieved using the static
-  ///        fn \c DeviceTracker::getAllocSizeBytes() so that additional 
+  ///        fn `DeviceTracker::getAllocSizeBytes()` so that additional 
   ///        memory for the actual cycle buffer can be in the same allocation.
-  ///        To construct a \c DeviceTracker object it is expected to use C++'s 
-  ///        "in place" \c new interface with the memory allocated with \c hipMallocManaged()
+  ///        To construct a `DeviceTracker` object it is expected to use C++'s 
+  ///        "in place" `new` interface with the memory allocated with `hipMallocManaged()`
   ///        as follows `new (managedPtr) DeviceTracker(...)`.
-  ///        \c DeviceTracker 's should be free'ed using \c hipFree() .
+  ///        `DeviceTracker` 's should be free'ed using `hipFree()` .
   struct DeviceTracker {
     static std::size_t BUFFER_SIZE;
     const jobId_t JOB_ID;

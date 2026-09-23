@@ -16,12 +16,12 @@
 namespace scabbard {
   namespace rtl {
 
-    /// @brief Scabbard RTL's version of \c std::cout
+    /// @brief Scabbard RTL's version of `std::cout`
     ///        Used so that env variables can redirect
     ///        the output to go to a separate place from the
     ///        output form the instrumented program--if desired.
     extern scabbard::rtl::ostream SCAB_SOUT;
-    /// @brief Scabbard RTL's version of \c std::cerr .
+    /// @brief Scabbard RTL's version of `std::cerr` .
     ///        Used so that env variables can redirect
     ///        the output to go to a separate place from the
     ///        output form the instrumented program--if desired.

@@ -1,0 +1,187 @@
+flowchart TB
+  START@{ shape: circle, label: "start" }
+  __NEXT@{ shape: circle, label: " " }
+  _NEXT("$$\\, I_n \\longrightarrow$$")
+  %% HOST_SPLIT((" "))
+  subgraph Host
+    HR(["$$HR\left(ptr,t\right)$$"])
+    HRB(["$$HR\prime\left(ptr,t,l\right)$$"])
+    HARW(["$$HARW\left(ptr,t\right)$$"])
+    HRWB(["$$HRW\prime\left(ptr,t,l\right)$$"])
+    HRWB_(["$$HRW\prime_{async}\left(ptr,t,s_{id},l\right)$$"])
+    HW(["$$HW\left(ptr,t\right)$$"])
+    HWA(["$$HWA\left(ptr,t\right)$$"])
+    HWB(["$$HW\prime\left(ptr,t,l\right)$$"])
+  end
+  subgraph Device
+    DR(["$$DR\left(ptr,t,s_{id}\right)$$"])
+    DARW(["$$DARW\left(ptr,t,s_{id}\right)$$"]) 
+    DRB(["$$DR\prime\left(ptr,ts_{id},l\right)$$"])
+    DW(["$$DW\left(ptr,t,s_{id}\right)$$"])
+    DWA(["$$DWA\left(ptr,t,s_{id}\right)$$"])
+    DWB(["$$DW\prime\left(ptr,t,s_{id},l\right)$$"])
+    DRWB(["$$DRW\prime\left(ptr,t,s_{id},l\right)$$"])
+  end
+  subgraph Driver
+    S(["$$S\left(t,s_{id}\right)$$"])
+    L(["$$L\left(t,s_{id}\right)$$"])
+    M(["$$M\left(ptr,t,l\right)$$"])
+    M_(["$$M_{async}\left(ptr,t,s_{id},l\right)$$"])
+    F(["$$F\left(ptr,t\right)$$"])
+  end
+  subgraph Stream
+    SET_SYNC["$$S_{s_{id}}\leftarrow t$$"]
+    CLEAR_LAUNCH["$$L_{s_{id}}\leftarrow\empty$$"]
+    SET_LAUNCH["$$S_{s_{id}}\leftarrow\empty$$"]
+    CLEAR_SYNC["$$L_{s_{id}}\leftarrow t$$"]
+  end
+  STREAM_JOIN@{ shape: circle, label: " " }
+  subgraph Memory
+    MALLOC["$$A_{ptr}\leftarrow l$$"]
+    FREE_0["$$A_{ptr}\rightarrow l$$"]
+    FREE_1["$$M_{ptr\prime}\leftarrow\empty \,\,\forall ptr\prime \in \left[ptr,\, ptr+l\right)$$"]
+    FREE_2["$$A_{ptr}\leftarrow\empty$$"]
+  end
+  MEM_JOIN((" "))
+  DRIVER_JOIN((" "))
+  subgraph "Host Read"
+    HR_IFM{{"$$\exists M_{ptr}$$"}}
+    HR_IFMW{{"$$M_{ptr} \rightarrow DW\_\left(ptr,t_w,s_{id},...\right)$$"}}
+    HR_IFT{{"$$t_w\leq S_{s_{id}}\lt t$$"}}
+    HR_S2["$$M_{ptr}\leftarrow HR\_\left(ptr,t,...\right)$$"]
+    HR_S["$$M_{ptr}\leftarrow HR\_\left(ptr,t,...\right)$$"]
+  end
+  HR_JOIN((" "))
+  subgraph "Host Write"
+    HW_IFM{{"$$\exists M_{ptr}\rightarrow DR\_\left(ptr,t_r,s_{id},...\right)$$"}}
+    HW_S["$$M_{ptr}\leftarrow HW\_\left(ptr,t,...\right)$$"]
+    HW_IFT{{"$$t\lt L_{s_{id}}\leq t_r$$"}}
+    HW_S2["$$M_{ptr}\leftarrow HW\_\left(ptr,t,...\right)$$"]
+  end
+  HW_JOIN((" "))
+  HOST_JOIN((" "))
+  subgraph "Device Read"
+    DR_IFM{{"$$\exists M_{ptr}$$"}}
+    DR_IFMW{{"$$M_{ptr} \rightarrow HW\_\left(ptr,t_w,...\right)$$"}}
+    DR_IFT{{"$$t_w\leq L_{s_{id}}\lt t$$"}}
+    DR_S2["$$M_{ptr}\leftarrow DR\_\left(ptr,t,...\right)$$"]
+    DR_S["$$M_{ptr}\leftarrow DR\_\left(ptr,t,...\right)$$"]
+  end
+  DR_JOIN((" "))
+  subgraph "Device Write"
+    DW_IFM{{"$$\exists M_{ptr}\rightarrow HR\_\left(ptr,t_r,...\right)$$"}}
+    DW_S["$$M_{ptr}\leftarrow DW\_\left(ptr,t,...\right)$$"]
+    DW_IFT{{"$$t\lt S_{s_{id}}\leq t_r$$"}}
+    DW_S2["$$M_{ptr}\leftarrow DW\_\left(ptr,t,...\right)$$"]
+  end
+  DW_JOIN((" "))
+  DEVICE_JOIN((" "))
+
+
+  EMPTY(["$$\empty$$"])
+  subgraph Report
+    WARN_UNINIT[["`**WARNING:** <br>read from uninit mem`"]]
+    ERR_RACE[["`**RACE DETECTED:** <br> Out of order read sync/launch write`"]]
+  end
+  REPORT_JOIN((" "))
+  NEXT@{ shape: circle, label: " " }
+  END@{ shape: framed-circle, label: "end" }
+  
+
+  subgraph Legend
+    legend0["`**Data Format:**
+              _{Attrs}_**(**_{Data}_**,**_..._**)**`"]
+    legend1["`**Attrs:**
+              - **H** : Host
+              - **D** : Device
+              - **R** : Read
+              - **W** : Write
+              - **S** : Sync
+              - **L** : Launch/Desync
+              - **A** : Atomic Operation
+              - **M** : Malloc
+              - **F** : Free
+              - **_async_** : Async Operation
+              - **'** : Bulk Operation`"]
+    legend2["`**Data:**
+              - _ptr_ : Mem Address
+              - _t_ : Logigal Time
+              - _Sid_ : Stream ID
+              - _l_ : Bulk operation len/size
+            `"]
+    legend3["`State Objects: <br>
+              - $$M_{ptr}$$ : Last Mem Operation at $$\,\,ptr$$ <br>
+              - $$S_{s_{id}}$$ : Last Stream Sync at $$\,\,s_{id}$$
+              - $$L_{s_{id}}$$ : Last Stream Desync/Launch event at $$\,\,s_{id}$$
+              - $$A_{ptr}$$ : Size of Allocation starting with $$\,\,ptr$$
+            `"]
+  end
+
+
+  START --> __NEXT --> _NEXT
+  _NEXT --> EMPTY --> END
+  _NEXT --> HR & HRB & HARW & HW & HWA & HWB & HRWB & HRWB_
+  _NEXT --> DR & DRB & DARW & DW & DWA & DWB & DRWB
+  _NEXT --> S & L & M & M_ & F
+
+  S --> SET_SYNC --> CLEAR_LAUNCH --> STREAM_JOIN
+  L --> SET_LAUNCH --> CLEAR_SYNC --> STREAM_JOIN --> DRIVER_JOIN
+  M & M_ --> MALLOC --> MEM_JOIN
+  F --> FREE_0 --> FREE_1 --> FREE_2 --> MEM_JOIN --> DRIVER_JOIN
+  DRIVER_JOIN --> NEXT
+
+  HR --> HR_IFM --"`false`"--> WARN_UNINIT
+  HR_IFM --"`_true_`"--> HR_IFMW
+  HR_IFMW --"`_true_`"--> HR_IFT
+  HR_IFMW --"`_false_`"--> HR_S
+  HR_IFT --"`_false_`"--> HR_S2 --> ERR_RACE
+  HR_IFT --"`_true_`"--> HR_S
+  HR_S --> HR_JOIN --> HOST_JOIN
+
+  HRB --> HRB_FA["$$\forall ptr\prime \in \left[ptr,\, ptr+l\right)$$"] --> HR_IFM
+
+  HW & HWA --> HW_IFM --"`_true_`"--> HW_IFT --"`_false_`"--> HW_S2 --> ERR_RACE
+  HW_IFM --"`_false_`"--> HW_S --> HW_JOIN
+  HW_IFT --"`_true_`"--> HW_S
+
+  HARW --> HRW_DoBoth["Do 1 then 2 before returning to $$\,\,``I_n\rightarrow''$$"]
+  --"1"--> HR_IFM
+  HRW_DoBoth --"2"--> HW_IFM
+  HRWB & HRWB_ --> HRWB_FA["$$\forall ptr\prime \in \left[ptr,\, ptr+l\right)$$"] --> HRW_DoBoth
+
+  HWB --> HWB_FA["$$\forall ptr\prime \in \left[ptr,\, ptr+l\right)$$"] --> HW_IFM
+
+  HW_JOIN --> HOST_JOIN
+  HOST_JOIN --> NEXT
+
+  
+  DR --> DR_IFM --"`false`"--> WARN_UNINIT
+  DR_IFM --"`_true_`"--> DR_IFMW
+  DR_IFMW --"`_true_`"--> DR_IFT
+  DR_IFMW --"`_false_`"--> DR_S
+  DR_IFT --"`_false_`"--> DR_S2 --> ERR_RACE
+  DR_IFT --"`_true_`"--> DR_S
+  DR_S --> DR_JOIN --> HOST_JOIN
+
+  DRB --> DRB_FA["$$\forall ptr\prime \in \left[ptr,\, ptr+l\right)$$"] --> DR_IFM
+
+  DW & DWA --> DW_IFM --"`_true_`"--> DW_IFT --"`_false_`"--> DW_S2 --> ERR_RACE
+  DW_IFM --"`_false_`"--> DW_S --> DW_JOIN
+  DW_IFT --"`_true_`"--> DW_S
+
+  DARW --> DRW_DoBoth["Do 1 then 2 before returning to $$\,\,``I_n\rightarrow''$$"]
+  --"1"--> DR_IFM
+  DRW_DoBoth --"2"--> DW_IFM
+  DRWB --> DRWB_FA["$$\forall ptr\prime \in \left[ptr,\, ptr+l\right)$$"] --> DRW_DoBoth
+
+  DWB --> DWB_FA["$$\forall ptr\prime \in \left[ptr,\, ptr+l\right)$$"] --> DW_IFM
+
+  DW_JOIN --> DEVICE_JOIN
+  DEVICE_JOIN --> NEXT
+
+
+
+  WARN_UNINIT & ERR_RACE --> REPORT_JOIN --> NEXT
+  
+  NEXT --> __NEXT
+  

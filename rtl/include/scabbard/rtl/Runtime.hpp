@@ -59,14 +59,14 @@ namespace scabbard {
       /// @brief Pointer to the state machine that validates the process.
       StateMachine* SM = nullptr;
 
-      /// @brief owner of all \c GroupedPtrs in the Runtime.
+      /// @brief owner of all `GroupedPtrs` in the Runtime.
       GroupedPtrFactory<const TraceData>* GPF = nullptr;
 
       /// @brief the owning list of device trackers
       std::vector<device::DeviceTracker*> device_trackers;
 
       /// @brief a map connecting counters to each stream's jobs
-      std::map<hipStream_t,uint16_t> stream_job_counters;
+      std::map<hipStream_t,StreamJobId> stream_job_counters;
 
       /// @brief the mutex protecting access to the device side volatiles
       std::mutex mx_device;
@@ -132,7 +132,7 @@ namespace scabbard {
        * @brief register a job to the async queue to monitor it
        * @param DEVICE the device id associated with the job launch
        * @param STREAM pointer to the stream object associated with the job launch
-       * @return \c DeviceTracker* - pointer to the device side object the kernel will work with
+       * @return `DeviceTracker*` - pointer to the device side object the kernel will work with
        */
       __host__ device::DeviceTracker* add_job(const hipStream_t STREAM);
       
@@ -144,8 +144,8 @@ namespace scabbard {
       void initialize(std::size_t mem_chunk_len);
 
       /**
-       * @brief Produce a report to the global \c SCAB_SOUT with the results produced by the 
-       *        \c StateMachine so far.
+       * @brief Produce a report to the global `SCAB_SOUT` with the results produced by the 
+       *        `StateMachine` so far.
        */
       __host__
       void report();
@@ -158,7 +158,7 @@ namespace scabbard {
 
       /**
        * @brief how to trigger a single round of processing of the rtl data buffered from 
-       *        the device then from the host out to the TraceWriter set with \c initialize() method.
+       *        the device then from the host out to the TraceWriter set with `initialize()` method.
        */
       __host__ void async_process();
 

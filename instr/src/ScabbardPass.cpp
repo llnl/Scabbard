@@ -179,6 +179,11 @@ private:
   /// @return a constant int of the line column index
   inline ConstantInt* getSourceCol(const DILocation* Loc, LLVMContext& C) const;
 
+  /// @brief Get the default value for the lazy load ID of this metadata entry
+  /// @param C (required for generating constants for the module)
+  /// @return a constant int of 0 64bits wide
+  inline ConstantInt* getLazyID(LLVMContext& C) const;
+
   /// @brief Retrieve the name of the original function containing the instruction in question
   ///        try to register the string with \c registerString,
   ///        and return the offset to the desired string in the global string array
@@ -255,6 +260,7 @@ protected:
   IntegerType* const u64Ty = nullptr;
   /// @brief a handy pointer to the oft used IR Integer Type unsigned 32-bit.
   IntegerType* const u32Ty = nullptr;
+  StructType* const UserCallbackDataWrapperTy = nullptr;
 public:
   IRHelper() = delete;
   IRHelper(Module& M) :
@@ -265,7 +271,11 @@ public:
     LocDataTy(PointerType::get(M.getContext(), 0ull)),
     ExtraDataTy(IntegerType::get(M.getContext(), 64u)),
     u64Ty(IntegerType::get(M.getContext(), 64u)),
-    u32Ty(IntegerType::get(M.getContext(), 64u))
+    u32Ty(IntegerType::get(M.getContext(), 64u)),
+    UserCallbackDataWrapperTy(StructType::create(M.getContext(),
+          std::array<Type*,2u>{PtrTy, PtrTy},
+          "scabbard.instr.userCallbackDataWrapperTy",
+          false))
     {}
 
   friend class MetadataHandler;
@@ -333,6 +343,10 @@ protected:
     const std::string register_job_name = SCABBARD_CALLBACK_REGISTER_JOB;
     llvm::FunctionCallee register_job_callback;
     const std::string register_job_callback_name = SCABBARD_CALLBACK_REGISTER_JOB_CALLBACK;
+    llvm::FunctionCallee register_user_callback;
+    const std::string register_user_callback_name = SCABBARD_CALLBACK_REGISTER_USER_CALLBACK;
+    llvm::FunctionCallee register_user_hostFn_launch;
+    const std::string register_user_hostFn_launch_name = SCABBARD_CALLBACK_REGISTER_USER_HOST_FN_LAUNCH;
     MetadataHandler Metadata;
   } ScabbardRTL;
 
@@ -345,7 +359,7 @@ protected:
   using APIInstrumenterFn_t = std::function<bool(CallInst&,FunctionAnalysisManager&)>;
 
   /// @brief List of {APIFnName, APIHandlerFn} that will proccess the relevant GPU Driver API calls.
-  SmallVector<std::pair<const StringRef,APIInstrumenterFn_t>,21u> APIInstrumenters;
+  SmallVector<std::pair<const StringRef,APIInstrumenterFn_t>,23u> APIInstrumenters;
 
   /// @brief Returns \c false if the function should not be instrumented. \n
   ///        Used by the top level run method to determine if the pass will run on a fn. \n 
@@ -358,7 +372,9 @@ protected:
             && not F.getName().starts_with("llvm.")         // exclude intrinsics
             && not F.getName().starts_with("scabbard.")     // exclude name mangled scabbard rtl functions
             && not F.getName().contains("__device_stub__")  // exclude device stubFn's from regular instruction instr
-            && not F.hasFnAttribute("disable_sanitizer_instrumentation")); // any fn marked as not to be instrumented
+            // any fn marked as not to be instrumented
+            && not (F.hasFnAttribute(Attribute::AttrKind::DisableSanitizerInstrumentation)
+                    || F.hasFnAttribute(Attribute::AttrKind::NoSanitizeCoverage))); 
   }
 
 
@@ -474,8 +490,9 @@ protected:
       if (Function* APIFn = M.getFunction(APIName))
         for (auto user : APIFn->users())
           if (auto _CI = dyn_cast<CallInst>(user))
-            if (APIFn == _CI->getCalledFunction())
-              changed |= InstrumenterFn(*_CI, FAM);
+            if (isInstrumentableFn(*_CI->getFunction()))
+              if (APIFn == _CI->getCalledFunction())
+                changed |= InstrumenterFn(*_CI, FAM);
     return changed;
   }
 
@@ -613,6 +630,10 @@ protected:
   bool APIInstr_Unsupported(const CallInst& CI, const StringRef APIName) const;
   bool APIInstr_LaunchKernel(CallInst& CI);
   GetElementPtrInst* expand_param_args_alloc(AllocaInst& alloc) const;
+  GetElementPtrInst* create_or_expand_param_args_alloc(Value* arg) const;
+  Constant* getBestLocIDForUserCallback(CallInst& RegCallbackCI);
+  bool APIInstr_HostCallback(CallInst& CI);
+  bool APIInstr_HostFnLaunch(CallInst& CI);
 public:
   ScabbardHostPassHip() = delete;
   ScabbardHostPassHip(Module& M_, const Triple& T_) :
@@ -726,7 +747,9 @@ protected:
             && not NO_INSTR_FNS.count(F.getName().str()) // a manually excluded function (usually c++ builtin)
             && not isDeviceVendorBuiltin(F)              // a device/vendor specific function. (should be intrinsics
             // and -> undeclared)
-            && not F.hasFnAttribute("disable_sanitizer_instrumentation")); // any fn marked as not to be instrumented
+            // any fn marked as not to be instrumented
+            && not (F.hasFnAttribute(Attribute::AttrKind::DisableSanitizerInstrumentation)
+                    || F.hasFnAttribute(Attribute::AttrKind::NoSanitizeCoverage))); 
   }
 
   /// @brief Return if the address-space of a global variable is in the
@@ -1223,6 +1246,26 @@ void IScabbardHostPass::registerRTL(Module& M) {
           false
         )
     );
+  ScabbardRTL.register_user_callback = M.getOrInsertFunction(
+      ScabbardRTL.register_user_callback_name,
+      FunctionType::get(
+          u32Ty,
+          std::array<Type*,5ull>{
+              PtrTy, PtrTy, PtrTy, u32Ty, LocDataTy
+            },
+          false
+        )
+    );
+  ScabbardRTL.register_user_hostFn_launch = M.getOrInsertFunction(
+      ScabbardRTL.register_user_hostFn_launch_name,
+      FunctionType::get(
+          u32Ty,
+          std::array<Type*,4ull>{
+              PtrTy, PtrTy, PtrTy, LocDataTy
+            },
+          false
+        )
+    );
 }
 
 inline void IScabbardHostPass::registerGlobalVarsInUnifiedMemory(const Module& M) {
@@ -1416,6 +1459,12 @@ const StringMap<CallCheck_t> funcsOfInterest {
   };
 } //? namespace HostPtrOriginHelpers
 
+bool IsGlobalVarOnIgnoreList(const GlobalVariable* GV) {
+  return (GV->hasAttribute(Attribute::AttrKind::DisableSanitizerInstrumentation)
+            || GV->hasAttribute(Attribute::AttrKind::NoSanitizeCoverage));
+          
+}
+
 IScabbardInstrPass::PtrOrigin IScabbardHostPass::getPtrOrigin(LoopInfo& LI, Value* Ptr, const Value** Object) const {
   // derived from
   // https://github.com/jdoerfert/llvm-project/blob/b416d0c996bc01aeb6708c715bfe5e53bcac998d/llvm/lib/Transforms/Instrumentation/GPUSan.cpp#L592
@@ -1430,6 +1479,8 @@ IScabbardInstrPass::PtrOrigin IScabbardHostPass::getPtrOrigin(LoopInfo& LI, Valu
     switch (Obj->getValueID()) {
       case Value::GlobalVariableVal: {
         GlobalVariable* GV = (GlobalVariable*) Obj;
+        if (IsGlobalVarOnIgnoreList(GV))
+          break; // maybe set to never and return instead?
         auto res = GlobalUnifiedMemVar.find(GV->getName());
         ObjPO = ((res != GlobalUnifiedMemVar.end()) ? res->second : UNKNOWN_HEAP); 
         //TODO remove globals not known to be on device or managed
@@ -1441,6 +1492,8 @@ IScabbardInstrPass::PtrOrigin IScabbardHostPass::getPtrOrigin(LoopInfo& LI, Valu
       case Instruction::Load + Value::InstructionVal: {
         LoadInst* Load = (LoadInst*) Obj;
         if (auto* Global = dyn_cast<GlobalVariable>(Load->getPointerOperand())) {
+          if (IsGlobalVarOnIgnoreList(Global))
+            break; // maybe set to never and return instead?
           if (Global->getName().ends_with(".device") 
               || _M.getGlobalVariable(Global->getName().str()+".device"))
             ObjPO = DEVICE_HEAP;
@@ -1722,6 +1775,30 @@ GetElementPtrInst* ScabbardHostPassHip::expand_param_args_alloc(AllocaInst& allo
           );
 }
 
+GetElementPtrInst* ScabbardHostPassHip::create_or_expand_param_args_alloc(Value* ARG) const {
+  GetElementPtrInst* paramPtr = nullptr;
+  if (auto argElmPtr = dyn_cast<GetElementPtrInst>(ARG)) { // case: >=2 function parameter length
+    if (auto argAlloc = dyn_cast<AllocaInst>(argElmPtr->getPointerOperand())) {
+      paramPtr = expand_param_args_alloc(*argAlloc);
+      if (paramPtr != nullptr)
+        argElmPtr->replaceAllUsesWith(paramPtr);
+    } else {
+      errs() << "\n[scabbard.instr.host.amdhip:ERROR] kernel launch user args could not be traced to param args construct allocation\n";
+    }
+  } else if (auto argAlloc = dyn_cast<AllocaInst>(ARG)) { // case: single or zero function parameter length
+    paramPtr = expand_param_args_alloc(*argAlloc);
+  } else {
+    errs() << "\n[scabbard.instr.host.amdhip:DBG] kernel launch user args are not loaded from local frame\n```\n";
+    ARG->print(errs());
+    errs() << "\n```\n\n";
+  }
+  if (paramPtr == nullptr) {
+    errs() << "\n[scabbard.instr.host.amdhip:ERROR] could not instrument kernel call (instrumentation failed)\n";
+  }
+  return paramPtr;
+}
+
+
 bool ScabbardHostPassHip::APIInstr_LaunchKernel(CallInst& CI) {
   // instrument in `scabbard.trace.register_job` before this function and instrument in `scabbard.trace.register_job_callback` after this function call
   auto regFn = CallInst::Create(
@@ -1751,26 +1828,7 @@ bool ScabbardHostPassHip::APIInstr_LaunchKernel(CallInst& CI) {
   regCbFn->setDebugLoc(CI.getDebugLoc()); //might cause issues if in a device stub
   //TODO? modify the type of the last operand (should be a global or function pass)
   // trace back args var and expand it to include the pointer to the DeviceTracker that is returned as the result of `scabbard.trace.register_job` as the last parameter
-  GetElementPtrInst* paramPtr = nullptr;
-  if (auto argElmPtr = dyn_cast<GetElementPtrInst>(CI.getArgOperand(5ull))) { // case: >=2 function parameter length
-    if (auto argAlloc = dyn_cast<AllocaInst>(argElmPtr->getPointerOperand())) {
-      paramPtr = expand_param_args_alloc(*argAlloc);
-      if (paramPtr != nullptr)
-        argElmPtr->replaceAllUsesWith(paramPtr);
-    } else {
-      errs() << "\n[scabbard.instr.host.amdhip:ERROR] kernel launch user args could not be traced to param args construct allocation\n";
-    }
-  } else if (auto argAlloc = dyn_cast<AllocaInst>(CI.getArgOperand(5ull))) { // case: single or zero function parameter length
-    paramPtr = expand_param_args_alloc(*argAlloc);
-  } else {
-    errs() << "\n[scabbard.instr.host.amdhip:DBG] kernel launch user args are not loaded from local frame\n```\n";
-    CI.getArgOperand(5ull)->print(errs());
-    errs() << "\n```\n\n";
-  }
-  if (paramPtr == nullptr) {
-    errs() << "\n[scabbard.instr.host.amdhip:ERROR] could not instrument kernel call (instrumentation failed)\n";
-    return true;
-  }
+  GetElementPtrInst* paramPtr = create_or_expand_param_args_alloc(CI.getArgOperand(5ull));
   auto dtAlloc = new AllocaInst(PtrTy, 0u, "dtPtr", regFn);
   dtAlloc->setDebugLoc(CI.getDebugLoc()); //might cause issues if in a device stub
   paramPtr->insertAfter(regFn);
@@ -1779,6 +1837,46 @@ bool ScabbardHostPassHip::APIInstr_LaunchKernel(CallInst& CI) {
   dtStore->setDebugLoc(CI.getDebugLoc()); //might cause issues if in a device stub
   auto dtParamStore = new StoreInst(dtAlloc, paramPtr, &CI);
   dtParamStore->setDebugLoc(CI.getDebugLoc()); //might cause issues if in a device stub
+  return true;
+}
+
+Constant* ScabbardHostPassHip::getBestLocIDForUserCallback(CallInst& RegisterCallbackCI) {
+  if (const auto* UsrFn = dyn_cast<Function>(RegisterCallbackCI.getArgOperand(1u))) {
+    for (auto& i : instructions(*UsrFn))
+      if (i.getDebugLoc())
+        return ScabbardRTL.Metadata.insert(&i).first;
+  }
+  return ScabbardRTL.Metadata.insert(&RegisterCallbackCI).first;
+}
+
+bool ScabbardHostPassHip::APIInstr_HostCallback(CallInst& CI) {
+  auto regUsrCallbackCI = CallInst::Create(
+          ScabbardRTL.register_user_callback.getFunctionType(),
+          ScabbardRTL.register_user_callback.getCallee(),
+          std::array<Value*,5u>{CI.getArgOperand(0u), CI.getArgOperand(1u), 
+                                CI.getArgOperand(2u), CI.getArgOperand(3u),
+                                getBestLocIDForUserCallback(CI)},
+          Twine("scabbard.instr.usrcallbackdata.0")+CI.getName(),
+          &CI
+        );
+  CI.replaceAllUsesWith(regUsrCallbackCI);
+  CI.eraseFromParent();
+  return true;
+}
+
+bool ScabbardHostPassHip::APIInstr_HostFnLaunch(CallInst& CI) {
+  auto regUsrCallbackCI = CallInst::Create(
+          ScabbardRTL.register_user_hostFn_launch.getFunctionType(),
+          ScabbardRTL.register_user_hostFn_launch.getCallee(),
+          std::array<Value*,4u>{CI.getArgOperand(0u),
+                                CI.getArgOperand(1u), 
+                                CI.getArgOperand(2u),
+                                getBestLocIDForUserCallback(CI)},
+          Twine("scabbard.instr.usrHostFnLaunch.0")+CI.getName(),
+          &CI
+        );
+  CI.replaceAllUsesWith(regUsrCallbackCI);
+  CI.eraseFromParent();
   return true;
 }
 
@@ -1925,6 +2023,14 @@ void ScabbardHostPassHip::registerAPIInstrumenters() {
     {
       "hipExtLaunchKernel",
       [this](CallInst& CI, FunctionAnalysisManager& FAM) -> bool { return APIInstr_LaunchKernel(CI); }
+    },
+    {
+      "hipStreamAddCallback",
+      [this](CallInst& CI, FunctionAnalysisManager& FAM) -> bool { return APIInstr_HostCallback(CI); }
+    },
+    {
+      "hipLaunchHostFunc",
+      [this](CallInst& CI, FunctionAnalysisManager& FAM) -> bool { return APIInstr_HostFnLaunch(CI); }
     }
   };
   // APIInstrumenters = _APIInstrumenters;
@@ -2192,6 +2298,8 @@ IScabbardDevicePass::PtrOrigin IScabbardDevicePass::getPtrOrigin(LoopInfo& LI, V
     PtrOrigin ObjPO = HasAllocas ? LOCAL : UNKNOWN_HEAP;
     switch (Obj->getValueID()) {
       case Value::GlobalVariableVal:
+        if (IsGlobalVarOnIgnoreList((GlobalVariable*)Obj))
+          break; // maybe set to never and return instead?
         ObjPO = DEVICE_HEAP;
         break;
       case Value::ArgumentVal: {
@@ -2206,6 +2314,8 @@ IScabbardDevicePass::PtrOrigin IScabbardDevicePass::getPtrOrigin(LoopInfo& LI, V
       case Instruction::Load + Value::InstructionVal: {
         LoadInst* Load = (LoadInst*) Obj;
         if (auto* Global = dyn_cast<GlobalVariable>(Load->getPointerOperand())) {
+          if (IsGlobalVarOnIgnoreList(Global))
+            break; // maybe set to never and return instead?
           if (Global->getName().ends_with(".device") 
               || _M.getGlobalVariable(Global->getName().str()+".device"))
             ObjPO = DEVICE_HEAP;
@@ -2312,13 +2422,15 @@ Constant* MetadataHandler::getGEP(GlobalVariable* GV, size_t Index) const {
 // }
 
 GlobalVariable* MetadataHandler::initializeMetadata(Module& M, unsigned AddrSpace, IRHelper* IRH) {
-  EntryTy = StructType::create(std::array<Type*,4>{
-                                  IRH->PtrTy, IRH->PtrTy, IRH->u64Ty, IRH->u32Ty
+  EntryTy = StructType::create(std::array<Type*,5>{
+                                  IRH->u64Ty, IRH->PtrTy, IRH->PtrTy, IRH->u64Ty, IRH->u64Ty
                                 }, "scabbard.metadata.entryTy", false);
   const auto ArrTy = ArrayType::get(EntryTy, UINT32_MAX); // temp type
   const auto Arr = ConstantArray::get(ArrTy, {});         // temp contents
   MetadataVar = new GlobalVariable(M, cast<Type>(ArrTy), /*IsConstant=*/true, GlobalValue::ExternalLinkage, Arr,
                                     "scabbard.metadata.tmp", nullptr, GlobalValue::NotThreadLocal, AddrSpace);
+  MetadataVar->addAttribute(Attribute::AttrKind::DisableSanitizerInstrumentation);
+  MetadataVar->addAttribute(Attribute::AttrKind::NoSanitizeCoverage);
   return MetadataVar;
 }
 
@@ -2338,26 +2450,30 @@ void MetadataHandler::finalizeMetadata(Module& M) {
         const DIFile* dFile = dScope->getFile();
         if (dFile) {
           Contents[ID] = ConstantStruct::get(
-                          EntryTy, {getGEP(stringsVar, getSourceFile(dFile)), 
+                          EntryTy, {getLazyID(M.getContext()),
+                                    getGEP(stringsVar, getSourceFile(dFile)), 
                                     getGEP(stringsVar, getCalledFn(dSubPro->getName())),
                                     getSourceLine(dLoc.get(), M.getContext()), getSourceCol(dLoc.get(), M.getContext())});
         } else
           Contents[ID] = ConstantStruct::get(
-                          EntryTy, {getGEP(stringsVar, registerString(Twine("<UNKNOWN_SRC_FILE>{LLVM_IR_Module=\"")
+                          EntryTy, {getLazyID(M.getContext()),
+                                    getGEP(stringsVar, registerString(Twine("<UNKNOWN_SRC_FILE>{LLVM_IR_Module=\"")
                                                                       + M.getSourceFileName() + "\"}")), 
                                     getGEP(stringsVar, getCalledFn(dSubPro->getName())),
                                     getSourceLine(dLoc.get(), M.getContext()), getSourceCol(dLoc.get(), M.getContext())});
         
       } else
         Contents[ID] = ConstantStruct::get(
-                          EntryTy, {getGEP(stringsVar, registerString(Twine("<UNKNOWN_SRC_FILE>{LLVM_IR_Module=\"")
+                          EntryTy, {getLazyID(M.getContext()),
+                                    getGEP(stringsVar, registerString(Twine("<UNKNOWN_SRC_FILE>{LLVM_IR_Module=\"")
                                                                       + M.getSourceFileName() + "\"}")), 
                                     getGEP(stringsVar, registerString(Twine("<UNKNOWN_SRC_FN>{LLVM_IR_SCOPE=\"")
                                                                         + dScope->getName() + "\"}")),
                                     getSourceLine(dLoc.get(), M.getContext()), getSourceCol(dLoc.get(), M.getContext())});
     } else 
       Contents[ID] = ConstantStruct::get(
-                      EntryTy, {getGEP(stringsVar, registerString(Twine("<UNKNOWN_SRC_FILE>{Module=\"")
+                      EntryTy, {getLazyID(M.getContext()),
+                                getGEP(stringsVar, registerString(Twine("<UNKNOWN_SRC_FILE>{Module=\"")
                                                                   + M.getSourceFileName() + "\"}")), 
                                 getGEP(stringsVar, registerString(Twine("<UNKNOWN_SRC_FN>{LLVM_IR_Fn=\"")
                                                                     + I->getFunction()->getName() + "\"}")),
@@ -2376,6 +2492,10 @@ void MetadataHandler::finalizeMetadata(Module& M) {
                                           GlobalValue::NotThreadLocal, MetadataVar->getAddressSpace());
   MetadataVar->replaceAllUsesWith(_MetadataVar);  // replace with completed version
   MetadataVar->eraseFromParent();                // cleanup old temp
+  _MetadataVar->addAttribute(Attribute::AttrKind::DisableSanitizerInstrumentation);
+  _MetadataVar->addAttribute(Attribute::AttrKind::NoSanitizeCoverage);
+  _strVar->addAttribute(Attribute::AttrKind::DisableSanitizerInstrumentation);
+  _strVar->addAttribute(Attribute::AttrKind::NoSanitizeCoverage);
   appendToUsed(M, {_MetadataVar,_strVar});       // register them as used variables
 }
 
@@ -2405,11 +2525,15 @@ inline size_t MetadataHandler::getSourceFile(const DIFile* File/* , LLVMContext&
 }
 
 inline ConstantInt* MetadataHandler::getSourceLine(const DILocation* Loc, LLVMContext& C) const {
-  return cast<ConstantInt>(Constant::getIntegerValue(EntryTy->getTypeAtIndex(2ul), APInt(64ul,Loc->getLine())));
+  return cast<ConstantInt>(Constant::getIntegerValue(EntryTy->getTypeAtIndex(2u), APInt(64ul,Loc->getLine())));
 }
 
 inline ConstantInt* MetadataHandler::getSourceCol(const DILocation* Loc, LLVMContext& C) const {
-  return cast<ConstantInt>(Constant::getIntegerValue(EntryTy->getTypeAtIndex(3ul), APInt(64ul,Loc->getColumn())));
+  return cast<ConstantInt>(Constant::getIntegerValue(EntryTy->getTypeAtIndex(3u), APInt(64ul,Loc->getColumn())));
+}
+
+inline ConstantInt* MetadataHandler::getLazyID(LLVMContext& C) const {
+  return cast<ConstantInt>(Constant::getIntegerValue(EntryTy->getTypeAtIndex(0u), APInt(64ul,0ul)));
 }
 
 inline size_t MetadataHandler::getCalledFn(const StringRef& FnName/* , LLVMContext& C */) {

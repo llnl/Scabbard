@@ -69,13 +69,16 @@ namespace scabbard {
     } // namespace host
 
 
+
+    namespace reg {
+    
     /**
      * @brief during runtime this call gets instrumented befor a kernel launch function
      *        it returns a pointer to a scabbard::rtl::DeviceTracker object in device memory.
      *        That will be passed into the kernel and through all user defined kernel functions.
      */
     __host__
-    void* register_job(hipStream_t STREAM)
+    void* job(hipStream_t STREAM)
       asm (SCABBARD_CALLBACK_REGISTER_JOB);
     
     
@@ -85,8 +88,28 @@ namespace scabbard {
      *        and rebalance the logical vector clock.
      */
     __host__
-    void register_job_callback(void* dt, hipStream_t stream, const void*const SRC_ID)
+    void job_callback(void* dt, hipStream_t stream, const void*const SRC_ID)
       asm (SCABBARD_CALLBACK_REGISTER_JOB_CALLBACK);
+
+    /**
+     * @brief Register a user defined job stream callback with the rtl
+     *        it will replace the call to `hipStreamAddCallback()`.
+     */
+    __host__
+    hipError_t user_callback(hipStream_t stream, const hipStreamCallback_t usrCallbackFn, void*const usrData,  
+                                      unsigned int flags, const void*const SRC_ID)
+      asm (SCABBARD_CALLBACK_REGISTER_USER_CALLBACK);
+    
+      /**
+     * @brief Register a user defined job stream callback with the rtl
+     *        it will replace the call to `hipStreamAddCallback()`.
+     */
+    __host__
+    hipError_t user_hostFn_launch(hipStream_t stream, const hipHostFn_t usrCallbackFn, 
+                                        void*const usrData, const void*const SRC_ID)
+      asm (SCABBARD_CALLBACK_REGISTER_USER_HOST_FN_LAUNCH);
+
+    } //?namespace reg
 
 
     /**

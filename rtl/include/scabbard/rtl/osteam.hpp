@@ -73,9 +73,9 @@ public:
   }
 
 
-  /// @brief returns \c true if the \c std::ostream* underpinning this object is
-  ///        either \c std::cout or \c std::cerr .
-  /// @return \c bool
+  /// @brief returns `true` if the `std::ostream*` underpinning this object is
+  ///        either `std::cout` or `std::cerr` .
+  /// @return `bool`
   inline bool is_stdio() const {
     return out == &std::cout || out == &std::cerr;
   }
@@ -84,12 +84,12 @@ public:
     return is_stdio();
   }
 
-  /// @brief Replace whatever \c std::ostream* is currently underpinning this object, 
-  ///        with \param new_out and return a pointer to the old one (may be \c nullptr ).
-  ///        If the old \c std::ostream was \c std::cout or \c std::cerr it will return
-  ///        \c nullptr .
+  /// @brief Replace whatever `std::ostream*` is currently underpinning this object, 
+  ///        with \param new_out and return a pointer to the old one (may be `nullptr` ).
+  ///        If the old `std::ostream` was `std::cout` or `std::cerr` it will return
+  ///        `nullptr` .
   /// @param new_out the new ostream to replace the old one.
-  /// @return \c std::ostream* - ptr to previous \c std::ostream* \param new_out is replacing.
+  /// @return `std::ostream*` - ptr to previous `std::ostream*` \param new_out is replacing.
   inline std::ostream* replace(std::ostream* new_out) {
     std::ostream* old_out = ((is_stdio()) ? nullptr : out);
     out = new_out;

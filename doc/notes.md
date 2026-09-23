@@ -1,6 +1,161 @@
   Scabbard Dev Notes
 ====================================================================================================
 
+Thought: change data race algorithm to be good time bad time for each kind of HR,DR,HW,DW event.
+Could this work?
+how does intra host/device threads complicate thing?
+
+Reason: pure host side or pure device side data fighting can hide the existence of a H<->D data race
+especially if I were to use one mem data-structure.
+- this might not be valid though -- brain to foggy must come back to this thought after a little break.
+
+Design: start (valid: HW,HR) -> kernel launch (v: DR,DW) -> sync (v: HW,HR) -> kl again
+Problems:
+ - assumes device has custody of any data accessible to it over the host
+ - no support for kernel launches (no different from current design)
+ - during start can't tell if events happen on memory of real concern or not (as no DR/DW in mem to confirm)
+   - likely not an issue as all HR/HW are valid before a kernel launch
+ - will need to confirm that where logical clocks sync is valid across all threads and devices
+   - might need to lock all host threads on launch instead of just unifying with a callback
+ - possibly more sensitive to the trace getting out of order insertions during live runs
+ - the use of callbacks will always result in a false positive
+   - would need to introduce support for callbacks to avoid this issue.
+ - Report in read sections where both read and write `TraceData` points are available
+ - Can we tell if a race occurs if the write happens after the read in logical order?
+   - I don't think we can rn, might be able to change that though.
+     - might be able to make it work with a more reliable data processing model 
+     (aka when and how much of the trace we process through the state-machine).
+     - would recording host reads that occur without host control fix the issue for one direction?
+
+What I need:
+  - Interval map containing the last DR/DW to occur on a piece of memory
+    - could just be streamID, 
+      - might reduce the richness of our results if no workaround could be found
+        - could greatly simplify memory usage by not storing `TraceData` objects and always releasing them after they are processed in the state machine.
+    - would be better to still be the smart pointer to DR/DW `TraceData` objects
+  - a map of stream_id to state of valid host or device control of memory
+  - change state in launch and sync zones
+  - a check of the current state in read and wrote zones
+  - ? - move desync trace event into a callback registered into the stream queue before the kernel
+    - Might not be necessary as you should consider all operations after a launch call out of host control until a sync is called
+  - add wrapper around callback registry to establish callback control of memory on a thread per for a stream
+    - change the way we store `HostThreadID` to be a integer rather than stdlib struct
+  - Zone rules (curr, prev):
+    - Init:
+      - (HR,null): good
+      - (HR,...): good
+      - (HW,...): good
+      - (DR,...): not possible - `iError` zone state was not changed before DR occurred
+      - (DW,...): not possible - `iError` zone state was not updated before DR occurred
+    - Host Control:
+      - (HR,null): warn - read from uninitialized memory (suppress)
+      - (HR,HR): good\*\* - don't store new HR in mem?
+      - (HR,HW): good\*\*
+      - (HR,DR): if DR is not stagnant re-evaluate in zone associated with DR's stream; else good
+        - Host Control: good  /  Device Control: warn - HR occurred in unprotected zone
+      - (HR,DW): if DW is not stagnant re-evaluate in zone associated with DW's stream; else good
+        - Host Control: good  /  Device Control: warn - possible HR->DW race occurred (unprotected HR)
+      - (HW,HR): good\*\*
+      - (HW,HW): good\*\*
+      - (HW,DR): if DR is not stagnant re-evaluate in zone associated with DR's stream; else good
+        - Host Control: good  /  Device Control: bad - DR->HW data race occurred (unprotected HW) 
+          - is this (DC) guaranteed to be a race in all situations
+      - (HW,DW): if DW is not stagnant re-evaluate in zone associated with DW's stream; else good
+        - Host Control: good  /  Device Control: bad - HW occurred in unprotected zone
+      - (DR,null): warn - read from uninitialized memory
+      - (DR,...): not possible `iError`
+      - (DW,...): not possible `iError`
+      - DW: not possible (takes ownership of the data)
+    - Device Control:
+      - (HR,null): warn - read from uninitialized memory (suppress)
+      - (HR,...): warn - possible HR->DW race occurred (unprotected HR)
+      - (HW,...): warn - possible DR->HW race occurred (unprotected HW)
+      - (DR,null): warn - read from uninitialized memory
+      - (DR,HR): good
+      - (DR,HW): bad if not stagnant* - possible DR->HW data race occurred
+        - The order is correct but the write was in an unprotected zone
+      - (DR,DR): good
+      - (DR,DW): good
+      - (DW,HR): bad if not stagnant\* - HR->DW data race occurred
+      - (DW,HW): bad if not stagnant\* - unprotected host write
+      - (DW,DR): good
+      - (DW,DW): good
+    - \*stagnant means that the R/W event in prev ownership is older than last zone change on the "owning" stream
+    - \*\* technically we don't know what zone we are in if curr and prev are both host so we are just going off of default stream to determine zone state
+    - We declare that all data known to be accessible to a kernel belongs to the kernel until the host regains control by syncing the kernels stream.
+      - this assumption might break validity -- consider it some more before moving on
+  - Zone Rules (Curr Event, Prev Event) [swapping order of zone and events in the comparisons]
+    - (HR,nul):
+      - ...: WARN - HOst Read from uninitialized memory
+    - (HR,HR): 
+      - ...: good; Any Issues Already Reported (AIAR)
+    - (HR,HW): 
+      - UnInit: good
+      - HostControl: good; AIAR
+      - DeviceControl: good; AIAR / true zone not known without device event (NTZ)
+    - (HR,DR): 
+      - UnInit: good; AIAR
+      - HostControl: good
+      - DeviceControl: WARN - HR in unprotected zone! (possible shared ro data)
+    - (HR,DW):
+      - UnInit: null
+      - HostControl: good
+      - DeviceControl: WARN/RACE - HR in unprotected zone - DW->HR Race
+    - (HW,nul):
+      - UnInit: good
+      - ...: null
+    - (HW,HR):
+      - UnInit: good; AIAR
+      - HostControl: good
+      - DeviceControl: good; AIAR / NTZ
+    - (HW,HW):
+      - UnInit: good
+      - HostControl: good
+      - DeviceControl: good; AIAR / NTZ
+    - (HW,DR):
+      - UnInit: null
+      - HostControl: good
+      - DeviceControl: RACE - HW in unprotected zone - DR->HW Race
+    - (HW,DW):
+      - UnInit: null
+      - HostControl: good
+      - DeviceControl: WARN/RACE - HW in unprotected zone - both kinds of races poss
+    - (DR,nul):
+      - ...: WARN - DR from uninitiated memory
+    - (DR,HR):
+      - ...: null
+      - DeviceControl: good
+    - (DR,HW):
+      - ...: null
+      - DeviceControl: if HW.time >= zone.time -> 
+        - WARN/RACE - HW in unprotected zone - DR->HW race
+    - (DR,DR):
+      - DeviceControl: good; AIAR
+      - ...: null
+    - (DR,DW):
+      - DeviceControl: good
+      - ...: null
+    - (DW,nul):
+      - HostControl: null
+      - ...: good
+    - (DW,HR):
+      - ...: null
+      - DeviceControl: if HR.time >= zone.time -> RACE - HR->DW Race
+    - (DW,HW):
+      - ...: null
+      - DeviceControl: if HW.time >= zone.time -> WARN - Unprotected HW
+    - (DW,DR):
+      - ...: null
+      - DeviceControl: good; AIAR
+    - (DW,DW):
+      - ...: null
+      - DeviceControl: good
+  - Putting zones in a 2 key table, with a legacy default stream and per thread default stream list separate
+    - Might only need to update table entries when they specifically get called and rely on just picking the most recently updated zone from the defaults list.
+      - Issues include needing to interpret legacy default stream per thread for sync but not desync, and might cause issues. 
+
+
+
  TODO:
 ----------------------------------------------------------------------------------------------------
 
