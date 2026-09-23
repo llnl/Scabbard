@@ -35,7 +35,7 @@ namespace scabbard {
 
         std::size_t i = 0ul;
         while (data->srcFile[i] != '\0') {
-          hash ^= static_cast<uint64_t>(data->srcFile[i]);
+          hash ^= static_cast<uint64_t>(data->srcFile[i++]);
           hash *= prime;
         }
         hash ^= static_cast<uint64_t>(':');
@@ -73,7 +73,7 @@ namespace scabbard {
       }
       auto id = SrcMetadata::next_id++;
       auto res = SrcMetadata::seen.emplace(this,id);
-      *const_cast<std::size_t*>(&lazy_id) = id;
+      // *const_cast<std::size_t*>(&lazy_id) = id; //DEBUG remove this for segfault test
       return id;
     }
 

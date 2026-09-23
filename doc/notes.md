@@ -1,6 +1,14 @@
   Scabbard Dev Notes
 ====================================================================================================
 
+### TODO
+- make sure that instrument is instrumenting correct events
+  - rn it looks like it is instrumenting the loading of local variables into the struct for a launch
+  - it is also not finding the races might be related
+  - it is instrumenting stores to local stack allocations must fix
+- fix the deallocation of chunk error that is occasionally resulting in seg faults during cleanup (`GPTRFact:free_all_prev`)
+  - might be related to the self deletion and linked list edit in `Chunk:release_slot`
+
 Thought: change data race algorithm to be good time bad time for each kind of HR,DR,HW,DW event.
 Could this work?
 how does intra host/device threads complicate thing?

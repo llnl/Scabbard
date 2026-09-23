@@ -24,6 +24,7 @@ namespace rtl {
 
 
 inline ostream& operator << (ostream&, const StateMachine::DataPtr_t&);
+inline ostream& operator << (ostream& out, const StateMachine::Result::Status& status);
 
 void printResult(const StateMachine::Result& res);
 
@@ -42,6 +43,8 @@ void print_report(const StateMachine::ResultList_t& results) {
       case StateMachine::Result::Status::RACE_HR_DW:
       case StateMachine::Result::Status::POS_RACE_DR_HW:
       case StateMachine::Result::Status::POS_RACE_HR_DW:
+      case StateMachine::Result::Status::UNPROTECTED_HR:
+      case StateMachine::Result::Status::UNPROTECTED_HW:
       case StateMachine::Result::Status::READ_UNINIT_D:
       case StateMachine::Result::Status::READ_UNINIT_H:
         SCAB_SOUT << nl()
@@ -90,14 +93,14 @@ void print_report(const StateMachine::ResultList_t& results) {
 }
 
 inline ostream& operator << (ostream& out, const SrcMetadata& data) {
-  out << "[`" << data.fnName << "()`](\""<< data.srcFile << "\":" 
-              << data.line << ':' << data.col << ')';
+  out << "[`" << data.fnName << "()`](\""<< data.srcFile << ':' 
+              << data.line << ':' << data.col << "\")";
   return out;
 }
-inline ostream& operator << (ostream& out, const HostThreadId& threadId) {
-  out << "0x" << std::hex << threadId << std::dec;
-  return out;
-}
+// inline ostream& operator << (ostream& out, const HostThreadId& threadId) {
+//   out << "0x" << std::hex << (std::uintptr_t)threadId << std::dec;
+//   return out;
+// }
 inline ostream& operator << (ostream& out, const jobId_t& jobId) {
   (*out) << "{stream: 0x" << std::hex << jobId.STREAM << std::dec 
          << ", job: " << jobId.JOB << '}'; 
@@ -151,7 +154,7 @@ inline ostream& operator << (ostream& out, const TraceData& td) {
           << "address: 0x" << std::hex << td.ptr << std::dec << nl() 
           << "srcLoc: " << *td.metadata << nl()
           << "metadata: [" << td.data << ']' << nl()
-          << "threadID: " << td.threadId.host
+          << "threadID: 0x" << std::hex << td.threadId.host << std::dec
           << dedent(2u) << nl() << '}';
       break;
     case ON_CPU | _OPT_DATA_USED:
@@ -163,7 +166,7 @@ inline ostream& operator << (ostream& out, const TraceData& td) {
           << "size: " << td._OPT_DATA << nl()
           << "srcLoc: " << *td.metadata << nl()
           << "metadata: [" << td.data << ']' << nl()
-          << "threadID: " << td.threadId.host
+          << "threadID: 0x" << std::hex << td.threadId.host << std::dec
           << dedent(2u) << nl() << '}';
       break;
     case ON_GPU:
@@ -189,18 +192,42 @@ inline ostream& operator << (ostream& out, const TraceData& td) {
           << dedent(2u) << nl() << '}';
       break;
     default:
-  } 
-  if (td.data & ON_CPU) {
-    
-  } else {
-    
+      SCAB_SERR << SetLabel("scabbard.rtl.report") << SetLogType("ERROR") << nl() 
+                << "scabbard::TraceData::Print could does not support this kind of Trace Data (`"  << td.data << "`)" << endl();
+      break;
   }
   return out;
 }
+
 inline ostream& operator << (ostream& out, const StateMachine::DataPtr_t& _td) {
   if (_td)
     return (out << *_td);
   return (out << "null");
+}
+inline ostream& operator << (ostream& out, const StateMachine::Result::Status& status)
+{
+  switch (status)
+  {
+    case StateMachine::Result::Status::READ_UNINIT_D: 
+    case StateMachine::Result::Status::READ_UNINIT_H:
+      return (out << "READ FROM UNINITIALIZED MEMORY");
+    case StateMachine::Result::Status::RACE_DR_HW:
+    case StateMachine::Result::Status::RACE_HR_DW:
+      return (out << "DATA RACE FOUND");
+    case StateMachine::Result::Status::POS_RACE_DR_HW:
+    case StateMachine::Result::Status::POS_RACE_HR_DW:
+      return (out << "POSSIBLE Data Race Found");
+    case StateMachine::Result::Status::UNPROTECTED_HR:
+      return (out << "Unprotected Host Read detected");
+      case StateMachine::Result::Status::UNPROTECTED_HW:
+      return (out << "Unprotected Host Write detected");
+    case StateMachine::Result::Status::GOOD:
+      return (out << "NO issues detected :)");
+    case StateMachine::Result::Status::INTERNAL_ERROR:
+      return (out << "Internal ERROR occurred in Scabbard RTL");
+    default:
+      return (out << "<UNKNOWN_STATUS>");
+  }
 }
 
 

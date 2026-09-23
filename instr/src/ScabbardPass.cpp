@@ -607,7 +607,7 @@ public:
     } else
       changed |= true;
 
-    // errs() << "\n\n[scabbard.instr.host:DBG] Module written to: \"" << _DBG::write_module_to_file(M,"host.postInstr") << "\"\n\n"; //DEBUG
+    errs() << "\n\n[scabbard.instr.host:DBG] Module written to: \"" << _DBG::write_module_to_file(M,"host.postInstr") << "\"\n\n"; //DEBUG
 
     return changed;
   }
@@ -1011,7 +1011,7 @@ public:
       ScabbardRTL.Metadata.clean();
  
 
-    // errs() << "\n\n[scabbard.instr.device:DBG] Module written to: \"" << _DBG::write_module_to_file(M,"device.postInstr") << "\"\n\n"; //DEBUG
+    errs() << "\n\n[scabbard.instr.device:DBG] Module written to: \"" << _DBG::write_module_to_file(M,"device.postInstr") << "\"\n\n"; //DEBUG
 
     return changed || alt_changed;
   }
@@ -1516,7 +1516,7 @@ IScabbardInstrPass::PtrOrigin IScabbardHostPass::getPtrOrigin(LoopInfo& LI, Valu
         }
         break;
       }
-      case Instruction::Alloca + Value::InstructionVal: {
+      case Instruction::Alloca + Value::InstructionVal: { //TODO: check this for issues around grabbing unessisary local alloca's
         AllocaInst* AI = (AllocaInst*) Obj;
         //check if this is used in a hipMalloc
         PtrOrigin PosPO = NONE;
@@ -2477,8 +2477,8 @@ void MetadataHandler::finalizeMetadata(Module& M) {
                                                                   + M.getSourceFileName() + "\"}")), 
                                 getGEP(stringsVar, registerString(Twine("<UNKNOWN_SRC_FN>{LLVM_IR_Fn=\"")
                                                                     + I->getFunction()->getName() + "\"}")),
-                                Constant::getIntegerValue(EntryTy->getTypeAtIndex(2ul), APInt(64ul, 0ul)), 
-                                Constant::getIntegerValue(EntryTy->getTypeAtIndex(3ul), APInt(64ul, 0ul))});
+                                Constant::getIntegerValue(EntryTy->getTypeAtIndex(3ul), APInt(64ul, 0ul)), 
+                                Constant::getIntegerValue(EntryTy->getTypeAtIndex(4ul), APInt(64ul, 0ul))});
   }
 
   auto _strVar = outputStrings(M, MetadataVar->getAddressSpace());
@@ -2525,11 +2525,11 @@ inline size_t MetadataHandler::getSourceFile(const DIFile* File/* , LLVMContext&
 }
 
 inline ConstantInt* MetadataHandler::getSourceLine(const DILocation* Loc, LLVMContext& C) const {
-  return cast<ConstantInt>(Constant::getIntegerValue(EntryTy->getTypeAtIndex(2u), APInt(64ul,Loc->getLine())));
+  return cast<ConstantInt>(Constant::getIntegerValue(EntryTy->getTypeAtIndex(3u), APInt(64ul,Loc->getLine())));
 }
 
 inline ConstantInt* MetadataHandler::getSourceCol(const DILocation* Loc, LLVMContext& C) const {
-  return cast<ConstantInt>(Constant::getIntegerValue(EntryTy->getTypeAtIndex(3u), APInt(64ul,Loc->getColumn())));
+  return cast<ConstantInt>(Constant::getIntegerValue(EntryTy->getTypeAtIndex(4u), APInt(64ul,Loc->getColumn())));
 }
 
 inline ConstantInt* MetadataHandler::getLazyID(LLVMContext& C) const {

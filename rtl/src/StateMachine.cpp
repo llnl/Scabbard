@@ -108,14 +108,14 @@ void StateMachine::run(std::uint64_t remainder_quotient)
           }
           if (occurrences_uninit)
             add_result(results,{Result::READ_UNINIT_H, td, DataPtr_t::make(last_occurrence_uninit), 
-                                "The CPU read from Uninitialized memory durring a Bulk-CPU-Read/Memcpy"},
+                                "The Host Read from Uninitialized memory durring a Bulk-CPU-Read/Memcpy"},
                        occurrences_uninit);
           mem.insert(td->ptr, td->ptr+td->_OPT_DATA, td);
         } else { // single read
           i = mem.find(td->ptr);
           if (i == mem.end()) {// read with no preceding write
             if (mem.find(td->ptr) == mem.end()) // check to see if other mem table records an event
-              add_result(results,{Result::READ_UNINIT_H, td, nullptr, "The CPU Read from Uninitialized Memory"},
+              add_result(results,{Result::READ_UNINIT_H, td, nullptr, "The Host Read from Uninitialized Memory"},
                           ((td->data & _OPT_USED) ? td->_OPT_DATA : 1u)); // read with no preceding write
             mem.insert(td->ptr, td);
           } else {
@@ -135,7 +135,8 @@ void StateMachine::run(std::uint64_t remainder_quotient)
           i = mem.find(td->ptr); //TODO: \/ logic below needs a refresh (might be flawed) \/
           // not first write of a pair (empty or just allocated)
           //                          AND the conditions with the last memory action checks out
-          check_race_HW(td, i->val);
+          if (i != mem.end())
+            check_race_HW(td, i->val);
           mem.insert(td->ptr, td); // do nothing but insert into memory later.
         }
         break;
@@ -160,14 +161,14 @@ void StateMachine::run(std::uint64_t remainder_quotient)
           }
           if (occurrences_uninit)
             add_result(results,{Result::READ_UNINIT_D, td, DataPtr_t::make(last_occurrence_uninit), 
-                                "The GPU Read from Uninitialized memory durring a Bulk-GPU-Read/Memcpy"},
+                                "A Device Kernel Read from Uninitialized memory durring a Bulk-GPU-Read/Memcpy"},
                        occurrences_uninit);
           mem.insert(td->ptr, td->ptr+td->_OPT_DATA, td);
         } else { // single read
           i = mem.find(td->ptr);
           if (i == mem.end()) {// read with no preceding write
             if (mem.find(td->ptr) == mem.end()) // check to see if it was initalized in other mem table.
-              add_result(results,{Result::READ_UNINIT_D, td, nullptr, "a GPU Read of Uninitialized Memory"},
+              add_result(results,{Result::READ_UNINIT_D, td, nullptr, "A Device Kernel Read from Uninitialized Memory"},
                           ((td->data & _OPT_USED) ? td->_OPT_DATA : 1u));
             mem.insert(td->ptr, td);
           } else {
@@ -501,17 +502,19 @@ inline std::ostream& operator << (std::ostream& out, const StateMachine::Result:
 {
   switch (status)
   {
+    case StateMachine::Result::Status::READ_UNINIT_D: 
+    case StateMachine::Result::Status::READ_UNINIT_H:
+      return (out << "READ FROM UNINITIALIZED MEMORY");
     case StateMachine::Result::Status::RACE_DR_HW:
     case StateMachine::Result::Status::RACE_HR_DW:
       return (out << "DATA RACE FOUND");
-      break;
     case StateMachine::Result::Status::POS_RACE_DR_HW:
     case StateMachine::Result::Status::POS_RACE_HR_DW:
     case StateMachine::Result::Status::UNPROTECTED_HR:
     case StateMachine::Result::Status::UNPROTECTED_HW:
       return (out << "POSSIBLE Data Race Found");
     case StateMachine::Result::Status::GOOD:
-      return (out << "NO data races detected");
+      return (out << "NO issues detected :)");
     case StateMachine::Result::Status::INTERNAL_ERROR:
       return (out << "Internal ERROR occurred in Scabbard RTL");
     default:

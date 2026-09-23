@@ -34,7 +34,7 @@ struct Chunk {
   std::size_t slots_in_use;
   Chunk* prev = nullptr;
   Chunk* next = nullptr;
-  Slot<T>* storage;
+  Slot<T>* storage = nullptr;
 
   static Chunk* allocate(size_t count)
   {
@@ -49,21 +49,22 @@ struct Chunk {
 
   void release_slot()
   {
-    if (--slots_in_use == 0u) {
-      if (storage) delete[] storage;
-      storage = nullptr;
-      if (prev) prev->next = next;
-      if (next) {
-        next->prev = prev;
-        delete this;
-      }
-    }
+    if (--slots_in_use != 0u) 
+      return;
+    if (not prev) // case: this is the head node 
+      return;     //      > don't delete that is factory's/owner's responsibility
+    // case: not the head node -> connect next to prev then delete self
+    next->prev = prev;
+    prev->next = next;
+    delete this;
   }
 
   ~Chunk()
   {
-    if (storage)
-      delete[] storage;
+    if (not storage)
+      return;
+    delete[] storage;
+    storage = nullptr;
   }
 };
 
@@ -188,22 +189,23 @@ private:
 
   void refresh_chunk()
   {
-    Chunk_t* prev = nullptr; 
+    Chunk_t* next_chunk = nullptr; 
     if (root_chunk->slots_in_use == 0u) { //case: current head chunk fully deallocated
-      if (root_chunk->prev) prev = root_chunk->prev;
+      if (root_chunk->next) next_chunk = root_chunk->next;
       delete root_chunk;
+      root_chunk = nullptr;
     } else
-      prev = root_chunk;
+      next_chunk = root_chunk;
     root_chunk = Chunk_t::allocate(chunk_size);
-    root_chunk->prev = prev;
-    if (prev) prev->next = root_chunk;
+    root_chunk->next = next_chunk;
+    if (next_chunk) next_chunk->prev = root_chunk;
     next_slot_index = 0u;
   }
 
   Chunk_t* free_all_prev(Chunk_t* cur)
   {
-    if (cur->prev)
-      delete free_all_prev(cur->prev);
+    if (cur->next)
+      delete free_all_prev(cur->next);
     return cur;
   }
 
@@ -222,7 +224,9 @@ public:
 
   ~GroupedPtrFactory()
   {
-    free_all();
+    if (root_chunk)
+      delete free_all_prev(root_chunk);
+    root_chunk == nullptr;
   }
 
   // Creates a new pointer, copying the value into the next available slot
@@ -256,6 +260,7 @@ public:
   {
     if (root_chunk)
       delete free_all_prev(root_chunk);
+    root_chunk = Chunk_t::allocate(chunk_size);
   }
 };
 
