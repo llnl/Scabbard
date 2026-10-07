@@ -3,11 +3,15 @@
 
 ### TODO
 - make sure that instrument is instrumenting correct events
-  - rn it looks like it is instrumenting the loading of local variables into the struct for a launch
-  - it is also not finding the races might be related
-  - it is instrumenting stores to local stack allocations must fix
+  - original problem was check on results of `getPtrOrigin()` always resolving to `false` (`if (PO > NONE)`)
+    - still unsure why this would always resolve to false since `PtrOrigin` is an unsigned enum
+  - `llvm::getUnderlyingObjects()` fails to backtrack through load instructions
+    - modified my impl of `getPtrOrigin()` to be recursive on loads -> so far no change
 - fix the deallocation of chunk error that is occasionally resulting in seg faults during cleanup (`GPTRFact:free_all_prev`)
   - might be related to the self deletion and linked list edit in `Chunk:release_slot`
+- remake metadata system to rely on uuid's/snowflake-ids/str-hashes for their id's 
+  so that ID's can be determined at instrumentation/compile time and used for quick comparisons of src locations
+- redo metadata handler so that it holds no repeats on DI location rather than on instruction which will always be unique
 
 Thought: change data race algorithm to be good time bad time for each kind of HR,DR,HW,DW event.
 Could this work?

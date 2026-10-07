@@ -76,6 +76,31 @@ class IRHelper;
 // <<                                     METADATA HANDLER                                       >>
 // << ========================================================================================== >>
 
+struct DenseMapMetadataKeyInfo : public DenseMapInfo<Instruction*> {
+  static unsigned getHashValue(const Instruction *PtrVal) {
+    return (unsigned((uintptr_t)PtrVal->getDebugLoc().get()) >> 4) ^
+           (unsigned((uintptr_t)PtrVal->getDebugLoc().get()) >> 9);
+  }
+  static bool isEqual(const Instruction* LHS, const Instruction* RHS) {
+    if (LHS == RHS)
+      return true;
+    const llvm::DILocation *LLoc = LHS->getDebugLoc().get();
+    const llvm::DILocation *RLoc = RHS->getDebugLoc().get();
+    // No debug info, or "compiler-generated" (line 0): can't say anything.
+    if (!LLoc || !RLoc || LLoc->getLine() == 0 || RLoc->getLine() == 0)
+      return false;
+    if (LLoc->getLine() != RLoc->getLine() || LLoc->getColumn() != RLoc->getColumn())
+      return false;
+    // Same file? Compare the scope's file, not just the line number.
+    if (LLoc->getFile() != RLoc->getFile())   // DIFile nodes are uniqued
+      return false;
+    // Same source text inlined at different call sites = different instances.
+    if (LLoc->getInlinedAt() != RLoc->getInlinedAt())
+      return false;
+    return true;
+  }
+};
+
 /// @brief This class is a helper that will enable the creation of a metadata object in the module's global space.
 ///        This metadata object outputted into the module will be:
 ///        - smart enough to not include duplicate locations
@@ -88,7 +113,7 @@ class IRHelper;
 ///        - a non-static portion that will track the stack trace of the thread in question.
 ///        - a way to register when in fn's even if they have been inlined (might require an earlier pass)
 class MetadataHandler {
-  DenseMap<const Instruction*, size_t> Instructions;
+  DenseMap<const Instruction*, size_t/* , DenseMapMetadataKeyInfo */> Instructions;
   StringMap<size_t> UniqueStrings;
   std::string ConcatenatedString;
   size_t UniqueStringId = 0ul;
@@ -367,14 +392,15 @@ protected:
   /// @param F the function to examine
   /// @return \c bool - if \param F should be instrumented or skipped.
   virtual inline bool isInstrumentableFn(const Function& F) const {
-    return (Module_tors.count(&F) == 0                      // exclude any module ctor or dtor
+    return (not F.getName().starts_with("__hip_module_")    // exclude any module ctor or dtor
             && not F.isDeclaration()                        // exclude any functions not defined
             && not F.getName().starts_with("llvm.")         // exclude intrinsics
             && not F.getName().starts_with("scabbard.")     // exclude name mangled scabbard rtl functions
             && not F.getName().contains("__device_stub__")  // exclude device stubFn's from regular instruction instr
             // any fn marked as not to be instrumented
             && not (F.hasFnAttribute(Attribute::AttrKind::DisableSanitizerInstrumentation)
-                    || F.hasFnAttribute(Attribute::AttrKind::NoSanitizeCoverage))); 
+                    || F.hasFnAttribute(Attribute::AttrKind::NoSanitizeCoverage))
+            ); 
   }
 
 
@@ -399,7 +425,17 @@ protected:
   /// @param Object The object that is the origin of Ptr.
   /// @return \c IScabbardDevicePass::PtrOrigin - the memory space type of the
   ///         ptr provided.
-  virtual PtrOrigin getPtrOrigin(LoopInfo& LI, Value* Ptr, const Value** Object) const;
+  virtual PtrOrigin getPtrOrigin(LoopInfo& LI, const Value* Ptr, const Value** Object) const;
+
+  /// @brief Recursive helper for `getPrtOrigin()`.
+  ///        it should just contain the body of the switch statement for decisions on what to do when 
+  ///        an origin object is one kind of `llvm::Value` object or another.
+  ///        Used primarily when looking through a load instruction.
+  /// @param Ptr `llvm::Value*` - The next branch to look down.
+  /// @param Object `const llvm::Value**` - Where to store the Origin object's ptr if discovered, else it will store nothing.
+  /// @param max_level `std::size_t` - max number of `llvm::LoadInst` to recurse through
+  /// @return what the root `PtrOrigin` is for this branch
+  virtual PtrOrigin _getPtrOriginHelper(const Value* Ptr, const Value** Object, std::size_t max_level) const;
 
   /// @brief Simple single interface to insert the call to Scabbard's RTL func for any kind of instruction.
   ///        It will determine based off of where \c Ptr comes from if it should instrument before instrumenting.
@@ -1268,6 +1304,12 @@ void IScabbardHostPass::registerRTL(Module& M) {
     );
 }
 
+bool IsGlobalVarOnIgnoreList(const GlobalVariable* GV) {
+  return (GV->hasAttribute(Attribute::AttrKind::DisableSanitizerInstrumentation)
+            || GV->hasAttribute(Attribute::AttrKind::NoSanitizeCoverage));
+          
+}
+
 inline void IScabbardHostPass::registerGlobalVarsInUnifiedMemory(const Module& M) {
   std::function<const Value*(const Value*)> get_next = [&](const Value* V) -> const llvm::Value* {
     if (const auto* CE = dyn_cast_or_null<ConstantExpr>(V)) {
@@ -1285,7 +1327,8 @@ inline void IScabbardHostPass::registerGlobalVarsInUnifiedMemory(const Module& M
     for (const auto _u : Fn->users())
       if (const auto* call = dyn_cast_or_null<CallInst>(_u)) {
         if (const auto* global = dyn_cast_or_null<GlobalVariable>(get_next(call->getArgOperand(1)))) {
-          this->GlobalUnifiedMemVar.insert(std::make_pair(global->getName(), HeapLoc));
+          if (not IsGlobalVarOnIgnoreList(global))
+            this->GlobalUnifiedMemVar.insert(std::make_pair(global->getName(), HeapLoc));
         }
       }
   };
@@ -1459,53 +1502,48 @@ const StringMap<CallCheck_t> funcsOfInterest {
   };
 } //? namespace HostPtrOriginHelpers
 
-bool IsGlobalVarOnIgnoreList(const GlobalVariable* GV) {
-  return (GV->hasAttribute(Attribute::AttrKind::DisableSanitizerInstrumentation)
-            || GV->hasAttribute(Attribute::AttrKind::NoSanitizeCoverage));
-          
-}
-
-IScabbardInstrPass::PtrOrigin IScabbardHostPass::getPtrOrigin(LoopInfo& LI, Value* Ptr, const Value** Object) const {
-  // derived from
-  // https://github.com/jdoerfert/llvm-project/blob/b416d0c996bc01aeb6708c715bfe5e53bcac998d/llvm/lib/Transforms/Instrumentation/GPUSan.cpp#L592
+IScabbardInstrPass::PtrOrigin IScabbardHostPass::_getPtrOriginHelper(const Value* Obj, const Value** Object, std::size_t max_level) const {
   using namespace HostPtrOriginHelpers;
-  SmallVector<const Value*> Objects;
-  getUnderlyingObjects(Ptr, Objects, &LI);
-  if (Object && Objects.size() == 1)
-    *Object = Objects.front();
-  PtrOrigin PO = NONE;
-  for (auto* Obj : Objects) {
-    PtrOrigin ObjPO = NONE;
-    switch (Obj->getValueID()) {
-      case Value::GlobalVariableVal: {
-        GlobalVariable* GV = (GlobalVariable*) Obj;
-        if (IsGlobalVarOnIgnoreList(GV))
-          break; // maybe set to never and return instead?
-        auto res = GlobalUnifiedMemVar.find(GV->getName());
-        ObjPO = ((res != GlobalUnifiedMemVar.end()) ? res->second : UNKNOWN_HEAP); 
-        //TODO remove globals not known to be on device or managed
-        break;
-      }
-      case Value::ArgumentVal:
+  if (not max_level) return NONE;
+  PtrOrigin ObjPO = NONE;
+  bool is_runtime_cond = false;
+  switch (Obj->getValueID()) {
+    case Value::GlobalVariableVal: {
+      GlobalVariable* GV = (GlobalVariable*) Obj;
+      if (IsGlobalVarOnIgnoreList(GV))
+        return NEVER;
+      auto res = GlobalUnifiedMemVar.find(GV->getName());
+      if (res == GlobalUnifiedMemVar.end()) {
         ObjPO = UNKNOWN_HEAP;
-        break;
-      case Instruction::Load + Value::InstructionVal: {
-        LoadInst* Load = (LoadInst*) Obj;
-        if (auto* Global = dyn_cast<GlobalVariable>(Load->getPointerOperand())) {
-          if (IsGlobalVarOnIgnoreList(Global))
-            break; // maybe set to never and return instead?
-          if (Global->getName().ends_with(".device") 
-              || _M.getGlobalVariable(Global->getName().str()+".device"))
-            ObjPO = DEVICE_HEAP;
-          else if (Global->getName().ends_with(".managed") 
-              || _M.getGlobalVariable(Global->getName().str()+".managed"))
-            ObjPO = MANAGED_MEM;
-        }
+        is_runtime_cond = true;
         break;
       }
-      case Instruction::Call + Value::InstructionVal: {
-        CallInst* CI = (CallInst*) Obj;
-        if (auto* Callee = CI->getCalledFunction())
+      ObjPO = res->second;
+      *Object = Obj;
+      break;
+    }
+    case Value::ArgumentVal:
+      ObjPO = UNKNOWN_HEAP;
+      is_runtime_cond = true;
+      *Object = Obj;
+      break;
+    case Instruction::Load + Value::InstructionVal: {
+        if (max_level == 0) {
+          is_runtime_cond = true;
+          ObjPO = UNKNOWN_HEAP;
+          break;
+        }
+        const LoadInst* Load = (LoadInst*) Obj;
+        const Value* LPtr = getUnderlyingObjectAggressive(Load->getPointerOperand());
+        const AllocaInst* alloca = findAllocaForValue(LPtr);
+        PtrOrigin res = _getPtrOriginHelper(LPtr, Object, max_level-1);
+        if (res != NONE) 
+          ObjPO = res; 
+        break;
+      }
+    case Instruction::Call + Value::InstructionVal: {
+      CallInst* CI = (CallInst*) Obj;
+      if (auto* Callee = CI->getCalledFunction()) {
         if (Callee->getName().starts_with("ompx_")) {
           if (Callee->getName().ends_with("_global"))
             ObjPO = DEVICE_HEAP;
@@ -1514,30 +1552,109 @@ IScabbardInstrPass::PtrOrigin IScabbardHostPass::getPtrOrigin(LoopInfo& LI, Valu
           else if (Callee->getName().ends_with("_shared"))
             ObjPO = MANAGED_MEM;
         }
+        if (ObjPO != NONE)
+          *Object = Obj;
+      }
+      break;
+    }
+    case Instruction::Alloca + Value::InstructionVal: {
+      AllocaInst* AI = (AllocaInst*) Obj;
+      bool any_of_interest = false;
+      //check if this is used in a driver func of interest
+      for (const auto U : AI->users())
+        if (const CallInst* CI = llvm::dyn_cast_or_null<llvm::CallInst>(U)) {
+          auto p = funcsOfInterest.find(CI->getCalledFunction()->getName());
+          if (p != funcsOfInterest.end()) {
+            PtrOrigin res = p->second(*Obj,*CI);
+              if (res != NONE) {
+                ObjPO = res;
+                any_of_interest = true;
+                break;
+              }
+            }
+        }
+      *Object = Obj;
+      break;
+    }
+    default:
+      break;
+  }
+  if (is_runtime_cond)
+    ObjPO |= _RUNTIME_CONDITIONAL;
+  return ObjPO;
+}
+
+IScabbardInstrPass::PtrOrigin IScabbardHostPass::getPtrOrigin(LoopInfo& LI, const Value* Ptr, const Value** Object) const {
+  // derived from
+  // https://github.com/jdoerfert/llvm-project/blob/b416d0c996bc01aeb6708c715bfe5e53bcac998d/llvm/lib/Transforms/Instrumentation/GPUSan.cpp#L592
+  SmallVector<const Value*> Objects;
+  getUnderlyingObjects(Ptr, Objects, &LI, 16u);
+  if (Object && Objects.size() == 1)
+    *Object = Objects.front();
+  PtrOrigin PO = NONE;
+  bool is_runtime_cond = false;
+  for (auto* Obj : Objects) {
+    PtrOrigin ObjPO = NONE;
+    switch (Obj->getValueID()) {
+      case Value::GlobalVariableVal: {
+        const GlobalVariable* GV = (GlobalVariable*) Obj;
+        if (IsGlobalVarOnIgnoreList(GV))
+          return NEVER;
+        auto res = GlobalUnifiedMemVar.find(GV->getName());
+        if (res == GlobalUnifiedMemVar.end()) {
+          ObjPO = UNKNOWN_HEAP;
+          is_runtime_cond = true;
+          break;
+        }
+        ObjPO = res->second;
         break;
       }
-      case Instruction::Alloca + Value::InstructionVal: { //TODO: check this for issues around grabbing unessisary local alloca's
-        AllocaInst* AI = (AllocaInst*) Obj;
-        //check if this is used in a hipMalloc
-        PtrOrigin PosPO = NONE;
-        for (const auto& U : AI->uses())
-          if (const CallInst* CI = llvm::dyn_cast_or_null<llvm::CallInst>(&U)) {
-            auto p = funcsOfInterest.find(CI->getCalledFunction()->getName().str());
-            if (p != funcsOfInterest.end())
-              if (PtrOrigin res = p->second(*Obj,*CI))
-                PosPO = res;
-          }
-        if (PosPO == NONE)
-          return LOCAL;
-        ObjPO = PosPO;
+      case Value::ArgumentVal:
+        ObjPO = UNKNOWN_HEAP;
+        is_runtime_cond = true;
+        break;
+      case Instruction::Load + Value::InstructionVal: {
+        const LoadInst* Load = (LoadInst*) Obj;
+        const Value* LPtr = getUnderlyingObjectAggressive(Load->getPointerOperand());
+        if (not LPtr) {
+          ObjPO = UNKNOWN_HEAP;
+          is_runtime_cond = true;
+          break;
+        }
+        PtrOrigin res = _getPtrOriginHelper(LPtr, Object, 6u);
+        if (res & _RUNTIME_CONDITIONAL) {
+          res &= ~_RUNTIME_CONDITIONAL;
+          is_runtime_cond = true;
+        }
+        if (res != NONE) 
+          ObjPO = res; 
         break;
       }
+      case Instruction::Call + Value::InstructionVal: {
+        const CallInst* CI = (CallInst*) Obj;
+        if (auto* Callee = CI->getCalledFunction()) {
+          if (Callee->getName().starts_with("ompx_")) {
+            if (Callee->getName().ends_with("_global"))
+              ObjPO = DEVICE_HEAP;
+            else if (Callee->getName().ends_with("_local"))
+              ObjPO = LOCAL;
+            else if (Callee->getName().ends_with("_shared"))
+              ObjPO = MANAGED_MEM;
+        }
+       }
+        break;
+      }
+      case Instruction::Alloca + Value::InstructionVal: 
+        ObjPO = LOCAL;
+        break;
       default:
         break;
     }
-    if (PO == NONE || (PO == UNKNOWN_HEAP && ObjPO > UNKNOWN_HEAP))
+    if (PO == NONE || (PO == UNKNOWN_HEAP && ObjPO != NONE))
       PO = ObjPO;
   }
+  if (is_runtime_cond)
+    PO |= _RUNTIME_CONDITIONAL;
   return PO;
 }
 
@@ -1547,7 +1664,7 @@ bool IScabbardHostPass::instrumentInScabbardFunc(LoopInfo& LI, Instruction& I, V
   const Value *Object = nullptr;
   PtrOrigin PO = getPtrOrigin(LI, PtrOp, &Object);
 
-  if (PO > NO) // don't instrument if it is Known to be not in Unified Memory.
+  if (PO == LOCAL)
     return false;
 
   if (PO == UNKNOWN_HEAP) // mark memory to be determined at runtime if it is in Unified Memory
@@ -2358,7 +2475,7 @@ bool IScabbardDevicePass::instrumentInScabbardFunc(LoopInfo& LI, Instruction& I,
     const Value *Object = nullptr;
     PtrOrigin PO = getPtrOrigin(LI, PtrOp, &Object);
 
-    if (PO == NO) // don't instrument if it is not accessible outside of the GPU.
+    if (PO == LOCAL) // don't instrument if it is not accessible outside of the GPU.
       return false;
 
     auto [locID, is_inserted] = ScabbardRTL.Metadata.insert(&I);

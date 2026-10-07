@@ -54,7 +54,8 @@ struct Chunk {
     if (not prev) // case: this is the head node 
       return;     //      > don't delete that is factory's/owner's responsibility
     // case: not the head node -> connect next to prev then delete self
-    next->prev = prev;
+    if (next)
+      next->prev = prev;
     prev->next = next;
     delete this;
   }
@@ -226,7 +227,7 @@ public:
   {
     if (root_chunk)
       delete free_all_prev(root_chunk);
-    root_chunk == nullptr;
+    root_chunk = nullptr;
   }
 
   // Creates a new pointer, copying the value into the next available slot

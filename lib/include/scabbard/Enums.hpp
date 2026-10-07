@@ -109,6 +109,34 @@ namespace scabbard {
   {
     return (l = (InstrData)(static_cast<std::uint16_t>(l) & static_cast<std::uint16_t>(r)));
   }
+  inline constexpr InstrData operator ^ (const InstrData l, const InstrData r) 
+  {
+    return (InstrData)(static_cast<std::uint16_t>(l) ^ static_cast<std::uint16_t>(r));
+  }
+  inline InstrData& operator ^= (InstrData& l, InstrData r) 
+  {
+    return (l = (InstrData)(static_cast<std::uint16_t>(l) ^ static_cast<std::uint16_t>(r)));
+  }
+  inline constexpr InstrData operator ~ (const InstrData d) 
+  {
+    return (InstrData)(~(static_cast<std::uint16_t>(d)));
+  }
+  // inline bool operator < (const InstrData l, const InstrData r) 
+  // {
+  //   return static_cast<std::uint16_t>(l) < static_cast<std::uint16_t>(r);
+  // }
+  // inline bool operator <= (InstrData& l, InstrData r) 
+  // {
+  //   return static_cast<std::uint16_t>(l) <= static_cast<std::uint16_t>(r);
+  // }
+  // inline bool operator > (const InstrData l, const InstrData r) 
+  // {
+  //   return static_cast<std::uint16_t>(l) > static_cast<std::uint16_t>(r);
+  // }
+  // inline bool operator >= (InstrData& l, InstrData r) 
+  // {
+  //   return static_cast<std::uint16_t>(l) >= static_cast<std::uint16_t>(r);
+  // }
 
   std::ostream& operator << (std::ostream& out, const InstrData& data) noexcept;
   // {
