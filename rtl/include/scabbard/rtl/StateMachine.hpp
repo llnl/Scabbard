@@ -41,10 +41,10 @@ namespace rtl {
     struct Result {
       enum Status { 
         GOOD=0, 
-        READ_UNINIT_D, READ_UNINIT_H,
-        POS_RACE_DR_HW, POS_RACE_HR_DW,
-        UNPROTECTED_HW, UNPROTECTED_HR,
-        RACE_DR_HW, RACE_HR_DW,
+        READ_UNINIT_D=2, READ_UNINIT_H,
+        UNPROTECTED_HW=8, UNPROTECTED_HR,
+        POS_RACE_DR_HW=16, POS_RACE_HR_DW,
+        RACE_DR_HW=32, RACE_HR_DW,
         INTERNAL_ERROR=-1 
       };
       Status status;

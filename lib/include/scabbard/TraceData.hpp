@@ -127,11 +127,18 @@ union ThreadId {
   DeviceThreadId device;
   void* _NONE_;
   [[clang::disable_sanitizer_instrumentation, gnu::flatten, gnu::always_inline]]
-  __device__ inline ThreadId(const jobId_t& job_, const dim3& blockId_, const dim3& threadId_) 
+  __device__ 
+  ThreadId(const jobId_t& job_, const dim3& blockId_, const dim3& threadId_) 
   { device = DeviceThreadId(job_, blockId_, threadId_); }
   [[clang::disable_sanitizer_instrumentation, gnu::flatten, gnu::always_inline]] 
   __host__
   ThreadId() { this->host = std::hash<std::thread::id>{}(std::this_thread::get_id()); }
+  [[clang::disable_sanitizer_instrumentation, gnu::flatten, gnu::always_inline]] 
+  __host__
+  ThreadId(const DeviceThreadId& DTId) { device = DTId; }
+  [[clang::disable_sanitizer_instrumentation, gnu::flatten, gnu::always_inline]] 
+  __host__
+  ThreadId(const HostThreadId& TID) { host = TID; }
   [[clang::disable_sanitizer_instrumentation, gnu::flatten, gnu::always_inline]] 
   __host__ __device__
   ThreadId(void* _) { std::memset(this,0u,sizeof(ThreadId)); }

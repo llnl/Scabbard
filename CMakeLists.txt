@@ -110,6 +110,7 @@ add_subdirectory(lib)
 add_subdirectory(rtl)
 add_subdirectory(instr)
 add_subdirectory(cli)
+add_subdirectory(test)
 
 install(TARGETS instr rtl rtl.device
         DESTINATION  ${CMAKE_INSTALL_PREFIX}/
