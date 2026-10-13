@@ -1,8 +1,10 @@
 
 
 set(GTEST_RELEASE_HASH 063de7e9578f82b369302001269680b4b1553359)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 include(FetchContent)
+set(DOWNLOAD_EXTRACT_TIMESTAMP true)
 FetchContent_Declare(
   googletest
   URL https://github.com/google/googletest/archive/${GTEST_RELEASE_HASH}.zip)

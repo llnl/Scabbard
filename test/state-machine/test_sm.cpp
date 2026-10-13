@@ -1,6 +1,10 @@
 
 #include "sm_fixture.hpp"
 
+namespace scabbard {
+namespace rtl {
+namespace test {
+
 
 TEST_F(SM_Tests, no_race) {
   auto tid = spawn_host_thread();
@@ -59,6 +63,15 @@ TEST_F(SM_Tests, def_HR_DW_race_1) {
 }
 
 
+
+
+
+
+
+
+} //? namespace test
+} //? namespace rtl
+} //? namespace scabbard
 
 int main(int argc, char **argv) {
   testing::InitGoogleTest(&argc, argv);

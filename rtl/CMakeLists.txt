@@ -48,8 +48,8 @@ target_include_directories(rtl
 
 target_link_libraries(rtl
     PUBLIC
-    $<BUILD_INTERFACE:${SCABBARD_PATH}/libscabbard.so>
-    $<INSTALL_INTERFACE:${CMAKE_INSTALL_LIBDIR}/libscabbard.so>
+    # $<BUILD_INTERFACE:${SCABBARD_PATH}/libscabbard.so>
+    # $<INSTALL_INTERFACE:${CMAKE_INSTALL_LIBDIR}/libscabbard.so>
     PRIVATE
     hip::host
     # libscabbard
@@ -207,4 +207,4 @@ install(TARGETS rtl rtl.device EXPORT libtraceConfig
 # this is an llvm instr only lib, there are no include files
 # install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 
-export(TARGETS rtl rtl.device FILE libtraceConfig.cmake)
+export(TARGETS rtl rtl.device FILE librtlConfig.cmake)

@@ -22,11 +22,10 @@ add_dependencies(instr rtl rtl.device)
 target_include_directories(instr
     PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/lib/include>
     $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
     PRIVATE
     src
-    ./include
-    ../lib/include
   )
 
 target_link_libraries(instr

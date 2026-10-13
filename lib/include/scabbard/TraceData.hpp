@@ -101,6 +101,11 @@ struct jobId_t {
   [[clang::disable_sanitizer_instrumentation, gnu::flatten, gnu::always_inline]] 
   __host__
   inline bool isDefaultStream() const { return not STREAM; }
+# ifdef SCABBARD_UNIT_TEST
+  [[clang::disable_sanitizer_instrumentation, gnu::flatten, gnu::always_inline]] 
+  __host__
+  jobId_t(StreamJobId job, StreamId stream) : JOB(job), STREAM(stream) {}
+# endif
 };
 #pragma pack()
 

@@ -94,6 +94,11 @@ namespace scabbard {
       : lazy_id(next_id++), srcFile(srcFile_), fnName(fnName_), line(line_), col(col_)
     {}
 
+#   ifdef SCABBARD_UNIT_TEST
+    SrcMetadata(std::size_t Id, const char* const Src, const char* const Fn, std::size_t Line, std::size_t Col)
+      : lazy_id(Id), srcFile(Src), fnName(Fn), line(Line), col(Col) {}
+#   endif
+
     // NLOHMANN_DEFINE_TYPE_INTRUSIVE(SrcMetadata, srcID, srcFile, line, col, modType) //TODO: remove
   };
 
