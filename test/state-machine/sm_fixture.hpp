@@ -19,8 +19,8 @@ class SM_Tests : public testing::Test {
   using GPtr_t = StateMachine::DataPtr_t;
   using EventData_t = StateMachine::Data_t;
 private:
-  StateMachine SM;
   GroupedPtrFactory<const EventData_t> GF;
+  StateMachine SM;
   LTime_t vClk = 0u;
   DeviceVClks_t dev_vClks{{0u,0u}};
   std::uint16_t next_jobId = 0u;
