@@ -1395,7 +1395,6 @@ bool IScabbardHostPass::runImpl(Function& F, FunctionAnalysisManager& FAM) {
       AtomicRMWs.push_back(&cast<AtomicRMWInst>(I));
       break;
     case Instruction::AtomicCmpXchg:
-      // TODO handle cmpxchg instructions
       CmpXchgs.push_back(&cast<AtomicCmpXchgInst>(I));
       break;
     // case Instruction::IntToPtr:
