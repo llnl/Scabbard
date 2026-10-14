@@ -422,7 +422,7 @@ StateMachine::Result::Status StateMachine::check_race_HW(const StateMachine::Dat
   switch (o->data & FILTER) {
     case ON_DEVICE | READ: 
     case ON_DEVICE | READ | WRITE: // for atomicrmw instructions
-      return add_result(results,{Result::RACE_DR_HW, o, HW, "RACE FOUND: DR->HW - Host Wrote to a memory location currently controlled by a Device after the Device Read from it"});
+      return add_result(results,{Result::RACE_DR_HW, o, HW, "RACE FOUND: DR->HW - Host Wrote to a memory location currently controlled by a Device without a Sync."});
 
     case ON_DEVICE | WRITE:
       return add_result(results,{Result::UNPROTECTED_HW, o, HW, "WARN: Host Wrote to memory still controlled by a Device"});

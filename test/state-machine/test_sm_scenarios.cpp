@@ -129,16 +129,16 @@ TEST_F(SM_Tests, DR_before_HW_true_race) {
   EXPECT_EQ(status_count(Status::READ_UNINIT_D), 0u);
 }
 
-// job fully finished before the host overwrites, but nobody synced -> possible race
-TEST_F(SM_Tests, DR_before_HW_possible_race) {
-  constexpr std::size_t N_DR = 30u, N_HW = 3u;
+// valid order (host write -> device read), but the write comes AFTER the launch and no
+// sync orders it, so nothing protects that order from being reversed -> possible race
+TEST_F(SM_Tests, HW_after_launch_before_DR_possible_race) {
+  constexpr std::size_t N_HW = 3u, N_DR = 30u;
   auto tid = spawn_host_thread();
   auto mem = malloc_event(tid);
-  host_write_event(tid, mem);
   auto jid = launch_event(tid, spawn_device_stream());
+  for (std::size_t i=0; i<N_HW; ++i) host_write_event(tid, mem);   // after launch: launch does not protect it
   for (std::size_t i=0; i<N_DR; ++i) device_read_event(jid, mem);
   device_job_completes_event(jid);
-  for (std::size_t i=0; i<N_HW; ++i) host_write_event(tid, mem);   // no sync first
   sync_event(tid, jid.STREAM);
   free_event(tid, mem);
 
@@ -149,6 +149,8 @@ TEST_F(SM_Tests, DR_before_HW_possible_race) {
   EXPECT_TRUE(any_race());
   EXPECT_FALSE(any_true_race());
   EXPECT_GE(status_count(Status::POS_RACE_DR_HW), 1u);
+  EXPECT_EQ(status_count(Status::READ_UNINIT_D), 0u);
+  EXPECT_EQ(status_count(Status::READ_UNINIT_H), 0u);
 }
 
 
@@ -450,6 +452,7 @@ TEST_F(SM_Tests, multi_thread_multi_stream_mixed_statuses) {
   EXPECT_EQ(status_count_all(),
             status_count(Status::POS_RACE_HR_DW)
           + status_count(Status::RACE_DR_HW)
+          + status_count(Status::POS_RACE_DR_HW)
           + status_count(Status::READ_UNINIT_H)) << "the clean region must contribute nothing";
 }
 
