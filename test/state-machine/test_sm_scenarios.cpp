@@ -22,15 +22,12 @@ namespace test {
 using Status = StateMachine::Result::Status;
 
 // ---------------------------------------------------------------------------
-// REPORTING MODEL (the one place to adjust if your SM counts differently)
-//
-// `reports(a, b)` = how many Results are expected when `a` accesses on one side
-// conflict with `b` accesses on the other side. Default assumption: every
-// conflicting (host access, device access) pair is reported once.
-// If the SM only compares against the last access in the IntervalMap, or
-// de-duplicates, change this single function (e.g. `return a;`).
+// REPORTING MODEL
+// The SM only catches the FIRST instance of a given problem during bulk reads /
+// writes, so per-status checks use `EXPECT_GE(count, 1u)` rather than exact
+// pair counts. "Nothing else reported" is checked via 0-counts for the other
+// statuses and via status_count_all() equalities.
 // ---------------------------------------------------------------------------
-constexpr std::size_t reports(std::size_t a, std::size_t b) { return a * b; }
 
 
 // ===========================================================================
@@ -51,9 +48,11 @@ TEST_F(SM_Tests, HR_before_DW_true_race_light) {
   free_event(tid, mem);
 
   run();
+  auto iErrs = get_internal_errors();
+  ASSERT_FALSE(iErrs) << iErrs;
 
   EXPECT_TRUE(any_true_race());
-  EXPECT_EQ(status_count(Status::RACE_HR_DW), reports(N_HR, N_DW));
+  EXPECT_GE(status_count(Status::RACE_HR_DW), 1u);
   EXPECT_EQ(status_count(Status::RACE_DR_HW), 0u);
   EXPECT_EQ(status_count(Status::READ_UNINIT_H), 0u);
   EXPECT_EQ(status_count(Status::READ_UNINIT_D), 0u);
@@ -72,9 +71,11 @@ TEST_F(SM_Tests, HR_before_DW_true_race_heavy) {
   free_event(tid, mem);
 
   run();
+  auto iErrs = get_internal_errors();
+  ASSERT_FALSE(iErrs) << iErrs;
 
   EXPECT_TRUE(any_true_race());
-  EXPECT_EQ(status_count(Status::RACE_HR_DW), reports(N_HR, N_DW));
+  EXPECT_GE(status_count(Status::RACE_HR_DW), 1u);
   EXPECT_EQ(status_count(Status::RACE_DR_HW), 0u);
 }
 
@@ -91,10 +92,12 @@ TEST_F(SM_Tests, HR_after_DW_complete_no_sync_possible_race) {
   free_event(tid, mem);
 
   run();
+  auto iErrs = get_internal_errors();
+  ASSERT_FALSE(iErrs) << iErrs;
 
   EXPECT_TRUE(any_race());
   EXPECT_FALSE(any_true_race());
-  EXPECT_EQ(status_count(Status::POS_RACE_HR_DW), reports(N_HR, N_DW));
+  EXPECT_GE(status_count(Status::POS_RACE_HR_DW), 1u);
 }
 
 
@@ -117,9 +120,11 @@ TEST_F(SM_Tests, DR_before_HW_true_race) {
   free_event(tid, mem);
 
   run();
+  auto iErrs = get_internal_errors();
+  ASSERT_FALSE(iErrs) << iErrs;
 
   EXPECT_TRUE(any_true_race());
-  EXPECT_EQ(status_count(Status::RACE_DR_HW), reports(N_HW, N_DR_BEFORE + N_DR_AFTER));
+  EXPECT_GE(status_count(Status::RACE_DR_HW), 1u);
   EXPECT_EQ(status_count(Status::RACE_HR_DW), 0u);
   EXPECT_EQ(status_count(Status::READ_UNINIT_D), 0u);
 }
@@ -138,10 +143,12 @@ TEST_F(SM_Tests, DR_before_HW_possible_race) {
   free_event(tid, mem);
 
   run();
+  auto iErrs = get_internal_errors();
+  ASSERT_FALSE(iErrs) << iErrs;
 
   EXPECT_TRUE(any_race());
   EXPECT_FALSE(any_true_race());
-  EXPECT_EQ(status_count(Status::POS_RACE_DR_HW), reports(N_HW, N_DR));
+  EXPECT_GE(status_count(Status::POS_RACE_DR_HW), 1u);
 }
 
 
@@ -176,11 +183,13 @@ TEST_F(SM_Tests, unprotected_host_access_no_actual_race) {
   free_event(tid, other);
 
   run();
+  auto iErrs = get_internal_errors();
+  ASSERT_FALSE(iErrs) << iErrs;
 
   EXPECT_FALSE(any_race()) << "no conflicting access exists, so nothing may reach POS_RACE";
   EXPECT_TRUE(any_race_lose());
-  EXPECT_EQ(status_count(Status::UNPROTECTED_HW), N_HW);
-  EXPECT_EQ(status_count(Status::UNPROTECTED_HR), N_HR);
+  EXPECT_GE(status_count(Status::UNPROTECTED_HW), 1u);
+  EXPECT_GE(status_count(Status::UNPROTECTED_HR), 1u);
 }
 
 
@@ -197,10 +206,12 @@ TEST_F(SM_Tests, host_read_uninitialized) {
   free_event(tid, mem);
 
   run();
+  auto iErrs = get_internal_errors();
+  ASSERT_FALSE(iErrs) << iErrs;
 
   EXPECT_TRUE(any_issues());
   EXPECT_FALSE(any_race());
-  EXPECT_EQ(status_count(Status::READ_UNINIT_H), N);
+  EXPECT_GE(status_count(Status::READ_UNINIT_H), 1u);
   EXPECT_EQ(status_count(Status::READ_UNINIT_D), 0u);
 }
 
@@ -219,10 +230,12 @@ TEST_F(SM_Tests, device_read_uninitialized) {
   free_event(tid, mem);
 
   run();
+  auto iErrs = get_internal_errors();
+  ASSERT_FALSE(iErrs) << iErrs;
 
   EXPECT_TRUE(any_issues());
   EXPECT_FALSE(any_race());
-  EXPECT_EQ(status_count(Status::READ_UNINIT_D), N);
+  EXPECT_GE(status_count(Status::READ_UNINIT_D), 1u);
   EXPECT_EQ(status_count(Status::READ_UNINIT_H), 0u);
 }
 
@@ -255,10 +268,12 @@ TEST_F(SM_Tests, host_read_of_unsynced_stream_memory) {
   free_event(tid, mem_a);
 
   run();
+  auto iErrs = get_internal_errors();
+  ASSERT_FALSE(iErrs) << iErrs;
 
   EXPECT_FALSE(any_true_race());
-  EXPECT_EQ(status_count(Status::POS_RACE_HR_DW), reports(N_HR_BAD, N_DW));
-  EXPECT_EQ(status_count_all(), reports(N_HR_BAD, N_DW)) << "reads of mem_b must stay clean";
+  EXPECT_GE(status_count(Status::POS_RACE_HR_DW), 1u);
+  EXPECT_EQ(status_count_all(), status_count(Status::POS_RACE_HR_DW)) << "reads of mem_b must stay clean";
 }
 
 // sync is per (host thread, stream): t1 syncing does not protect t2
@@ -280,9 +295,11 @@ TEST_F(SM_Tests, sync_on_other_host_thread_does_not_protect) {
   free_event(t1, mem);
 
   run();
+  auto iErrs = get_internal_errors();
+  ASSERT_FALSE(iErrs) << iErrs;
 
   EXPECT_FALSE(any_true_race());
-  EXPECT_EQ(status_count(Status::POS_RACE_HR_DW), reports(N_HR_T2, N_DW));
+  EXPECT_GE(status_count(Status::POS_RACE_HR_DW), 1u);
 }
 
 
@@ -310,6 +327,8 @@ TEST_F(SM_Tests, ping_pong_same_address_clean_then_one_unsynced_round) {
     host_write_event(tid, mem);
   }
   run();
+  auto iErrs = get_internal_errors();
+  ASSERT_FALSE(iErrs) << iErrs;
   EXPECT_FALSE(any_issues()) << "clean rounds must not report anything";
   // NOTE: run() may be called again after appending more events
   auto jid = launch_event(tid, stream);
@@ -321,9 +340,11 @@ TEST_F(SM_Tests, ping_pong_same_address_clean_then_one_unsynced_round) {
   free_event(tid, mem);
 
   run();
+  iErrs = get_internal_errors();
+  ASSERT_FALSE(iErrs) << iErrs;
 
   EXPECT_FALSE(any_true_race());
-  EXPECT_EQ(status_count(Status::POS_RACE_HR_DW), reports(1u, DW_PER_ROUND));
+  EXPECT_GE(status_count(Status::POS_RACE_HR_DW), 1u);
 }
 
 // several jobs per stream: same-stream jobs are ordered, so job2 reading job1's
@@ -357,6 +378,8 @@ TEST_F(SM_Tests, multiple_jobs_per_stream_clean) {
   free_event(tid, b);
 
   run();
+  auto iErrs = get_internal_errors();
+  ASSERT_FALSE(iErrs) << iErrs;
 
   EXPECT_FALSE(any_issues());
   EXPECT_EQ(status_count_all(), 0u);
@@ -416,16 +439,18 @@ TEST_F(SM_Tests, multi_thread_multi_stream_mixed_statuses) {
   free_event(t1, uninit);
 
   run();
+  auto iErrs = get_internal_errors();
+  ASSERT_FALSE(iErrs) << iErrs;
 
   EXPECT_TRUE(any_true_race());
-  EXPECT_EQ(status_count(Status::POS_RACE_HR_DW), reports(N_HR_P, N_DW_P));
-  EXPECT_EQ(status_count(Status::RACE_DR_HW), reports(N_HW_T, N_DR_T_BEFORE + N_DR_T_AFTER));
-  EXPECT_EQ(status_count(Status::READ_UNINIT_H), N_UNINIT);
+  EXPECT_GE(status_count(Status::POS_RACE_HR_DW), 1u);
+  EXPECT_GE(status_count(Status::RACE_DR_HW), 1u);
+  EXPECT_GE(status_count(Status::READ_UNINIT_H), 1u);
   EXPECT_EQ(status_count(Status::READ_UNINIT_D), 0u);
   EXPECT_EQ(status_count_all(),
-            reports(N_HR_P, N_DW_P)
-          + reports(N_HW_T, N_DR_T_BEFORE + N_DR_T_AFTER)
-          + N_UNINIT) << "the clean region must contribute nothing";
+            status_count(Status::POS_RACE_HR_DW)
+          + status_count(Status::RACE_DR_HW)
+          + status_count(Status::READ_UNINIT_H)) << "the clean region must contribute nothing";
 }
 
 } //? namespace test

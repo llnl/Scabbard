@@ -1533,7 +1533,11 @@ IScabbardInstrPass::PtrOrigin IScabbardHostPass::_getPtrOriginHelper(const Value
           break;
         }
         const LoadInst* Load = (LoadInst*) Obj;
-        const Value* LPtr = getUnderlyingObjectAggressive(Load->getPointerOperand());
+#       if (__llvm_major__ >= 17)
+        const Value* LPtr = getUnderlyingObjectAggressiveLoad->getPointerOperand());
+        #       else
+        const Value* LPtr = getUnderlyingObject(Load->getPointerOperand());
+#       endif
         const AllocaInst* alloca = findAllocaForValue(LPtr);
         PtrOrigin res = _getPtrOriginHelper(LPtr, Object, max_level-1);
         if (res != NONE) 
@@ -1614,7 +1618,11 @@ IScabbardInstrPass::PtrOrigin IScabbardHostPass::getPtrOrigin(LoopInfo& LI, cons
         break;
       case Instruction::Load + Value::InstructionVal: {
         const LoadInst* Load = (LoadInst*) Obj;
-        const Value* LPtr = getUnderlyingObjectAggressive(Load->getPointerOperand());
+#       if (__llvm_major__ >= 17)
+          const Value* LPtr = getUnderlyingObjectAggressiveLoad->getPointerOperand());
+#       else
+          const Value* LPtr = getUnderlyingObject(Load->getPointerOperand());
+#       endif
         if (not LPtr) {
           ObjPO = UNKNOWN_HEAP;
           is_runtime_cond = true;

@@ -21,6 +21,9 @@ TEST_F(SM_Tests, no_race) {
 
   run();
 
+  auto iErrs = get_internal_errors();
+  ASSERT_FALSE(iErrs) << iErrs;
+
   EXPECT_FALSE(any_issues()) << "[scabbard.rtl.sm.test:RPT] FAIL: no_race";
 }
 
@@ -41,6 +44,9 @@ TEST_F(SM_Tests, def_HR_DW_race_0) {
 
   run();
 
+  auto iErrs = get_internal_errors();
+  ASSERT_FALSE(iErrs) << iErrs;
+
   EXPECT_FALSE(any_true_race()) << "[scabbard.rtl.sm.test:RPT] FAIL: def_HR_DW_race_0";
 }
 
@@ -58,6 +64,9 @@ TEST_F(SM_Tests, def_HR_DW_race_1) {
   free_event(tid, mem);
 
   run();
+
+  auto iErrs = get_internal_errors();
+  ASSERT_FALSE(iErrs) << iErrs;
 
   EXPECT_FALSE(any_race()) << "[scabbard.rtl.sm.test:RPT] FAIL: def_HR_DW_race_1";
 }

@@ -55,7 +55,7 @@ namespace rtl {
       friend inline bool operator < (const Result& L, const Result& R);
     };
 
-    using ResultList_t = std::map<const StateMachine::Result, LTime_t>;
+    using ResultList_t = std::map<const StateMachine::Result, std::size_t>;
 
     struct Zone_t {
       enum State { INITIALIZATION_PHASE, HOST_CONTROL, DEVICE_CONTROL };

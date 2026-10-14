@@ -22,7 +22,7 @@ private:
   GroupedPtrFactory<const EventData_t> GF;
   StateMachine SM;
   LTime_t vClk = 0u;
-  DeviceVClks_t dev_vClks{{0u,0u}};
+  DeviceVClks_t dev_vClks{{0u,1u}};
   std::uint16_t next_jobId = 0u;
   std::uint16_t next_TSId = 4u;
   std::size_t next_MId = 1u;
@@ -92,7 +92,7 @@ protected:
         M,
         0u
       )));
-    return jobId_t{JId, STREAM};
+    return jobId_t{JId, jobId_t::hash_stream_ptr(STREAM)};
   }
 
   void host_read_event(HostThreadId TId, std::uintptr_t PTR, std::size_t SIZE=0u, const SrcMetadata* M=nullptr) {
@@ -125,7 +125,7 @@ protected:
     ThreadId TId = ((DTId) ? ThreadId(*DTId) : ThreadId(generate_DeviceThreadId(JId)));
     SM.append(GF.create(
       EventData_t(
-        ++vClk,
+        ++dev_vClks[JId.STREAM],
         ((InstrData) ON_DEVICE | READ_EVENT | ((SIZE) ? _OPT_USED : NONE)),
         TId,
         PTR,
@@ -138,7 +138,7 @@ protected:
     ThreadId TId = ((DTId) ? ThreadId(*DTId) : ThreadId(generate_DeviceThreadId(JId)));
     SM.append(GF.create(
       EventData_t(
-        ++vClk,
+        ++dev_vClks[JId.STREAM],
         ((InstrData) ON_DEVICE | WRITE_EVENT | ((SIZE) ? _OPT_USED : NONE)),
         TId,
         PTR,
@@ -195,10 +195,51 @@ protected:
       total += count;
     return total;
   }
+  std::optional<std::pair<std::size_t,StateMachine::ResultList_t>> 
+  get_internal_errors() {
+    std::size_t total = 0u;
+    StateMachine::ResultList_t list;
+    for (auto [res, count] : SM.get_results())
+      if (res.status < 0) {
+        list.emplace(res, count);
+        total += count;
+      }
+    if (total > 0)
+      return {{total,list}};
+    return {};
+  }
 
 
 };
 
+
+void PrintTo(const std::optional<std::pair<std::size_t,StateMachine::ResultList_t>>& data, std::ostream* out) {
+  if (not data) return;
+  *out << "\n[scabbard.rtl.sm.test:ERR] Internal Errors Detected (x" << data->first << "):";
+  for (auto [res, count] : data->second)
+    *out << "\n[scabbard.rtl.sm.test:ERR]   - (x" << count <<") \"" << res.msg << '"';
+  *out << '\n';
+  return;
+}
+
+// std::ostream& operator << (std::ostream& out, const std::optional<std::pair<std::size_t,StateMachine::ResultList_t>>& data) {
+//   if (not data) return out;
+//   out << "\n[scabbard.rtl.sm.test:ERR] Internal Errors Detected (x" << data->first << "):";
+//   for (auto [res, count] : data->second)
+//     out << "\n[scabbard.rtl.sm.test:ERR]   - (x" << count <<") \"" << res.msg << '"';
+//   return (out << '\n');
+// }
+
 } //? namespace test
 } //? namespace rtl
 } //? namespace scabbard
+
+template<>
+testing::Message& testing::Message::operator << (const std::optional<std::pair<std::size_t,scabbard::rtl::StateMachine::ResultList_t>>& data) {
+  if (not data) return *this;
+  *this << "\n[scabbard.rtl.sm.test:ERR] Internal Errors Detected (x" << data->first << "):";
+  for (auto [res, count] : data->second)
+    *this << "\n[scabbard.rtl.sm.test:ERR]   - (x" << count <<") \"" << res.msg << '"';
+  *this << '\n';
+  return *this;
+}

@@ -51,7 +51,7 @@ void StateMachine::run(std::uint64_t remainder_quotient)
   std::size_t dbg_j = 0u; //DEBUG
   std::size_t dbg_k = 0u; //DEBUG
   MemTable_t::iterator i = mem.end();
-  const std::size_t GOAL_SIZE = trace.size() >> remainder_quotient;
+  const std::size_t GOAL_SIZE = (remainder_quotient) ? trace.size() >> remainder_quotient : 0u;
   while (trace.size() > GOAL_SIZE) {
     const DataPtr_t& td = trace.top();
     if (/* td->time_stamp == 0u || */ td->data == InstrData::NEVER) dbg_j++; //DEBUG
@@ -301,9 +301,12 @@ inline void StateMachine::sync_to_zone<StateMachine::Zone_t::DEVICE_CONTROL>(con
     }
     default: {
       auto rows = zones.findByKey2(jobId_t::hash_stream_ptr(stream));
-      for (auto& row : rows)
-        if (row.data.state != Zone_t::DEVICE_CONTROL)
-          row.data = {Zone_t::DEVICE_CONTROL, td->time_stamp};
+      if (rows.size() == 0u)
+        zones[td->threadId.host][jobId_t::hash_stream_ptr(stream)] = {Zone_t::DEVICE_CONTROL, td->time_stamp};
+      else
+        for (auto& row : rows)
+          if (row.data.state != Zone_t::DEVICE_CONTROL)
+            row.data = {Zone_t::DEVICE_CONTROL, td->time_stamp};
       break;
     }
       
@@ -341,7 +344,6 @@ inline const StateMachine::Zone_t& StateMachine::get_device_zone(const StateMach
     return _ptz->second; // case: default stream job
 
   // hard method: look for last transition time that fits this kernel launch
-  Zone_t default_zone = {Zone_t::INITIALIZATION_PHASE, 0u};
   Zone_t& most_recent = Zone_t::DEFAULT_ZONE;
   for (auto& row : zones.findByKey2(stream))
     if (row.data.state == Zone_t::DEVICE_CONTROL
@@ -359,7 +361,11 @@ inline const StateMachine::Zone_t& StateMachine::get_zone(const StateMachine::Da
   const auto i = zones.find(HE->threadId.host, DE->threadId.device.job.STREAM);
   if (i)
     return i->data;
-  return get_host_zone(HE); // might need to get device zone separately then compare for most recent?
+  auto& HZ = get_host_zone(HE);
+  auto& DZ = get_device_zone(DE);
+  return ((DZ.trans_time >= HZ.trans_time) 
+            ? DZ
+            : HZ);
 }
 
 
