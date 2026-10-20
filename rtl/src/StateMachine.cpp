@@ -84,6 +84,7 @@ void StateMachine::run(std::uint64_t remainder_quotient)
           // return {{{INTERNAL_ERROR, nullptr, nullptr, "\n[scabbard.rtl:ERR] bad alloc data (could not find hipMalloc associated with hipFree in trace history)"}, 1ul}};
         }
         i = mem.erase(td->ptr, td->ptr+r->second);
+        ownership.erase(td->ptr, td->ptr+r->second);
         allocs.erase(r);
         sync_to_zone<Zone_t::HOST_CONTROL>(td); // currently assuming all allocates and frees are sync events
         break;
@@ -198,6 +199,12 @@ void StateMachine::run(std::uint64_t remainder_quotient)
       default:
         break;
     }
+    if (td->data & ON_DEVICE) {
+      if (td->data & _OPT_DATA_USED)
+        ownership.insert(td->ptr, td->ptr+td->_OPT_DATA, td->threadId.device.job.STREAM);
+      else
+        ownership.insert(td->ptr, td->threadId.device.job.STREAM);
+    }
     dbg_i++; //DEBUG
     trace.pop();
   }
@@ -207,6 +214,7 @@ void StateMachine::run(std::uint64_t remainder_quotient)
 void StateMachine::reset()
 {
   mem.clear();
+  ownership.clear();
   default_stream_zone = Zone_t::DEFAULT_ZONE;
   per_thread_zones.clear();
   zones.clear();
@@ -315,20 +323,19 @@ inline void StateMachine::sync_to_zone<StateMachine::Zone_t::DEVICE_CONTROL>(con
 
 inline const StateMachine::Zone_t& StateMachine::get_host_zone(const StateMachine::DataPtr_t& HE) const
 {
-  if (DEFAULT_STREAM_BEHAVIOR() == hipStreamLegacy_ull) {
-    auto _ptz = per_thread_zones.find(jobId_t::hash_stream_ptr(HE->threadId.host));
-    if (_ptz == per_thread_zones.end())
-      return default_stream_zone;
-    return ((default_stream_zone.trans_time > _ptz->second.trans_time)
-            ? default_stream_zone
-            : _ptz->second);
+  const Zone_t* zone = &default_stream_zone;
+  const auto _ptz = per_thread_zones.find(jobId_t::hash_stream_ptr(HE->threadId.host));
+  if (_ptz != per_thread_zones.end() 
+      && _ptz->second.trans_time > zone->trans_time)
+    zone = &_ptz->second;
+  const auto _po = ownership.find(HE->ptr);
+  if (_po != ownership.end()) {
+    const auto _z = zones.find(HE->threadId.host, _po->val);
+    if (_z
+        && _z->data.trans_time > zone->trans_time)
+      zone = &_z->data;
   }
-
-  const auto& i = per_thread_zones.find(jobId_t::hash_stream_ptr(HE->threadId.host));
-  if (i != per_thread_zones.end())
-    return i->second;
-  
-  return Zone_t::DEFAULT_ZONE;
+  return *zone;
 }
 
 inline const StateMachine::Zone_t& StateMachine::get_device_zone(const StateMachine::DataPtr_t& DE) const
@@ -379,8 +386,12 @@ StateMachine::Result::Status StateMachine::check_race_HR(const StateMachine::Dat
   //                 ? get_host_zone(HR)
   //                 : get_zone(HR, o));
 
-  if (o->data & ON_HOST) 
+  if (o->data & ON_HOST) {
+    Zone_t zone = get_host_zone(HR);
+    if (zone.state != Zone_t::HOST_CONTROL)
+      return add_result(results,{Result::UNPROTECTED_HR, HR, nullptr, "WARN: Host Read from memory not sync protected on this Host thread!"});
     return Result::GOOD;
+  }
   
   Zone_t zone = get_zone(HR, o);
 
@@ -390,7 +401,7 @@ StateMachine::Result::Status StateMachine::check_race_HR(const StateMachine::Dat
 
   switch (o->data & FILTER) {
     case ON_DEVICE | READ:
-      return add_result(results,{Result::UNPROTECTED_HR, HR, nullptr, "WARN: Host Read from memory currently controlled by a Device"});
+      return add_result(results,{Result::UNPROTECTED_HR, HR, o, "WARN: Host Read from memory currently controlled by a Device"});
   
     case ON_DEVICE | WRITE:
     case ON_DEVICE | READ | WRITE: //for atomicrmw instructions
@@ -410,8 +421,12 @@ StateMachine::Result::Status StateMachine::check_race_HW(const StateMachine::Dat
   //                 ? get_host_zone(HR)
   //                 : get_zone(HR, o));
 
-  if (o->data & ON_HOST) 
+  if (o->data & ON_HOST) {
+    Zone_t zone = get_host_zone(HW);
+    if (zone.state != Zone_t::HOST_CONTROL)
+      return add_result(results,{Result::UNPROTECTED_HW, HW, nullptr, "WARN: Host Wrote to memory not sync protected on this Host thread!"});
     return Result::GOOD;
+  }
   
   Zone_t zone = get_zone(HW, o);
 

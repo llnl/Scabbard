@@ -32,6 +32,8 @@ target_include_directories(test_sm
     hip::host
   )
 
+target_compile_options(test_sm PUBLIC -g)
+
 add_dependencies(test_sm rtl)
 
 
@@ -57,6 +59,8 @@ target_include_directories(test_sm_scenarios
     PRIVATE
     hip::host
   )
+
+target_compile_options(test_sm_scenarios PUBLIC -g)
 
 add_dependencies(test_sm_scenarios rtl)
 

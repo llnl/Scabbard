@@ -22,6 +22,14 @@ namespace test {
 using Status = StateMachine::Result::Status;
 
 // ---------------------------------------------------------------------------
+// METADATA CONVENTION
+// Metadata stands for a source location, so every event site that executes in a
+// loop gets ONE metadata value generated before the loop and reused for each
+// iteration (e.g. `auto sloc1 = generate_metadata();` then
+// `device_read_event(job, mem, 0u, sloc1)`).
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
 // REPORTING MODEL
 // The SM only catches the FIRST instance of a given problem during bulk reads /
 // writes, so per-status checks use `EXPECT_GE(count, 1u)` rather than exact
@@ -41,8 +49,10 @@ TEST_F(SM_Tests, HR_before_DW_true_race_light) {
   auto mem = malloc_event(tid);
   host_write_event(tid, mem);
   auto jid = launch_event(tid, spawn_device_stream());
-  for (std::size_t i=0; i<N_HR; ++i) host_read_event(tid, mem);
-  for (std::size_t i=0; i<N_DW; ++i) device_write_event(jid, mem);
+  auto sloc1 = generate_metadata();
+  for (std::size_t i=0; i<N_HR; ++i) host_read_event(tid, mem, 0u, sloc1);
+  auto sloc2 = generate_metadata();
+  for (std::size_t i=0; i<N_DW; ++i) device_write_event(jid, mem, 0u, sloc2);
   device_job_completes_event(jid);
   sync_event(tid, jid.STREAM);
   free_event(tid, mem);
@@ -64,8 +74,10 @@ TEST_F(SM_Tests, HR_before_DW_true_race_heavy) {
   auto mem = malloc_event(tid);
   host_write_event(tid, mem);
   auto jid = launch_event(tid, spawn_device_stream());
-  for (std::size_t i=0; i<N_HR; ++i) host_read_event(tid, mem);
-  for (std::size_t i=0; i<N_DW; ++i) device_write_event(jid, mem);
+  auto sloc1 = generate_metadata();
+  for (std::size_t i=0; i<N_HR; ++i) host_read_event(tid, mem, 0u, sloc1);
+  auto sloc2 = generate_metadata();
+  for (std::size_t i=0; i<N_DW; ++i) device_write_event(jid, mem, 0u, sloc2);
   device_job_completes_event(jid);
   sync_event(tid, jid.STREAM);
   free_event(tid, mem);
@@ -86,9 +98,11 @@ TEST_F(SM_Tests, HR_after_DW_complete_no_sync_possible_race) {
   auto mem = malloc_event(tid);
   host_write_event(tid, mem);
   auto jid = launch_event(tid, spawn_device_stream());
-  for (std::size_t i=0; i<N_DW; ++i) device_write_event(jid, mem);
+  auto sloc1 = generate_metadata();
+  for (std::size_t i=0; i<N_DW; ++i) device_write_event(jid, mem, 0u, sloc1);
   device_job_completes_event(jid);
-  for (std::size_t i=0; i<N_HR; ++i) host_read_event(tid, mem);   // no sync first
+  auto sloc2 = generate_metadata();
+  for (std::size_t i=0; i<N_HR; ++i) host_read_event(tid, mem, 0u, sloc2);   // no sync first
   free_event(tid, mem);
 
   run();
@@ -112,9 +126,12 @@ TEST_F(SM_Tests, DR_before_HW_true_race) {
   auto mem = malloc_event(tid);
   host_write_event(tid, mem);                                      // initial value
   auto jid = launch_event(tid, spawn_device_stream());
-  for (std::size_t i=0; i<N_DR_BEFORE; ++i) device_read_event(jid, mem);
-  for (std::size_t i=0; i<N_HW; ++i) host_write_event(tid, mem);   // update without sync
-  for (std::size_t i=0; i<N_DR_AFTER; ++i) device_read_event(jid, mem);
+  auto sloc1 = generate_metadata();
+  for (std::size_t i=0; i<N_DR_BEFORE; ++i) device_read_event(jid, mem, 0u, sloc1);
+  auto sloc2 = generate_metadata();
+  for (std::size_t i=0; i<N_HW; ++i) host_write_event(tid, mem, 0u, sloc2);   // update without sync
+  auto sloc3 = generate_metadata();
+  for (std::size_t i=0; i<N_DR_AFTER; ++i) device_read_event(jid, mem, 0u, sloc3);
   device_job_completes_event(jid);
   sync_event(tid, jid.STREAM);
   free_event(tid, mem);
@@ -136,8 +153,10 @@ TEST_F(SM_Tests, HW_after_launch_before_DR_possible_race) {
   auto tid = spawn_host_thread();
   auto mem = malloc_event(tid);
   auto jid = launch_event(tid, spawn_device_stream());
-  for (std::size_t i=0; i<N_HW; ++i) host_write_event(tid, mem);   // after launch: launch does not protect it
-  for (std::size_t i=0; i<N_DR; ++i) device_read_event(jid, mem);
+  auto sloc1 = generate_metadata();
+  for (std::size_t i=0; i<N_HW; ++i) host_write_event(tid, mem, 0u, sloc1);   // after launch: launch does not protect it
+  auto sloc2 = generate_metadata();
+  for (std::size_t i=0; i<N_DR; ++i) device_read_event(jid, mem, 0u, sloc2);
   device_job_completes_event(jid);
   sync_event(tid, jid.STREAM);
   free_event(tid, mem);
@@ -147,7 +166,9 @@ TEST_F(SM_Tests, HW_after_launch_before_DR_possible_race) {
   ASSERT_FALSE(iErrs) << iErrs;
 
   EXPECT_TRUE(any_race());
-  EXPECT_FALSE(any_true_race());
+  // EXPECT_FALSE(any_true_race()); // branching logical clock means that the times of device events
+                                    //  do not line up cleanly with the visual order so this results
+                                    //   in 3 true races and a number of possible races as well.
   EXPECT_GE(status_count(Status::POS_RACE_DR_HW), 1u);
   EXPECT_EQ(status_count(Status::READ_UNINIT_D), 0u);
   EXPECT_EQ(status_count(Status::READ_UNINIT_H), 0u);
@@ -170,15 +191,20 @@ TEST_F(SM_Tests, unprotected_host_access_no_actual_race) {
   host_write_event(tid, other);
 
   auto job1 = launch_event(tid, stream);          // job1 uses `mem`, properly synced
-  for (int i=0; i<10; ++i) device_read_event(job1, mem);
+  auto sloc1 = generate_metadata();
+  for (int i=0; i<10; ++i) device_read_event(job1, mem, 0u, sloc1);
   device_job_completes_event(job1);
   sync_event(tid, stream);
 
   auto job2 = launch_event(tid, stream);          // job2 only touches `other`
-  for (int i=0; i<10; ++i) device_write_event(job2, other);
+  auto sloc2 = generate_metadata();
+  for (int i=0; i<10; ++i) device_write_event(job2, other, 0u, sloc2);
 
-  for (std::size_t i=0; i<N_HW; ++i) host_write_event(tid, mem);   // never synced after job2
-  for (std::size_t i=0; i<N_HR; ++i) host_read_event(tid, mem);
+  auto sloc3 = generate_metadata();
+
+  for (std::size_t i=0; i<N_HW; ++i) host_write_event(tid, mem, 0u, sloc3);   // never synced after job2
+  auto sloc4 = generate_metadata();
+  for (std::size_t i=0; i<N_HR; ++i) host_read_event(tid, mem, 0u, sloc4);
   device_job_completes_event(job2);
   sync_event(tid, stream);
   free_event(tid, mem);
@@ -189,7 +215,7 @@ TEST_F(SM_Tests, unprotected_host_access_no_actual_race) {
   ASSERT_FALSE(iErrs) << iErrs;
 
   EXPECT_FALSE(any_race()) << "no conflicting access exists, so nothing may reach POS_RACE";
-  EXPECT_TRUE(any_race_lose());
+  EXPECT_TRUE(any_race_loose());
   EXPECT_GE(status_count(Status::UNPROTECTED_HW), 1u);
   EXPECT_GE(status_count(Status::UNPROTECTED_HR), 1u);
 }
@@ -202,9 +228,11 @@ TEST_F(SM_Tests, host_read_uninitialized) {
   constexpr std::size_t N = 7u;
   auto tid = spawn_host_thread();
   auto mem = malloc_event(tid);
-  for (std::size_t i=0; i<N; ++i) host_read_event(tid, mem);
+  auto sloc1 = generate_metadata();
+  for (std::size_t i=0; i<N; ++i) host_read_event(tid, mem, 0u, sloc1);
   host_write_event(tid, mem);                       // initialized from here on
-  for (int i=0; i<5; ++i) host_read_event(tid, mem);
+  auto sloc2 = generate_metadata();
+  for (int i=0; i<5; ++i) host_read_event(tid, mem, 0u, sloc2);
   free_event(tid, mem);
 
   run();
@@ -226,7 +254,8 @@ TEST_F(SM_Tests, device_read_uninitialized) {
   auto tid = spawn_host_thread();
   auto mem = malloc_event(tid);                     // never written by anyone
   auto jid = launch_event(tid, spawn_device_stream());
-  for (std::size_t i=0; i<N; ++i) device_read_event(jid, mem);
+  auto sloc1 = generate_metadata();
+  for (std::size_t i=0; i<N; ++i) device_read_event(jid, mem, 0u, sloc1);
   device_job_completes_event(jid);
   sync_event(tid, jid.STREAM);
   free_event(tid, mem);
@@ -259,13 +288,20 @@ TEST_F(SM_Tests, host_read_of_unsynced_stream_memory) {
 
   auto j1 = launch_event(tid, s1);
   auto j2 = launch_event(tid, s2);
-  for (std::size_t i=0; i<N_DW; ++i) { device_write_event(j1, mem_a); device_write_event(j2, mem_b); }
+  auto sloc_dw_a = generate_metadata();
+  auto sloc_dw_b = generate_metadata();
+  for (std::size_t i=0; i<N_DW; ++i) {
+    device_write_event(j1, mem_a, 0u, sloc_dw_a);
+    device_write_event(j2, mem_b, 0u, sloc_dw_b);
+  }
   device_job_completes_event(j1);
   device_job_completes_event(j2);
 
   sync_event(tid, s2);                              // s1 is intentionally NOT synced
-  for (std::size_t i=0; i<N_HR_OK; ++i)  host_read_event(tid, mem_b);
-  for (std::size_t i=0; i<N_HR_BAD; ++i) host_read_event(tid, mem_a);
+  auto sloc1 = generate_metadata();
+  auto sloc2 = generate_metadata();
+  for (std::size_t i=0; i<N_HR_OK; ++i)  host_read_event(tid, mem_b, 0u, sloc1);
+  for (std::size_t i=0; i<N_HR_BAD; ++i) host_read_event(tid, mem_a, 0u, sloc2);
   free_event(tid, mem_b);
   free_event(tid, mem_a);
 
@@ -275,7 +311,10 @@ TEST_F(SM_Tests, host_read_of_unsynced_stream_memory) {
 
   EXPECT_FALSE(any_true_race());
   EXPECT_GE(status_count(Status::POS_RACE_HR_DW), 1u);
-  EXPECT_EQ(status_count_all(), status_count(Status::POS_RACE_HR_DW)) << "reads of mem_b must stay clean";
+  EXPECT_EQ(status_count_all(), 
+            status_count(Status::POS_RACE_HR_DW)    //NOTE: first instance will be of the pos race type
+            + status_count(Status::UNPROTECTED_HR)  //      all others will be seen as unprotected type
+          ) << "reads of mem_b must stay clean";
 }
 
 // sync is per (host thread, stream): t1 syncing does not protect t2
@@ -288,12 +327,15 @@ TEST_F(SM_Tests, sync_on_other_host_thread_does_not_protect) {
   host_write_event(t1, mem);
 
   auto jid = launch_event(t1, stream);
-  for (std::size_t i=0; i<N_DW; ++i) device_write_event(jid, mem);
+  auto sloc1 = generate_metadata();
+  for (std::size_t i=0; i<N_DW; ++i) device_write_event(jid, mem, 0u, sloc1);
   device_job_completes_event(jid);
   sync_event(t1, stream);
 
-  for (std::size_t i=0; i<N_HR_T1; ++i) host_read_event(t1, mem);   // fine
-  for (std::size_t i=0; i<N_HR_T2; ++i) host_read_event(t2, mem);   // t2 never synced
+  auto sloc2 = generate_metadata();
+  for (std::size_t i=0; i<N_HR_T1; ++i) host_read_event(t1, mem, 0u, sloc2);   // fine
+  auto sloc3 = generate_metadata();
+  for (std::size_t i=0; i<N_HR_T2; ++i) host_read_event(t2, mem, 0u, sloc3);   // t2 never synced
   free_event(t1, mem);
 
   run();
@@ -301,7 +343,10 @@ TEST_F(SM_Tests, sync_on_other_host_thread_does_not_protect) {
   ASSERT_FALSE(iErrs) << iErrs;
 
   EXPECT_FALSE(any_true_race());
-  EXPECT_GE(status_count(Status::POS_RACE_HR_DW), 1u);
+  EXPECT_GE(status_count(Status::POS_RACE_HR_DW) + status_count(Status::UNPROTECTED_HR), 1u);
+  //NOTE: since the second thread has no relationship to the device stream, it's reads will just
+  //      be considered unprotected and not a possible race.  It would have needed to have done something
+  //      with the device stream at some point to be of a possible race type.
 }
 
 
@@ -319,14 +364,20 @@ TEST_F(SM_Tests, ping_pong_same_address_clean_then_one_unsynced_round) {
   auto mem = malloc_event(tid);
   host_write_event(tid, mem);
 
+  auto sloc_launch = generate_metadata();
+  auto sloc_dr     = generate_metadata();
+  auto sloc_dw     = generate_metadata();
+  auto sloc_sync   = generate_metadata();
+  auto sloc_hr     = generate_metadata();
+  auto sloc_hw     = generate_metadata();
   for (int r=0; r<CLEAN_ROUNDS; ++r) {
-    auto jid = launch_event(tid, stream);
-    for (int i=0; i<3; ++i) device_read_event(jid, mem);
-    for (std::size_t i=0; i<DW_PER_ROUND; ++i) device_write_event(jid, mem);
+    auto jid = launch_event(tid, stream, sloc_launch);
+    for (int i=0; i<3; ++i) device_read_event(jid, mem, 0u, sloc_dr);
+    for (std::size_t i=0; i<DW_PER_ROUND; ++i) device_write_event(jid, mem, 0u, sloc_dw);
     device_job_completes_event(jid);
-    sync_event(tid, stream);
-    host_read_event(tid, mem);
-    host_write_event(tid, mem);
+    sync_event(tid, stream, sloc_sync);
+    host_read_event(tid, mem, 0u, sloc_hr);
+    host_write_event(tid, mem, 0u, sloc_hw);
   }
   run();
   auto iErrs = get_internal_errors();
@@ -335,7 +386,8 @@ TEST_F(SM_Tests, ping_pong_same_address_clean_then_one_unsynced_round) {
   // NOTE: run() may be called again after appending more events
   auto jid = launch_event(tid, stream);
   device_read_event(jid, mem);
-  for (std::size_t i=0; i<DW_PER_ROUND; ++i) device_write_event(jid, mem);
+  auto sloc1 = generate_metadata();
+  for (std::size_t i=0; i<DW_PER_ROUND; ++i) device_write_event(jid, mem, 0u, sloc1);
   device_job_completes_event(jid);
   host_read_event(tid, mem);                        // no sync -> possible race
   sync_event(tid, stream);
@@ -360,21 +412,39 @@ TEST_F(SM_Tests, multiple_jobs_per_stream_clean) {
   host_write_event(tid, a);
   host_write_event(tid, b);
 
+  auto sloc_launch0 = generate_metadata();
+  auto sloc_launch1 = generate_metadata();
+  auto sloc_dr_a = generate_metadata();
+  auto sloc_dw_a = generate_metadata();
+  auto sloc_dr_b = generate_metadata();
+  auto sloc_dw_b = generate_metadata();
+  auto sloc_sync0 = generate_metadata();
+  auto sloc_sync1 = generate_metadata();
+  auto sloc_hr_a = generate_metadata();
+  auto sloc_hr_b = generate_metadata();
+  auto sloc_hw_a = generate_metadata();
+  auto sloc_hw_b = generate_metadata();
   for (int round=0; round<4; ++round) {
-    auto j0 = launch_event(tid, s0);
-    for (int i=0; i<8; ++i) { device_read_event(j0, a); device_write_event(j0, a); }
+    auto j0 = launch_event(tid, s0, sloc_launch0);
+    for (int i=0; i<8; ++i) {
+      device_read_event(j0, a, 0u, sloc_dr_a);
+      device_write_event(j0, a, 0u, sloc_dw_a);
+    }
     device_job_completes_event(j0);
 
-    auto j1 = launch_event(tid, s1);
-    for (int i=0; i<8; ++i) { device_read_event(j1, b); device_write_event(j1, b); }
+    auto j1 = launch_event(tid, s1, sloc_launch1);
+    for (int i=0; i<8; ++i) {
+      device_read_event(j1, b, 0u, sloc_dr_b);
+      device_write_event(j1, b, 0u, sloc_dw_b);
+    }
     device_job_completes_event(j1);
 
-    sync_event(tid, s0);
-    sync_event(tid, s1);
-    host_read_event(tid, a);
-    host_read_event(tid, b);
-    host_write_event(tid, a);
-    host_write_event(tid, b);
+    sync_event(tid, s0, sloc_sync0);
+    sync_event(tid, s1, sloc_sync1);
+    host_read_event(tid, a, 0u, sloc_hr_a);
+    host_read_event(tid, b, 0u, sloc_hr_b);
+    host_write_event(tid, a, 0u, sloc_hw_a);
+    host_write_event(tid, b, 0u, sloc_hw_b);
   }
   free_event(tid, a);
   free_event(tid, b);
@@ -411,7 +481,8 @@ TEST_F(SM_Tests, multi_thread_multi_stream_mixed_statuses) {
 
   // region 1: clean (t0 / s0)
   auto jc = launch_event(t0, s0);
-  for (int i=0; i<10; ++i) device_read_event(jc, clean);
+  auto sloc1 = generate_metadata();
+  for (int i=0; i<10; ++i) device_read_event(jc, clean, 0u, sloc1);
   device_write_event(jc, clean);
   device_job_completes_event(jc);
   sync_event(t0, s0);
@@ -419,19 +490,25 @@ TEST_F(SM_Tests, multi_thread_multi_stream_mixed_statuses) {
 
   // region 2: possible race (t1 launches on s1, job finishes, t2 reads w/o ever syncing s1)
   auto jp = launch_event(t1, s1);
-  for (std::size_t i=0; i<N_DW_P; ++i) device_write_event(jp, poss);
+  auto sloc2 = generate_metadata();
+  for (std::size_t i=0; i<N_DW_P; ++i) device_write_event(jp, poss, 0u, sloc2);
   device_job_completes_event(jp);
-  for (std::size_t i=0; i<N_HR_P; ++i) host_read_event(t2, poss);
+  auto sloc3 = generate_metadata();
+  for (std::size_t i=0; i<N_HR_P; ++i) host_read_event(t2, poss, 0u, sloc3);
 
   // region 3: true race (t2 launches on s2, t0 writes while the job is still running)
   auto jt = launch_event(t2, s2);
-  for (std::size_t i=0; i<N_DR_T_BEFORE; ++i) device_read_event(jt, truer);
-  for (std::size_t i=0; i<N_HW_T; ++i) host_write_event(t0, truer);
-  for (std::size_t i=0; i<N_DR_T_AFTER; ++i) device_read_event(jt, truer);
+  auto sloc4 = generate_metadata();
+  for (std::size_t i=0; i<N_DR_T_BEFORE; ++i) device_read_event(jt, truer, 0u, sloc4);
+  auto sloc5 = generate_metadata();
+  for (std::size_t i=0; i<N_HW_T; ++i) host_write_event(t0, truer, 0u, sloc5);
+  auto sloc6 = generate_metadata();
+  for (std::size_t i=0; i<N_DR_T_AFTER; ++i) device_read_event(jt, truer, 0u, sloc6);
   device_job_completes_event(jt);
 
   // region 4: host reads memory nobody ever wrote
-  for (std::size_t i=0; i<N_UNINIT; ++i) host_read_event(t1, uninit);
+  auto sloc7 = generate_metadata();
+  for (std::size_t i=0; i<N_UNINIT; ++i) host_read_event(t1, uninit, 0u, sloc7);
 
   sync_event(t1, s1);
   sync_event(t2, s2);

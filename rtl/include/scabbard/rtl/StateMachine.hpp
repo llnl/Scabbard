@@ -35,6 +35,7 @@ namespace rtl {
                                         std::vector<DataPtr_t>,
                                         DataPtr_t::priority_less>;
     using MemTable_t = IntervalMap<std::uintptr_t, DataPtr_t>;
+    using MemOwnershipTable_t = IntervalMap<std::uintptr_t, StreamId>;
     using AllocTable_t = std::unordered_map<std::uintptr_t, std::size_t>;
     
 
@@ -70,6 +71,7 @@ namespace rtl {
   private:
     Trace_t trace;
     MemTable_t mem;
+    MemOwnershipTable_t ownership;
     AllocTable_t allocs;
     Zone_t default_stream_zone = Zone_t::DEFAULT_ZONE;
     PerThreadZoneList_t per_thread_zones;

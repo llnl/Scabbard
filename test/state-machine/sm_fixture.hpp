@@ -120,7 +120,8 @@ protected:
       )));
   }
 
-  void device_read_event(jobId_t JId, std::uintptr_t PTR, std::size_t SIZE=0u, DeviceThreadId* DTId = nullptr, const SrcMetadata* M=nullptr) {
+  void device_read_event(jobId_t JId, std::uintptr_t PTR, std::size_t SIZE=0u, 
+                          const SrcMetadata* M=nullptr, const DeviceThreadId* DTId = nullptr) {
     if (not M) M = generate_metadata();
     ThreadId TId = ((DTId) ? ThreadId(*DTId) : ThreadId(generate_DeviceThreadId(JId)));
     SM.append(GF.create(
@@ -133,7 +134,8 @@ protected:
         SIZE
       )));
   }
-  void device_write_event(jobId_t JId, std::uintptr_t PTR, std::size_t SIZE=0u, DeviceThreadId* DTId = nullptr, const SrcMetadata* M=nullptr) {
+  void device_write_event(jobId_t JId, std::uintptr_t PTR, std::size_t SIZE=0u, 
+                          const SrcMetadata* M=nullptr, const DeviceThreadId* DTId = nullptr) {
     if (not M) M = generate_metadata();
     ThreadId TId = ((DTId) ? ThreadId(*DTId) : ThreadId(generate_DeviceThreadId(JId)));
     SM.append(GF.create(
@@ -179,7 +181,7 @@ protected:
 
   bool any_race() { return _any_status_threshold(StateMachine::Result::Status::POS_RACE_DR_HW); }
   bool any_true_race() { return _any_status_threshold(StateMachine::Result::Status::RACE_DR_HW); }
-  bool any_race_lose() { return _any_status_threshold(StateMachine::Result::Status::UNPROTECTED_HW); }
+  bool any_race_loose() { return _any_status_threshold(StateMachine::Result::Status::UNPROTECTED_HW); }
   bool any_issues() { return _any_status_threshold(StateMachine::Result::Status::READ_UNINIT_D); }
 
   std::size_t status_count(StateMachine::Result::Status target_status) {
