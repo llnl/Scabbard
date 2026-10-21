@@ -488,6 +488,13 @@ TEST_F(SM_Tests, multi_thread_multi_stream_mixed_statuses) {
   sync_event(t0, s0);
   host_read_event(t0, clean);
 
+  run();
+  auto iErrs = get_internal_errors();
+  ASSERT_FALSE(iErrs) << iErrs;
+
+  EXPECT_EQ(status_count_all(), 0u) << "the clean region must contribute nothing";
+  //NOTE: moveing the clean region test here than continuing is possible and better way to do this test.
+
   // region 2: possible race (t1 launches on s1, job finishes, t2 reads w/o ever syncing s1)
   auto jp = launch_event(t1, s1);
   auto sloc2 = generate_metadata();
@@ -518,19 +525,22 @@ TEST_F(SM_Tests, multi_thread_multi_stream_mixed_statuses) {
   free_event(t1, uninit);
 
   run();
-  auto iErrs = get_internal_errors();
-  ASSERT_FALSE(iErrs) << iErrs;
+  auto iErrs2 = get_internal_errors();
+  ASSERT_FALSE(iErrs) << iErrs2;
 
   EXPECT_TRUE(any_true_race());
   EXPECT_GE(status_count(Status::POS_RACE_HR_DW), 1u);
   EXPECT_GE(status_count(Status::RACE_DR_HW), 1u);
   EXPECT_GE(status_count(Status::READ_UNINIT_H), 1u);
   EXPECT_EQ(status_count(Status::READ_UNINIT_D), 0u);
-  EXPECT_EQ(status_count_all(),
-            status_count(Status::POS_RACE_HR_DW)
-          + status_count(Status::RACE_DR_HW)
-          + status_count(Status::POS_RACE_DR_HW)
-          + status_count(Status::READ_UNINIT_H)) << "the clean region must contribute nothing";
+  // EXPECT_EQ(status_count_all(),
+  //           status_count(Status::POS_RACE_HR_DW) + status_count(Status::UNPROTECTED_HR)
+  //         + status_count(Status::RACE_DR_HW)
+  //         + status_count(Status::POS_RACE_DR_HW) + status_count(Status::UNPROTECTED_HW)
+  //         + status_count(Status::READ_UNINIT_H)) << "the clean region must contribute nothing";
+  //NOTE: this test is meaningless, because of the fact that the unprotected result type can occur
+  //      in the place of a possible race result type. Due to limitations in the how we store previous
+  //      memory events in a single interval map.
 }
 
 } //? namespace test

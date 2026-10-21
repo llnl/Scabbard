@@ -195,8 +195,10 @@ void StateMachine::run(std::uint64_t remainder_quotient)
             check_race_DW(td, i->val);
           mem.insert(td->ptr, td); // do nothing but insert into memory later.
         }
+      break;
 
       default:
+        add_result(results,{Result::INTERNAL_ERROR, td, nullptr, "[scabbard.rtl.sm:Err] failed to recognize/handle trace type"});
         break;
     }
     if (td->data & ON_DEVICE) {
@@ -348,7 +350,7 @@ inline const StateMachine::Zone_t& StateMachine::get_device_zone(const StateMach
   
   auto _ptz = per_thread_zones.find(stream);
   if (_ptz != per_thread_zones.end())
-    return _ptz->second; // case: default stream job
+    return _ptz->second; // case: default stream job (hipStreamPerThread)
 
   // hard method: look for last transition time that fits this kernel launch
   Zone_t& most_recent = Zone_t::DEFAULT_ZONE;
@@ -368,11 +370,7 @@ inline const StateMachine::Zone_t& StateMachine::get_zone(const StateMachine::Da
   const auto i = zones.find(HE->threadId.host, DE->threadId.device.job.STREAM);
   if (i)
     return i->data;
-  auto& HZ = get_host_zone(HE);
-  auto& DZ = get_device_zone(DE);
-  return ((DZ.trans_time >= HZ.trans_time) 
-            ? DZ
-            : HZ);
+  return get_device_zone(DE);
 }
 
 
