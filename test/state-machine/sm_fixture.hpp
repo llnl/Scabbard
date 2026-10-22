@@ -6,8 +6,13 @@
 #include <gtest/gtest.h>
 #include <scabbard/rtl/StateMachine.hpp>
 #include <scabbard/rtl/GroupedPtr.hpp>
+#include <scabbard/rtl/calls.hpp>
 #include <atomic>
 #include <unordered_map>
+
+#define hipStreamLegacy_ull 1u
+#define hipStreamPerThread_ull 2u
+
 
 
 namespace scabbard {
@@ -24,7 +29,7 @@ private:
   LTime_t vClk = 0u;
   DeviceVClks_t dev_vClks{{0u,1u}};
   std::uint16_t next_jobId = 0u;
-  std::uint16_t next_TSId = 4u;
+  std::size_t next_TSId = 4u;
   std::size_t next_MId = 1u;
   std::size_t next_MAdd = 2u;
   MetadataList_t metadata_store;
@@ -67,7 +72,7 @@ protected:
       )));
   }
 
-  void sync_event(HostThreadId TId, StreamId STREAM, const SrcMetadata* M=nullptr) {
+  void sync_event(HostThreadId TId, hipStream_t STREAM=nullptr, const SrcMetadata* M=nullptr) {
     if (not M) M = generate_metadata();
     SM.append(GF.create(
       EventData_t(
@@ -79,9 +84,11 @@ protected:
         0u
       )));
   }
-  jobId_t launch_event(HostThreadId TId, StreamId STREAM, const SrcMetadata* M=nullptr) {
+  jobId_t launch_event(HostThreadId TId, hipStream_t STREAM=nullptr, const SrcMetadata* M=nullptr) {
     if (not M) M = generate_metadata();
     StreamJobId JId = next_jobId++;
+    if (not STREAM and DEFAULT_STREAM_BEHAVIOR() == hipStreamPerThread_ull)
+      STREAM = (hipStream_t)TId;
     dev_vClks[jobId_t::hash_stream_ptr(STREAM)] = vClk+1u;
     SM.append(GF.create(
       EventData_t(
@@ -156,7 +163,7 @@ protected:
   }
 
   HostThreadId spawn_host_thread() { return next_TSId++; }
-  StreamId spawn_device_stream() { return next_TSId++; }
+  hipStream_t spawn_device_stream() { return (hipStream_t)next_TSId++; }
 
   DeviceThreadId generate_DeviceThreadId(jobId_t JId) const { return DeviceThreadId(JId, dim3{0,0,0}, dim3{0,0,0}); }
   const SrcMetadata* const generate_metadata() {
@@ -224,6 +231,14 @@ void PrintTo(const std::optional<std::pair<std::size_t,StateMachine::ResultList_
   return;
 }
 
+void PrintTo(const StateMachine::ResultList_t& data, std::ostream* out) {
+  *out << "\n[scabbard.rtl.sm.test:INFO] Results found by state machine:";
+  for (auto [res, count] : data)
+    *out << "\n[scabbard.rtl.sm.test:INFO]   - (x" << count <<") `" << res.status << "`: \"" << res.msg << '"';
+  *out << '\n';
+  return;
+}
+
 // std::ostream& operator << (std::ostream& out, const std::optional<std::pair<std::size_t,StateMachine::ResultList_t>>& data) {
 //   if (not data) return out;
 //   out << "\n[scabbard.rtl.sm.test:ERR] Internal Errors Detected (x" << data->first << "):";
@@ -242,6 +257,35 @@ testing::Message& testing::Message::operator << (const std::optional<std::pair<s
   *this << "\n[scabbard.rtl.sm.test:ERR] Internal Errors Detected (x" << data->first << "):";
   for (auto [res, count] : data->second)
     *this << "\n[scabbard.rtl.sm.test:ERR]   - (x" << count <<") \"" << res.msg << '"';
+  *this << '\n';
+  return *this;
+}
+
+template<>
+testing::Message& testing::Message::operator << (const scabbard::rtl::StateMachine::Result::Status& status) {
+  using Status = scabbard::rtl::StateMachine::Result;
+  switch (status)
+  {
+    case Status::READ_UNINIT_D: return *this << "READ_UNINIT_D";
+    case Status::READ_UNINIT_H: return *this << "READ_UNINIT_H";
+    case Status::RACE_DR_HW: return *this << "RACE_DR_HW";
+    case Status::RACE_HR_DW: return *this << "READ_UNINIT_D";
+    case Status::POS_RACE_DR_HW: return *this << "POS_RACE_DR_HW";
+    case Status::POS_RACE_HR_DW: return *this << "POS_RACE_HR_DW";
+    case Status::UNPROTECTED_HR: return *this << "UNPROTECTED_HR";
+    case Status::UNPROTECTED_HW: return *this << "UNPROTECTED_HW";
+    case Status::GOOD: return *this << "GOOD";
+    case Status::INTERNAL_ERROR: return *this << "INTERNAL_ERROR";
+    default: return *this << "<UNKNOWN_STATUS>";
+  }
+  return *this;
+}
+
+template<>
+testing::Message& testing::Message::operator << (const scabbard::rtl::StateMachine::ResultList_t& data) {
+  *this << "\n[scabbard.rtl.sm.test:INFO] Results found by state machine:";
+  for (auto [res, count] : data)
+    *this << "\n[scabbard.rtl.sm.test:INFO]   - (x" << count <<") `" << res.status << "`: \"" << res.msg << '"';
   *this << '\n';
   return *this;
 }

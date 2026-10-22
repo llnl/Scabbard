@@ -10,7 +10,62 @@
 			],
 			"group": "build",
 			"problemMatcher": [],
-			"detail": "CMake template build task"
+			"detail": "CMake build scabbard instrumenter"
+		},
+		{
+			"type": "cmake",
+			"label": "[CMake] build test_sm_scenarios",
+			"command": "build",
+			"targets": [
+				"test_sm_scenarios"
+			],
+			"group": "build",
+			"problemMatcher": [],
+			"detail": "CMake build state machine unit test suit called scenarios"
+		},
+		{
+			"type": "cmake",
+			"label": "[CMake] build test_sm",
+			"command": "build",
+			"targets": [
+				"test_sm"
+			],
+			"group": "build",
+			"problemMatcher": [],
+			"detail": "CMake build state machine unit test suit called test_sm"
+		},
+		{
+			"type": "cmake",
+			"label": "[CMake] build test_sm_stress",
+			"command": "build",
+			"targets": [
+				"test_sm_stress"
+			],
+			"group": "build",
+			"problemMatcher": [],
+			"detail": "CMake build state machine unit test suit called stress, with per-thread default streams"
+		},
+		{
+			"type": "cmake",
+			"label": "[CMake] build test_sm_scenarios_pt",
+			"command": "build",
+			"targets": [
+				"test_sm_scenarios_pt"
+			],
+			"group": "build",
+			"problemMatcher": [],
+			"detail": "CMake build state machine unit test suit called scenarios, with per-thread default streams"
+		},
+		{
+			"type": "cmake",
+			"label": "[CMake] build test_sm_stress_pt",
+			"command": "build",
+			"targets": [
+				"test_sm_stress_pt"
+			],
+			"group": "build",
+			"problemMatcher": [],
+			"detail": "CMake build state machine unit test suit called stress, with per-thread default streams"
 		},
 		{
 			"label": "Instr Current single file",

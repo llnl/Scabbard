@@ -71,6 +71,7 @@ namespace rtl {
   private:
     Trace_t trace;
     MemTable_t mem;
+    // MemTable_t memD;
     MemOwnershipTable_t ownership;
     AllocTable_t allocs;
     Zone_t default_stream_zone = Zone_t::DEFAULT_ZONE;

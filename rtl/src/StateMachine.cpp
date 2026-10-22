@@ -92,30 +92,33 @@ void StateMachine::run(std::uint64_t remainder_quotient)
 
       // << ===== Host Events ===== >> 
 
-      case ON_HOST | READ | WRITE: // (DH)
+      case ON_HOST | READ | WRITE:
       case ON_HOST | READ:
         if (td->data & InstrData::_OPT_USED) { // bulk read (memcpy device to host)
+          const std::uintptr_t END_CAP = td->ptr+td->_OPT_DATA;
           std::size_t occurrences_uninit = 0ull;
-          const Data_t* last_occurrence_uninit;
-          uintptr_t last_stop = td->ptr;
-          for (const auto& _idh : mem.find_all(td->ptr, td->ptr+td->_OPT_DATA)) {
-            if (_idh->start > last_stop) {
-              occurrences_uninit += _idh->start - last_stop;
-              last_occurrence_uninit = _idh->val.unsafe_get();
+          // const Data_t* last_occurrence_uninit = nullptr;
+          std::uintptr_t last_stop = td->ptr;
+          for (const auto _i : mem.find_all(td->ptr, END_CAP)) {
+            if (_i->start > last_stop) {
+              occurrences_uninit += _i->start - last_stop;
+              // last_occurrence_uninit = _i->val.unsafe_get();
             } else {
-              check_race_HR(td, _idh->val);
+              check_race_HR(td, _i->val);
             }
-            last_stop = _idh->stop;
+            last_stop = _i->stop;
           }
+          if (last_stop < END_CAP)
+            occurrences_uninit += END_CAP - last_stop;
           if (occurrences_uninit)
-            add_result(results,{Result::READ_UNINIT_H, td, DataPtr_t::make(last_occurrence_uninit), 
+            add_result(results,{Result::READ_UNINIT_H, td, nullptr, 
                                 "The Host Read from Uninitialized memory durring a Bulk-CPU-Read/Memcpy"},
                        occurrences_uninit);
-          mem.insert(td->ptr, td->ptr+td->_OPT_DATA, td);
+          mem.insert(td->ptr, END_CAP, td);
         } else { // single read
           i = mem.find(td->ptr);
           if (i == mem.end()) {// read with no preceding write
-            if (mem.find(td->ptr) == mem.end()) // check to see if other mem table records an event
+            // if (mem.find(td->ptr) == mem.end()) // check to see if other mem table records an event
               add_result(results,{Result::READ_UNINIT_H, td, nullptr, "The Host Read from Uninitialized Memory"},
                           ((td->data & _OPT_USED) ? td->_OPT_DATA : 1u)); // read with no preceding write
             mem.insert(td->ptr, td);
@@ -127,48 +130,54 @@ void StateMachine::run(std::uint64_t remainder_quotient)
           if (not (td->data & WRITE)) //allow atomic instructions to fall through.
             break;
         
-      case ON_HOST | WRITE: // (HD)
+      case ON_HOST | WRITE:
         if (td->data & InstrData::_OPT_USED) {
-          for (auto _ihd : mem.find_all(td->ptr, td->ptr+td->_OPT_DATA))
-            check_race_HW(td, _ihd->val);
-          mem.insert(td->ptr, td->ptr+td->_OPT_DATA, td);
+          const std::uintptr_t END_CAP = td->ptr+td->_OPT_DATA;
+          for (const auto _i : mem.find_all(td->ptr, END_CAP))
+            check_race_HW(td, _i->val);
+          mem.insert(td->ptr, END_CAP, td);
         } else {
           i = mem.find(td->ptr); //TODO: \/ logic below needs a refresh (might be flawed) \/
           // not first write of a pair (empty or just allocated)
           //                          AND the conditions with the last memory action checks out
-          if (i != mem.end())
+          if (i != mem.end()) {
             check_race_HW(td, i->val);
-          mem.insert(td->ptr, td); // do nothing but insert into memory later.
+            if (i->is_single()) i->val = td; else mem.insert(td->ptr, td); // do nothing but insert into memory later.
+          } else 
+            mem.insert(td->ptr, td);
         }
         break;
 
 
       // << ===== Device Events ===== >> 
 
-      case ON_DEVICE | READ | WRITE: // (HD)
+      case ON_DEVICE | READ | WRITE:
       case ON_DEVICE | READ:
         if (td->data & InstrData::_OPT_USED) { // bulk read (memcpy device to host)
+          const std::uintptr_t END_CAP = td->ptr+td->_OPT_DATA;
           std::size_t occurrences_uninit = 0ull;
-          const Data_t* last_occurrence_uninit;
-          uintptr_t last_stop = td->ptr;
-          for (auto _ihd : mem.find_all(td->ptr, td->ptr+td->_OPT_DATA)) {
-            if (_ihd->start > last_stop && mem.find(last_stop) == mem.end()) {
-              occurrences_uninit += _ihd->start - last_stop;
-              last_occurrence_uninit = _ihd->val.get();
+          // const Data_t* last_occurrence_uninit;
+          std::uintptr_t last_stop = td->ptr;
+          for (const auto _i : mem.find_all(td->ptr, END_CAP)) {
+            if (_i->start > last_stop) {
+              occurrences_uninit += _i->start - last_stop;
+              // last_occurrence_uninit = _i->val.get();
             } else {
-              check_race_DR(td, _ihd->val);
+              check_race_DR(td, _i->val);
             }
-            last_stop = _ihd->stop;
+            last_stop = _i->stop;
           }
+          if (last_stop < END_CAP)
+            occurrences_uninit += (END_CAP) - last_stop;
           if (occurrences_uninit)
-            add_result(results,{Result::READ_UNINIT_D, td, DataPtr_t::make(last_occurrence_uninit), 
+            add_result(results,{Result::READ_UNINIT_D, td, nullptr, //DataPtr_t::make(last_occurrence_uninit), 
                                 "A Device Kernel Read from Uninitialized memory durring a Bulk-GPU-Read/Memcpy"},
                        occurrences_uninit);
-          mem.insert(td->ptr, td->ptr+td->_OPT_DATA, td);
+          mem.insert(td->ptr, END_CAP, td);
         } else { // single read
           i = mem.find(td->ptr);
           if (i == mem.end()) {// read with no preceding write
-            if (mem.find(td->ptr) == mem.end()) // check to see if it was initalized in other mem table.
+            // if (memH.find(td->ptr) == memH.end()) // check to see if it was initalized in other mem table.
               add_result(results,{Result::READ_UNINIT_D, td, nullptr, "A Device Kernel Read from Uninitialized Memory"},
                           ((td->data & _OPT_USED) ? td->_OPT_DATA : 1u));
             mem.insert(td->ptr, td);
@@ -180,20 +189,23 @@ void StateMachine::run(std::uint64_t remainder_quotient)
         if (not (td->data & WRITE)) //allow atomic instructions to fall through.
           break; 
 
-      case ON_DEVICE | WRITE: // (DH)
+      case ON_DEVICE | WRITE:
         if (td->data & InstrData::_OPT_USED) {
+          const std::uintptr_t END_CAP = td->ptr+td->_OPT_DATA;
           std::size_t occurrences_race = 0ull;
           const Data_t* last_occurrence_race;
-          for (auto _idh : mem.find_all(td->ptr, td->ptr+td->_OPT_DATA))
-            check_race_DW(td, _idh->val);
-          mem.insert(td->ptr, td->ptr+td->_OPT_DATA, td);
+          for (const auto _i : mem.find_all(td->ptr, END_CAP))
+            check_race_DW(td, _i->val);
+          mem.insert(td->ptr, END_CAP, td);
         } else {
           i = mem.find(td->ptr); //TODO: \/ logic below needs a refresh (might be flawed) \/
           // not first write of a pair (empty or just allocated)
           //                          AND the conditions with the last memory action checks out
-          if (i != mem.end())
+          if (i != mem.end()) {
             check_race_DW(td, i->val);
-          mem.insert(td->ptr, td); // do nothing but insert into memory later.
+            if (i->is_single()) i->val = td; else mem.insert(td->ptr, td); // do nothing but insert into memory later.
+          } else 
+            mem.insert(td->ptr, td);
         }
       break;
 
@@ -216,6 +228,7 @@ void StateMachine::run(std::uint64_t remainder_quotient)
 void StateMachine::reset()
 {
   mem.clear();
+  // memD.clear();
   ownership.clear();
   default_stream_zone = Zone_t::DEFAULT_ZONE;
   per_thread_zones.clear();
@@ -282,9 +295,15 @@ inline void StateMachine::sync_to_zone<StateMachine::Zone_t::HOST_CONTROL>(const
   switch (stream) {
     case hipStreamLegacy_ull:
       default_stream_zone = Zone_t{Zone_t::HOST_CONTROL, td->time_stamp};
-    case hipStreamPerThread_ull:
       per_thread_zones[jobId_t::hash_stream_ptr(td->threadId.host)] = Zone_t{Zone_t::HOST_CONTROL, td->time_stamp};
       break;
+    case hipStreamPerThread_ull: {
+      per_thread_zones[jobId_t::hash_stream_ptr(td->threadId.host)] = Zone_t{Zone_t::HOST_CONTROL, td->time_stamp};
+      auto rows = zones.findByKey1(td->threadId.host);
+      for (auto& row : rows)
+        row.data = Zone_t{Zone_t::HOST_CONTROL, td->time_stamp};
+      break;
+    }
     default:
       zones[td->threadId.host][jobId_t::hash_stream_ptr(stream)] = {Zone_t::HOST_CONTROL, td->time_stamp};
       break;
@@ -298,7 +317,7 @@ inline void StateMachine::sync_to_zone<StateMachine::Zone_t::DEVICE_CONTROL>(con
   std::uintptr_t stream = (td->ptr) ? td->ptr : DEFAULT_STREAM_BEHAVIOR();
   switch (stream) {
     case hipStreamLegacy_ull:
-      if (default_stream_zone.state != Zone_t::DEVICE_CONTROL)
+      // if (default_stream_zone.state != Zone_t::DEVICE_CONTROL)
         default_stream_zone = Zone_t{Zone_t::DEVICE_CONTROL, td->time_stamp};
     case hipStreamPerThread_ull: {
       auto _i = per_thread_zones.find(jobId_t::hash_stream_ptr(td->threadId.host));
@@ -307,6 +326,7 @@ inline void StateMachine::sync_to_zone<StateMachine::Zone_t::DEVICE_CONTROL>(con
                                   Zone_t{Zone_t::DEVICE_CONTROL, td->time_stamp});
       else if (_i->second.state != Zone_t::DEVICE_CONTROL)
         _i->second = Zone_t{Zone_t::DEVICE_CONTROL, td->time_stamp};
+      zones[td->threadId.host][jobId_t::hash_stream_ptr(stream)] = {Zone_t::DEVICE_CONTROL, td->time_stamp};
       break;  
     }
     default: {
@@ -325,16 +345,18 @@ inline void StateMachine::sync_to_zone<StateMachine::Zone_t::DEVICE_CONTROL>(con
 
 inline const StateMachine::Zone_t& StateMachine::get_host_zone(const StateMachine::DataPtr_t& HE) const
 {
-  const Zone_t* zone = &default_stream_zone;
-  const auto _ptz = per_thread_zones.find(jobId_t::hash_stream_ptr(HE->threadId.host));
-  if (_ptz != per_thread_zones.end() 
-      && _ptz->second.trans_time > zone->trans_time)
-    zone = &_ptz->second;
+  const Zone_t* zone = & Zone_t::DEFAULT_ZONE; //&default_stream_zone;
+  if (hipStreamLegacy_ull == DEFAULT_STREAM_BEHAVIOR()) {
+    const auto _ptz = per_thread_zones.find(jobId_t::hash_stream_ptr(HE->threadId.host));
+    if (_ptz != per_thread_zones.end() 
+        /* && _ptz->second.trans_time >= zone->trans_time */)
+      zone = &_ptz->second;
+  } 
   const auto _po = ownership.find(HE->ptr);
   if (_po != ownership.end()) {
     const auto _z = zones.find(HE->threadId.host, _po->val);
     if (_z
-        && _z->data.trans_time > zone->trans_time)
+        && _z->data.trans_time >= zone->trans_time)
       zone = &_z->data;
   }
   return *zone;
@@ -380,20 +402,16 @@ inline const StateMachine::Zone_t& StateMachine::get_zone(const StateMachine::Da
 StateMachine::Result::Status StateMachine::check_race_HR(const StateMachine::DataPtr_t& HR, 
                                                          const StateMachine::DataPtr_t& o) 
 {
-  // Zone_t zone = ((o->data & ON_HOST) 
-  //                 ? get_host_zone(HR)
-  //                 : get_zone(HR, o));
-
   if (o->data & ON_HOST) {
     Zone_t zone = get_host_zone(HR);
-    if (zone.state != Zone_t::HOST_CONTROL)
+    if (zone.state != Zone_t::HOST_CONTROL && zone.trans_time > 0u)
       return add_result(results,{Result::UNPROTECTED_HR, HR, nullptr, "WARN: Host Read from memory not sync protected on this Host thread!"});
     return Result::GOOD;
   }
   
   Zone_t zone = get_zone(HR, o);
 
-  if (zone.state != Zone_t::DEVICE_CONTROL  // not a critical zone
+  if (zone.state == Zone_t::HOST_CONTROL  // not a critical zone
       || zone.trans_time > o->time_stamp)   // OR the previous device event is stale/out-of-date
     return Result::GOOD;
 
@@ -406,19 +424,14 @@ StateMachine::Result::Status StateMachine::check_race_HR(const StateMachine::Dat
       return add_result(results,{Result::POS_RACE_HR_DW,HR,o, "WARN: Host Read from memory still controlled by a Device (no protections from HR->DW Race)"});
       
     default:
-      return add_result(results,{Result::INTERNAL_ERROR,HR,o,"[scabbard.rtl.sm.checkHR:ERR] unknown event data stored in state `mem` variable"});
+      return add_result(results,{Result::INTERNAL_ERROR,HR,o,"[scabbard.rtl.sm.checkHR:ERR] unknown event data stored in state `memD` variable"});
   }
-
 }
 
 
 StateMachine::Result::Status StateMachine::check_race_HW(const StateMachine::DataPtr_t& HW, 
                                                          const StateMachine::DataPtr_t& o) 
 {
-  // Zone_t zone = ((o->data & ON_HOST) 
-  //                 ? get_host_zone(HR)
-  //                 : get_zone(HR, o));
-
   if (o->data & ON_HOST) {
     Zone_t zone = get_host_zone(HW);
     if (zone.state != Zone_t::HOST_CONTROL)
@@ -428,7 +441,7 @@ StateMachine::Result::Status StateMachine::check_race_HW(const StateMachine::Dat
   
   Zone_t zone = get_zone(HW, o);
 
-  if (zone.state != Zone_t::DEVICE_CONTROL  // not a critical zone
+  if (zone.state == Zone_t::HOST_CONTROL  // not a critical zone
       || zone.trans_time > o->time_stamp)   // OR the previous device event is stale/out-of-date
     return Result::GOOD;
 
@@ -441,7 +454,7 @@ StateMachine::Result::Status StateMachine::check_race_HW(const StateMachine::Dat
       return add_result(results,{Result::UNPROTECTED_HW, o, HW, "WARN: Host Wrote to memory still controlled by a Device"});
 
     default:
-      return add_result(results,{Result::INTERNAL_ERROR, o, HW,"[scabbard.rtl.sm.checkHW:ERR] unknown event data stored in state `mem` variable"});
+      return add_result(results,{Result::INTERNAL_ERROR, o, HW,"[scabbard.rtl.sm.checkHW:ERR] unknown event data stored in state `memD` variable"});
   }
 }
 
@@ -475,7 +488,7 @@ StateMachine::Result::Status StateMachine::check_race_DR(const StateMachine::Dat
       return add_result(results,{Result::POS_RACE_DR_HW,DR,o,"WARN: a Device Read from the the same location the Host Wrote to unprotected (no protection from DR->HW Race)"});
 
     default:
-      return add_result(results,{Result::INTERNAL_ERROR,DR,o,"[scabbard.rtl.sm.checkDR:ERR] unknown event data stored in state `mem` variable"});
+      return add_result(results,{Result::INTERNAL_ERROR,DR,o,"[scabbard.rtl.sm.checkDR:ERR] unknown event data stored in state `memH` variable"});
   }
 }
 
@@ -509,7 +522,7 @@ StateMachine::Result::Status StateMachine::check_race_DW(const StateMachine::Dat
       return add_result(results,{Result::UNPROTECTED_HW,o,DW,"WARN: the Host Wrote to memory controlled by a Device"});
 
     default:
-      return add_result(results,{Result::INTERNAL_ERROR,o,DW,"[scabbard.rtl.sm.checkDW:ERR] unknown event data stored in state `mem` variable"});
+      return add_result(results,{Result::INTERNAL_ERROR,o,DW,"[scabbard.rtl.sm.checkDW:ERR] unknown event data stored in state `memH` variable"});
   }
 }
 

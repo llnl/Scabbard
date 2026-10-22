@@ -31,7 +31,8 @@
                     "text": "-gdb-set disassembly-flavor intel",
                     "ignoreFailures": true
                 }
-            ]
+            ],
+            "preLaunchTask": "[CMake] build test_sm"
         },
         {
             "name": "(gdb) Launch test_sm_scenarios GTest",
@@ -60,7 +61,98 @@
                     "text": "-gdb-set disassembly-flavor intel",
                     "ignoreFailures": true
                 }
-            ]
+            ],
+            "preLaunchTask": "[CMake] build test_sm_scenarios"
+        },
+        {
+            "name": "(gdb) Launch test_sm_scenarios_pt GTest",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/scabbard/test_sm_scenarios_pt",
+            "args": [],
+            "stopAtEntry": false,
+            "cwd": "${fileDirname}",
+            "environment": [
+                {
+                    "name": "SCABBARD_PATH",
+                    "value": "${workspaceFolder}/build/scababrd"
+                },
+            ],
+            "externalConsole": false,
+            "MIMode": "gdb",
+            "setupCommands": [
+                {
+                    "description": "Enable pretty-printing for gdb",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                },
+                {
+                    "description": "Set Disassembly Flavor to Intel",
+                    "text": "-gdb-set disassembly-flavor intel",
+                    "ignoreFailures": true
+                }
+            ],
+            "preLaunchTask": "[CMake] build test_sm_scenarios_pt"
+        },
+        {
+            "name": "(gdb) Launch test_sm_stress GTest",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/scabbard/test_sm_stress",
+            //"args": ["--gtest_filter=SM_Stress.legacy_default_stream_one_sync_covers_all_threads_clean"],
+            "stopAtEntry": false,
+            "cwd": "${fileDirname}",
+            "environment": [
+                {
+                    "name": "SCABBARD_PATH",
+                    "value": "${workspaceFolder}/build/scababrd"
+                },
+            ],
+            "externalConsole": false,
+            "MIMode": "gdb",
+            "setupCommands": [
+                {
+                    "description": "Enable pretty-printing for gdb",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                },
+                {
+                    "description": "Set Disassembly Flavor to Intel",
+                    "text": "-gdb-set disassembly-flavor intel",
+                    "ignoreFailures": true
+                }
+            ],
+            "preLaunchTask": "[CMake] build test_sm_stress"
+        },
+        {
+            "name": "(gdb) Launch test_sm_stress_pt GTest",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/scabbard/test_sm_stress_pt",
+            // "args": ["--gtest_filter=SM_Stress.reduction_block_partials_clean"],
+            "stopAtEntry": false,
+            "cwd": "${fileDirname}",
+            "environment": [
+                {
+                    "name": "SCABBARD_PATH",
+                    "value": "${workspaceFolder}/build/scababrd"
+                },
+            ],
+            "externalConsole": false,
+            "MIMode": "gdb",
+            "setupCommands": [
+                {
+                    "description": "Enable pretty-printing for gdb",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                },
+                {
+                    "description": "Set Disassembly Flavor to Intel",
+                    "text": "-gdb-set disassembly-flavor intel",
+                    "ignoreFailures": true
+                }
+            ],
+            "preLaunchTask": "[CMake] build test_sm_stress_pt"
         },
         {
             "name": "Python Debugger: Synthetic Performace Test",
