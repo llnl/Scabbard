@@ -24,7 +24,7 @@ TEST_F(SM_Tests, no_race) {
   auto iErrs = get_internal_errors();
   ASSERT_FALSE(iErrs) << iErrs;
 
-  EXPECT_FALSE(any_issues()) << "[scabbard.rtl.sm.test:RPT] FAIL: no_race";
+  EXPECT_FALSE(any_issues()) << "\n[scabbard.rtl.sm.test:RPT] FAIL: no_race";
 }
 
 TEST_F(SM_Tests, def_HR_DW_race_0) {
@@ -47,10 +47,10 @@ TEST_F(SM_Tests, def_HR_DW_race_0) {
   auto iErrs = get_internal_errors();
   ASSERT_FALSE(iErrs) << iErrs;
 
-  EXPECT_FALSE(any_true_race()) << "[scabbard.rtl.sm.test:RPT] FAIL: def_HR_DW_race_0";
+  EXPECT_TRUE(any_true_race()) << "\n[scabbard.rtl.sm.test:RPT] FAIL: def_HR_DW_race_0";
 }
 
-TEST_F(SM_Tests, def_HR_DW_race_1) {
+TEST_F(SM_Tests, pos_HR_DW_race_1) {
   auto tid = spawn_host_thread();
   std::uintptr_t mem = malloc_event(tid);
   host_write_event(tid, mem);
@@ -68,21 +68,12 @@ TEST_F(SM_Tests, def_HR_DW_race_1) {
   auto iErrs = get_internal_errors();
   ASSERT_FALSE(iErrs) << iErrs;
 
-  EXPECT_FALSE(any_race()) << "[scabbard.rtl.sm.test:RPT] FAIL: def_HR_DW_race_1";
+  EXPECT_TRUE(any_race()) << "\n[scabbard.rtl.sm.test:RPT] FAIL: pos_HR_DW_race_1"
+                               << get_results();
 }
-
-
-
-
-
 
 
 
 } //? namespace test
 } //? namespace rtl
 } //? namespace scabbard
-
-int main(int argc, char **argv) {
-  testing::InitGoogleTest(&argc, argv);
-  return RUN_ALL_TESTS();
-}

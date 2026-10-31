@@ -8,6 +8,7 @@
 #include <scabbard/rtl/GroupedPtr.hpp>
 #include <scabbard/rtl/calls.hpp>
 #include <atomic>
+#include <bitset>
 #include <unordered_map>
 
 #define hipStreamLegacy_ull 1u
@@ -177,7 +178,8 @@ protected:
   }
 
   void run(std::size_t reductionQt=0u) { SM.run(reductionQt); }
-  const StateMachine::ResultList_t& get_results() { return SM.get_results(); } 
+  const StateMachine::ResultList_t& get_results() const { return SM.get_results(); } 
+  void reset_sm() { SM.reset(); }
 
   bool _any_status_threshold(int threshold) {
     for (auto [res, count] : SM.get_results())
@@ -252,16 +254,6 @@ void PrintTo(const StateMachine::ResultList_t& data, std::ostream* out) {
 } //? namespace scabbard
 
 template<>
-testing::Message& testing::Message::operator << (const std::optional<std::pair<std::size_t,scabbard::rtl::StateMachine::ResultList_t>>& data) {
-  if (not data) return *this;
-  *this << "\n[scabbard.rtl.sm.test:ERR] Internal Errors Detected (x" << data->first << "):";
-  for (auto [res, count] : data->second)
-    *this << "\n[scabbard.rtl.sm.test:ERR]   - (x" << count <<") \"" << res.msg << '"';
-  *this << '\n';
-  return *this;
-}
-
-template<>
 testing::Message& testing::Message::operator << (const scabbard::rtl::StateMachine::Result::Status& status) {
   using Status = scabbard::rtl::StateMachine::Result;
   switch (status)
@@ -282,10 +274,71 @@ testing::Message& testing::Message::operator << (const scabbard::rtl::StateMachi
 }
 
 template<>
+testing::Message& testing::Message::operator << (const scabbard::InstrData& data) {
+  using namespace scabbard;
+  std::bitset<16u> bs(data);
+  return (*this 
+    << std::string((data & InstrData::ON_DEVICE) ? "ON_DEVICE, " : "")
+    << std::string((data & InstrData::ON_HOST) ? "ON_HOST, " : "")
+    << std::string((data & InstrData::ATOMIC) ? "ATOMIC, " : "")
+    << std::string((data & InstrData::READ) ? "READ, " : "")
+    << std::string((data & InstrData::WRITE) ? "WRITE, " : "")
+    << std::string((data & InstrData::ASYNC) ? "ASYNC_OP, " : "")
+    << std::string((data & InstrData::ALLOCATE) ? "ALLOCATE, " : "")
+    << std::string((data & InstrData::FREE) ? "FREE, " : "")
+    << std::string((data & InstrData::LAUNCH_EVENT) ? "KERNEL_LAUNCH, " : "")
+    << std::string((data & InstrData::SYNC_EVENT) ? "SYNC_EVENT, " : "")
+    << std::string((data & InstrData::UNKNOWN_HEAP) ? "UNKNOWN_HEAP, " : "")
+    << std::string((data & InstrData::DEVICE_HEAP) ? "DEVICE_HEAP, " : "")
+    << std::string((data & InstrData::HOST_HEAP) ? "HOST_HEAP, " : "")
+    << std::string((data & InstrData::MANAGED_MEM) ? "MANAGED_MEM, " : "")
+    << std::string((data & InstrData::_OPT_USED) ? "OPT_DATA, " : "")
+    << std::string((data & InstrData::_RUNTIME_CONDITIONAL) ? "RT_COND, " : ""));
+}
+
+template<>
+testing::Message& testing::Message::operator << (const scabbard::rtl::StateMachine::DataPtr_t& data) {
+  using namespace scabbard;
+  if (data->data & InstrData::ON_CPU)
+    return  *this << "{ptr=0x" << std::hex << data->ptr << std::dec 
+                  << ", t=" << data->time_stamp 
+                  << ", tid=0x" << std::hex << data->threadId.host << std::dec
+                  << ", l=" << data->metadata->line
+                  << ", d=[" << data->data << "]}";
+
+  return  *this << "{ptr=0x" << std::hex << data->ptr << std::dec 
+                << ", t=" << data->time_stamp 
+                << ", sid=0x" << std::hex << data->threadId.device.job.STREAM - 1u << std::dec
+                << ", l=" << data->metadata->line
+                << ", d=[" << data->data << "]}";
+}
+
+template<>
+testing::Message& testing::Message::operator << (const std::optional<std::pair<std::size_t,scabbard::rtl::StateMachine::ResultList_t>>& data) {
+  if (not data) return *this;
+  *this << "\n[scabbard.rtl.sm.test:ERR] Internal Errors Detected (x" << data->first << "):";
+  for (auto [res, count] : data->second) {
+    *this << "\n[scabbard.rtl.sm.test:ERR]   - (x" << count <<") \"" << res.msg << '"';
+    if (res.first_td)
+      *this<<"\n[scabbard.rtl.sm.test:INFO]        - " << res.first_td;
+    if (res.second_td)
+      *this<<"\n[scabbard.rtl.sm.test:INFO]        - " << res.second_td;
+  }
+  *this << '\n';
+  return *this;
+}
+
+template<>
 testing::Message& testing::Message::operator << (const scabbard::rtl::StateMachine::ResultList_t& data) {
   *this << "\n[scabbard.rtl.sm.test:INFO] Results found by state machine:";
-  for (auto [res, count] : data)
+  if (not data.size()) return *this << " <NONE>\n";
+  for (auto [res, count] : data) {
     *this << "\n[scabbard.rtl.sm.test:INFO]   - (x" << count <<") `" << res.status << "`: \"" << res.msg << '"';
+    if (res.first_td)
+      *this<<"\n[scabbard.rtl.sm.test:INFO]        - " << res.first_td;
+    if (res.second_td)
+      *this<<"\n[scabbard.rtl.sm.test:INFO]        - " << res.second_td;
+  }
   *this << '\n';
   return *this;
 }

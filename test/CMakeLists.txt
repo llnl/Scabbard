@@ -21,23 +21,15 @@ enable_testing()
 
 list(APPEND CMAKE_CXX_IMPLICIT_INCLUDE_DIRECTORIES "${CMAKE_BUILD_DIR}/_deps/googletest-src/googletest/include")
 
-set(MY_GTESTS "")
+set(MY_GTESTS test_all_gtests test_all_gtests_pt)
+set(MY_GTEST_MAIN_CPP "${CMAKE_CURRENT_SOURCE_DIR}/GTestMain.cpp")
+set(MY_GTEST_FILES ${MY_GTEST_MAIN_CPP})
 
-function(create_unit_test SUIT_NAME SUIT_VARIANT DEFAULT_STREAM_TYPE)
-  if(SUIT_VARIANT STREQUAL "_")
-    set(fName "test_${SUIT_NAME}")
-  else()
-    set(fName "test_${SUIT_NAME}_${SUIT_VARIANT}")
-  endif()
-  if (DEFAULT_STREAM_TYPE MATCHES "legacy")
-    set(tName "${fName}")
-  else()
-    set(tName "${fName}_pt")
-  endif()
-
+function(__create_unit_test_recipe tName DEFAULT_STREAM_TYPE)
   add_executable(${tName}
-      ${fName}.cpp
+      ${ARGN} # all arguments after the last expected one
       ${SCABBARD_PATH}/default_stream_helper.c
+      ${MY_GTEST_MAIN_CPP}
     )
 
   target_link_libraries(${tName}
@@ -62,6 +54,23 @@ function(create_unit_test SUIT_NAME SUIT_VARIANT DEFAULT_STREAM_TYPE)
   endif()
 
   add_dependencies(${tName} rtl)
+endfunction()
+
+function(create_unit_test SUIT_NAME SUIT_VARIANT DEFAULT_STREAM_TYPE)
+  if(SUIT_VARIANT STREQUAL "_")
+    set(fName "test_${SUIT_NAME}")
+  else()
+    set(fName "test_${SUIT_NAME}_${SUIT_VARIANT}")
+  endif()
+  if (DEFAULT_STREAM_TYPE MATCHES "legacy")
+    set(tName "${fName}")
+  else()
+    set(tName "${fName}_pt")
+  endif()
+
+  __create_unit_test_recipe(${tName} ${DEFAULT_STREAM_TYPE} "${fName}.cpp")
+
+  list(APPEND MY_GTEST_FILES "${fName}.cpp")
   list(APPEND MY_GTESTS ${tName})
 endfunction()
 
@@ -80,6 +89,8 @@ add_subdirectory("state-machine")
 
 # ---------------------------------------------------------------------------------------------- 
 
+__create_unit_test_recipe(test_all_gtests "legacy" ${MY_GTEST_FILES})
+__create_unit_test_recipe(test_all_gtests_pt "per-thread" ${MY_GTEST_FILES})
 
 include(GoogleTest)
 

@@ -70,11 +70,11 @@ namespace rtl {
     
   private:
     Trace_t trace;
-    MemTable_t mem;
-    // MemTable_t memD;
-    MemOwnershipTable_t ownership;
+    MemTable_t memH;
+    MemTable_t memD;
+    // MemOwnershipTable_t ownership;
     AllocTable_t allocs;
-    Zone_t default_stream_zone = Zone_t::DEFAULT_ZONE;
+    Zone_t default_stream_zone = {Zone_t::INITIALIZATION_PHASE, 0ull};
     PerThreadZoneList_t per_thread_zones;
     ZoneTable_t zones;
     ResultList_t results;
@@ -111,6 +111,13 @@ namespace rtl {
           | InstrData::ALLOCATE | InstrData::FREE
         );
 
+    using CheckRaceFn_t = std::function<Result::Status(const DataPtr_t&,const DataPtr_t&)>;
+
+    std::size_t check_uninit_bulkR(const DataPtr_t& td, 
+                                    const MemTable_t& mem, const MemTable_t& mem_same, 
+                                    const CheckRaceFn_t& check_race_fn,
+                                    bool on_host=false);
+
     Result::Status check_race_DR(const DataPtr_t& DR, const DataPtr_t& o);
     Result::Status check_race_HR(const DataPtr_t& HR, const DataPtr_t& o);
     Result::Status check_race_DW(const DataPtr_t& DW, const DataPtr_t& o);
@@ -124,13 +131,13 @@ namespace rtl {
     template<Zone_t::State ZS>
     inline void sync_to_zone(const DataPtr_t& td);
 
-    inline const Zone_t& get_host_zone(const DataPtr_t& td) const;
-    inline const Zone_t& get_device_zone(const DataPtr_t& td) const;
+    inline const Zone_t get_host_zone(const DataPtr_t& td) const;
+    inline const Zone_t get_device_zone(const DataPtr_t& td) const;
     /**
      * @brief Get the host zone per stream object
      *        NOTE: assumes that you have called `get_host_zone()` this cycle already
      */
-    inline const Zone_t& get_zone(const DataPtr_t& H, const DataPtr_t& D) const;
+    inline const Zone_t get_zone(const DataPtr_t& H, const DataPtr_t& D) const;
 
 
     inline void move_append(DataPtr_t&& __Ptr) { trace.emplace(std::move(__Ptr)); }

@@ -5,6 +5,56 @@
     "version": "0.2.0",
     "configurations": [
         {
+            "name": "(gdb) Launch all GTests",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/scabbard/test_all_gtests",
+            "args": [],
+            "stopAtEntry": false,
+            "cwd": "${fileDirname}",
+            "environment": [{"name": "SCABBARD_PATH","value": "${workspaceFolder}/build/scababrd"},],
+            "externalConsole": false,
+            "MIMode": "gdb",
+            "setupCommands": [
+                {
+                    "description": "Enable pretty-printing for gdb",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                },
+                {
+                    "description": "Set Disassembly Flavor to Intel",
+                    "text": "-gdb-set disassembly-flavor intel",
+                    "ignoreFailures": true
+                }
+            ],
+            "preLaunchTask": "[CMake] build test_all_gtests"
+        },
+        {
+            "name": "(gdb) Launch all GTests (pt)",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/scabbard/test_all_gtests_pt",
+            "args": [],
+            "stopAtEntry": false,
+            "cwd": "${fileDirname}",
+            "environment": [{"name": "SCABBARD_PATH","value": "${workspaceFolder}/build/scababrd"},],
+            "externalConsole": false,
+            "MIMode": "gdb",
+            "setupCommands": [
+                {
+                    "description": "Enable pretty-printing for gdb",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                },
+                {
+                    "description": "Set Disassembly Flavor to Intel",
+                    "text": "-gdb-set disassembly-flavor intel",
+                    "ignoreFailures": true
+                }
+            ],
+            "preLaunchTask": "[CMake] build test_all_gtests_pt"
+        },
+        {
             "name": "(gdb) Launch test_sm GTest",
             "type": "cppdbg",
             "request": "launch",
@@ -12,12 +62,7 @@
             "args": [],
             "stopAtEntry": false,
             "cwd": "${fileDirname}",
-            "environment": [
-                {
-                    "name": "SCABBARD_PATH",
-                    "value": "${workspaceFolder}/build/scababrd"
-                },
-            ],
+            "environment": [{"name": "SCABBARD_PATH","value": "${workspaceFolder}/build/scababrd"},],
             "externalConsole": false,
             "MIMode": "gdb",
             "setupCommands": [
@@ -39,15 +84,10 @@
             "type": "cppdbg",
             "request": "launch",
             "program": "${workspaceFolder}/build/scabbard/test_sm_scenarios",
-            "args": [],
+            // "args": ["--gtest_filter=SM_Tests.per_thread_default_stream_sync_by_other_thread_does_not_protect"],
             "stopAtEntry": false,
             "cwd": "${fileDirname}",
-            "environment": [
-                {
-                    "name": "SCABBARD_PATH",
-                    "value": "${workspaceFolder}/build/scababrd"
-                },
-            ],
+            "environment": [{"name": "SCABBARD_PATH","value": "${workspaceFolder}/build/scababrd"},],
             "externalConsole": false,
             "MIMode": "gdb",
             "setupCommands": [
@@ -69,15 +109,10 @@
             "type": "cppdbg",
             "request": "launch",
             "program": "${workspaceFolder}/build/scabbard/test_sm_scenarios_pt",
-            "args": [],
+            // "args": ["--gtest_filter=SM_Tests.per_thread_default_stream_sync_by_other_thread_does_not_protect"],
             "stopAtEntry": false,
             "cwd": "${fileDirname}",
-            "environment": [
-                {
-                    "name": "SCABBARD_PATH",
-                    "value": "${workspaceFolder}/build/scababrd"
-                },
-            ],
+            "environment": [{"name": "SCABBARD_PATH","value": "${workspaceFolder}/build/scababrd"},],
             "externalConsole": false,
             "MIMode": "gdb",
             "setupCommands": [
@@ -99,15 +134,10 @@
             "type": "cppdbg",
             "request": "launch",
             "program": "${workspaceFolder}/build/scabbard/test_sm_stress",
-            //"args": ["--gtest_filter=SM_Stress.legacy_default_stream_one_sync_covers_all_threads_clean"],
+            // "args": ["--gtest_filter=SM_Stress.double_buffered_streaming_default_plus_explicit_clean"],
             "stopAtEntry": false,
             "cwd": "${fileDirname}",
-            "environment": [
-                {
-                    "name": "SCABBARD_PATH",
-                    "value": "${workspaceFolder}/build/scababrd"
-                },
-            ],
+            "environment": [{"name": "SCABBARD_PATH","value": "${workspaceFolder}/build/scababrd"},],
             "externalConsole": false,
             "MIMode": "gdb",
             "setupCommands": [
@@ -132,12 +162,7 @@
             // "args": ["--gtest_filter=SM_Stress.reduction_block_partials_clean"],
             "stopAtEntry": false,
             "cwd": "${fileDirname}",
-            "environment": [
-                {
-                    "name": "SCABBARD_PATH",
-                    "value": "${workspaceFolder}/build/scababrd"
-                },
-            ],
+            "environment": [{"name": "SCABBARD_PATH","value": "${workspaceFolder}/build/scababrd"},],
             "externalConsole": false,
             "MIMode": "gdb",
             "setupCommands": [

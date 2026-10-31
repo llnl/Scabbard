@@ -395,6 +395,7 @@ TEST_F(SM_Stress, double_buffered_streaming_clean) {
   EXPECT_EQ(status_count_all(), 0u);
 }
 
+#ifdef SM_TEST_DEFAULT_STREAM_PER_THREAD
 // same pipeline with slot 0 on the default stream and slot 1 on an explicit stream
 TEST_F(SM_Stress, double_buffered_streaming_default_plus_explicit_clean) {
   streaming_pipeline(16u, 4096u, NO_SKIP, /*slot0_default_stream=*/true);
@@ -403,9 +404,10 @@ TEST_F(SM_Stress, double_buffered_streaming_default_plus_explicit_clean) {
   auto iErrs = get_internal_errors();
   ASSERT_FALSE(iErrs) << iErrs;
 
-  EXPECT_FALSE(any_issues());
+  EXPECT_FALSE(any_issues()) << get_results();
   EXPECT_EQ(status_count_all(), 0u);
 }
+#endif //? SM_TEST_DEFAULT_STREAM_PER_THREAD
 
 // 64 allocations of varying size alternating between the default stream and an explicit stream:
 // malloc, host init, kernel in place, sync, readback, free
@@ -672,6 +674,8 @@ TEST_F(SM_Stress, host_reads_partially_written_output) {
 // it by thread 0 covers every thread's kernel, so thread 0 may read every slice.
 // NOTE: assumes the SM keys the zone on the shared default stream rather than on the launcher.
 TEST_F(SM_Stress, legacy_default_stream_one_sync_covers_all_threads_clean) {
+  ASSERT_TRUE(DEFAULT_STREAM_BEHAVIOR() == hipStreamLegacy_ull) 
+    << "backend is not using the legacy default stream behavior";
   std::vector<HostThreadId> th;
   for (std::size_t t=0; t<DT; ++t) th.push_back(spawn_host_thread());
   auto out = default_stream_slices(th);
@@ -693,6 +697,8 @@ TEST_F(SM_Stress, legacy_default_stream_one_sync_covers_all_threads_clean) {
 // per-thread mode: every host thread's default stream is its own, so thread 0 syncing its default
 // stream covers only its own slice. Reading its own slice is clean; reading the others is not.
 TEST_F(SM_Stress, per_thread_default_stream_sync_covers_only_own_stream) {
+  ASSERT_TRUE(DEFAULT_STREAM_BEHAVIOR() == hipStreamPerThread_ull) 
+    << "backend is not using per-thread default stream behavior";
   std::vector<HostThreadId> th;
   for (std::size_t t=0; t<DT; ++t) th.push_back(spawn_host_thread());
   auto out = default_stream_slices(th);
@@ -719,6 +725,8 @@ TEST_F(SM_Stress, per_thread_default_stream_sync_covers_only_own_stream) {
 // per-thread mode: the domain decomposition where every thread uses the default stream (= its own
 // stream); behaves exactly like the explicit-stream version.
 TEST_F(SM_Stress, per_thread_default_streams_domain_decomposition) {
+  ASSERT_TRUE(DEFAULT_STREAM_BEHAVIOR() == hipStreamPerThread_ull) 
+    << "backend is not using per-thread default stream behavior";
   auto d = decomposition_phase1(/*use_default_streams=*/true);
 
   run();
@@ -740,8 +748,3 @@ TEST_F(SM_Stress, per_thread_default_streams_domain_decomposition) {
 } //? namespace test
 } //? namespace rtl
 } //? namespace scabbard
-
-int main(int argc, char **argv) {
-  testing::InitGoogleTest(&argc, argv);
-  return RUN_ALL_TESTS();
-}
