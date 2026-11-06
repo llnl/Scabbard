@@ -150,12 +150,12 @@ RunArgParser.add_argument('--device-buff-size','-b',
               "(default: 65536; min: 4096; max: 4294967296). "
               "[decrease if memory balloons; increase if data loss occurs]"
     )
-RunArgParser.add_argument('--rtl-alloc-len','-l',
+RunArgParser.add_argument('--rtl-alloc-cache-len','-l',
         nargs=1,
         default=None,
         metavar='<uint64>',
         required=False,
-        help= "Number of trace points in each allocation chunk "
+        help= "Max number of unused allocation chunks to cache for re-use "
               "(default: 64; min: 8; max: 4096). "
               "Increasing this MIGHT improve runtime, and decreasing MIGHT improve memory usage. "
               "[decrease if memory usage balloons; "

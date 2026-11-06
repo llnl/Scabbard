@@ -70,12 +70,12 @@ typedef std::uint16_t StreamJobId;
 
 #pragma pack(1)
 struct jobId_t {
-  StreamJobId JOB = 0u;
   StreamId STREAM = 0u;
+  StreamJobId JOB = 0u;
 
   [[clang::disable_sanitizer_instrumentation, gnu::flatten, gnu::always_inline]] 
   __host__
-  jobId_t(StreamJobId JOB_, const hipStream_t STREAM_)
+  jobId_t(const hipStream_t STREAM_, StreamJobId JOB_)
     : JOB(JOB_), STREAM(jobId_t::hash_stream_ptr((const std::uintptr_t)STREAM_))
   {}
   [[clang::disable_sanitizer_instrumentation, gnu::flatten, gnu::always_inline]] 
@@ -259,6 +259,12 @@ struct TraceData {
     return ((l.time_stamp == r.time_stamp) // if they are equal in time
               && ((l.data & scabbard::InstrData::ON_CPU) // `<` only true if l is on cpu and r is on gpu
                   && (r.data & scabbard::InstrData::ON_GPU)));
+  }
+
+  [[clang::disable_sanitizer_instrumentation, gnu::flatten, gnu::always_inline]]
+  __host__
+  inline friend bool operator == (const TraceData& l, const TraceData& r) {
+    return &l == &r;
   }
 };
 

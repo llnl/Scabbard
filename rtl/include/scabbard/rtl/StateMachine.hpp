@@ -12,7 +12,7 @@
 #pragma once
 
 #include <scabbard/TraceData.hpp>
-#include <scabbard/rtl/GroupedPtr.hpp>
+#include <scabbard/rtl/Pool.hpp>
 #include <scabbard/rtl/IntervalMap.hpp>
 #include <scabbard/rtl/DualKeyTable.hpp>
 
@@ -30,7 +30,8 @@ namespace rtl {
 
   public:
     using Data_t = TraceData;
-    using DataPtr_t = GroupedPtr<const Data_t>;
+    using DataPtr_t = Pool<const Data_t>::Ptr;
+    using WDataPtr_t = Pool<const Data_t>::WeakPtr;
     using Trace_t = std::priority_queue<DataPtr_t, 
                                         std::vector<DataPtr_t>,
                                         DataPtr_t::priority_less>;
@@ -91,7 +92,7 @@ namespace rtl {
      *                             Such that `0` will process all of the current trace;
      *                             `1` will leave 1/2 of the current trace un-processed;
      *                             `2` will leave 1/4 of the current trace un-processed;
-     *                             and so on with the form (1/(x+1)). 
+     *                             and so on with the form (1/(2x)). 
      */
     void run(std::uint64_t remainder_proportion=0);
 
@@ -111,17 +112,17 @@ namespace rtl {
           | InstrData::ALLOCATE | InstrData::FREE
         );
 
-    using CheckRaceFn_t = std::function<Result::Status(const DataPtr_t&,const DataPtr_t&)>;
+    using CheckRaceFn_t = std::function<Result::Status(const WDataPtr_t,const WDataPtr_t)>;
 
-    std::size_t check_uninit_bulkR(const DataPtr_t& td, 
+    std::size_t check_uninit_bulkR(const WDataPtr_t td, 
                                     const MemTable_t& mem, const MemTable_t& mem_same, 
                                     const CheckRaceFn_t& check_race_fn,
                                     bool on_host=false);
 
-    Result::Status check_race_DR(const DataPtr_t& DR, const DataPtr_t& o);
-    Result::Status check_race_HR(const DataPtr_t& HR, const DataPtr_t& o);
-    Result::Status check_race_DW(const DataPtr_t& DW, const DataPtr_t& o);
-    Result::Status check_race_HW(const DataPtr_t& HW, const DataPtr_t& o);
+    Result::Status check_race_DR(const WDataPtr_t DR, const WDataPtr_t o);
+    Result::Status check_race_HR(const WDataPtr_t HR, const WDataPtr_t o);
+    Result::Status check_race_DW(const WDataPtr_t DW, const WDataPtr_t o);
+    Result::Status check_race_HW(const WDataPtr_t HW, const WDataPtr_t o);
 
     /**
      * @brief modify the state to reflect that a sync/de-sync event occurs transfering control as indicated
@@ -129,15 +130,15 @@ namespace rtl {
      * @param zone - where the control is being handed off to
      */
     template<Zone_t::State ZS>
-    inline void sync_to_zone(const DataPtr_t& td);
+    inline void sync_to_zone(const WDataPtr_t td);
 
-    inline const Zone_t get_host_zone(const DataPtr_t& td) const;
-    inline const Zone_t get_device_zone(const DataPtr_t& td) const;
+    inline const Zone_t get_host_zone(const WDataPtr_t td) const;
+    inline const Zone_t get_device_zone(const WDataPtr_t td) const;
     /**
      * @brief Get the host zone per stream object
      *        NOTE: assumes that you have called `get_host_zone()` this cycle already
      */
-    inline const Zone_t get_zone(const DataPtr_t& H, const DataPtr_t& D) const;
+    inline const Zone_t get_zone(const WDataPtr_t H, const WDataPtr_t D) const;
 
 
     inline void move_append(DataPtr_t&& __Ptr) { trace.emplace(std::move(__Ptr)); }

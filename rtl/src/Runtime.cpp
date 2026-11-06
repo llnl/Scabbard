@@ -57,7 +57,7 @@ namespace scabbard {
           dt = nullptr;
         }
       if (SM) delete SM;
-      if (GPF) delete GPF;
+      if (PF) delete PF;
     }
 
 
@@ -84,6 +84,8 @@ namespace scabbard {
         worker_thread->join();
         delete worker_thread;
         worker_thread = nullptr;
+        process_device();
+        process_host();
       }
     }
 
@@ -97,22 +99,35 @@ namespace scabbard {
 
     [[clang::disable_sanitizer_instrumentation, gnu::used, gnu::retain]] 
     __host__
-    void Runtime::initialize(std::size_t mem_chunk_len)
+    void Runtime::initialize(std::size_t max_cached_chunks)
     {
       if (SM != nullptr) { // case reinitialization
         SM->reset();
-        if (GPF) delete GPF;
+        if (PF) delete PF;
       } else
         SM = new StateMachine();
-      GPF = new GroupedPtrFactory<const TraceData>(mem_chunk_len);
+      PO.max_cached_chunks = max_cached_chunks;
+      PF = new Pool<const TraceData>::Factory(PO);
     }
+
+    [[clang::disable_sanitizer_instrumentation, gnu::used, gnu::retain]] 
+    __host__
+    void Runtime::finalize()
+    {
+      SM->reset();
+    }
+
 
     [[clang::disable_sanitizer_instrumentation, gnu::used, gnu::retain]] 
     __host__
     void Runtime::report()
     {
-      SM->run(0);
+      mx_device.lock();
+      mx_host.lock();
+      SM->run(0u);
       print_report(SM->get_results());
+      mx_host.unlock();
+      mx_device.unlock();
     }
 
 
@@ -131,9 +146,9 @@ namespace scabbard {
       }
       auto it = stream_job_counters.find(STREAM);
       if (it == stream_job_counters.end())
-        it = stream_job_counters.emplace(std::make_pair(STREAM,0u)).first;
+        it = stream_job_counters.emplace(STREAM,0u).first;
       // in place construction into allocated managed memory
-      new (dt) device::DeviceTracker(jobId_t(++it->second,STREAM), vClk);
+      new (dt) device::DeviceTracker(jobId_t(STREAM,++it->second), vClk);
       mx_device.lock();
       device_trackers.push_back(dt);
       mx_device.unlock();
@@ -146,7 +161,7 @@ namespace scabbard {
     void Runtime::append(TraceData&& tData)
     {
       mx_host.lock();
-      hostQ.push(std::move(GPF->create(std::move(tData))));
+      hostQ.push(std::move(PF->create(std::move(tData))));
       mx_host.unlock();
     }
 
@@ -159,13 +174,8 @@ namespace scabbard {
       static std::size_t cycle_count = 0ull;
       process_device();
       process_host();
-      if (cycle_count++ % 8u == 0u) {
-        mx_device.lock(); // NOTE: might disrupt validity to freeze host and device here.
-        mx_host.lock();
-        SM->run(2u);
-        mx_host.unlock();
-        mx_device.unlock();
-      }
+      if (cycle_count++ % 8u == 0u)
+        run_state_machine(2u);
     }
 
     [[clang::disable_sanitizer_instrumentation, gnu::used, gnu::retain]] 
@@ -174,26 +184,39 @@ namespace scabbard {
     {
       using namespace scabbard::rtl::device;
       mx_device.lock();
-      for (auto dt : device_trackers) {
-        if (dt == nullptr) continue;
+      for (auto it=device_trackers.begin(); it != device_trackers.end(); ++it) {
+        DeviceTracker* dt = *it;
+        // if (dt == nullptr) continue;
         const size_t NEXT = dt->next; // get copy of atomic value to skip atomic reads since the buffer is frozen
         const size_t TRUE_SPAN = NEXT - dt->next_read;
         const size_t SPAN = (TRUE_SPAN < DeviceTracker::BUFFER_SIZE) ? TRUE_SPAN : DeviceTracker::BUFFER_SIZE;
         const size_t MAX = dt->next_read + DeviceTracker::BUFFER_SIZE;
         for (size_t i = dt->next_read; i < MAX && i < NEXT; ++i)
-          SM->append(GPF->create(std::move(dt->buffer[i%DeviceTracker::BUFFER_SIZE])));
+          SM->append(PF->create(dt->buffer[i%DeviceTracker::BUFFER_SIZE]));
         dt->next_read = NEXT;
         if (TRUE_SPAN)
-          SCAB_SERR << "\n[scabbard.rtl:INFO] reading " << SPAN << '/' << TRUE_SPAN << " data points from GPU s:" << dt->JOB_ID.STREAM << " j:" << dt->JOB_ID.JOB << flush();
+          SCAB_SERR << "\n[scabbard.rtl:INFO] reading " << SPAN << '/' << TRUE_SPAN << " data points from GPU s:0x" << std::hex << dt->JOB_ID.STREAM << std::dec << " j:" << dt->JOB_ID.JOB << flush();
         if (TRUE_SPAN > SPAN)
-          SCAB_SERR << "\n\033[33m[scabbard.rtl:WARN] " << TRUE_SPAN - SPAN << " data points lost from GPU s:" << dt->JOB_ID.STREAM << " j:" << dt->JOB_ID.JOB << "\033[00m" << flush();
+          SCAB_SERR << "\n\033[33m[scabbard.rtl:WARN] " << TRUE_SPAN - SPAN << " data points lost from GPU s:0x" << std::hex << dt->JOB_ID.STREAM << std::dec <<" j:" << dt->JOB_ID.JOB << "\033[00m" << flush();
         if (dt->finished) { // deal with a device tracker that is done with it's job
           auto hipRes = hipFree(dt);
           if (hipRes != hipSuccess)
             SCAB_SERR << "\n\033[91m[scabbard.rtl:ERROR] failed to free a device tracker from managed memory! (errcode: " << hipRes << ")\033[00m\n";
-          dt = nullptr;
+          *it = nullptr;
+          it = device_trackers.erase(it);
         }
       }
+      mx_device.unlock();
+    }
+
+    [[clang::disable_sanitizer_instrumentation, gnu::used, gnu::retain]] 
+    __host__
+    void Runtime::run_state_machine(std::uint64_t remainder_proportion)
+    {
+      mx_device.lock(); // NOTE: might disrupt validity to freeze host and device here.
+      mx_host.lock();
+      SM->run(remainder_proportion);
+      mx_host.unlock();
       mx_device.unlock();
     }
 

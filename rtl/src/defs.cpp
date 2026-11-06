@@ -33,7 +33,8 @@
 namespace scabbard {
 
   std::size_t SrcMetadata::next_id = 1ul;
-  SrcMetadata::SeenList_t SrcMetadata::seen;
+  SrcMetadata::SeenList_t SrcMetadata::seen_ids;
+  SrcMetadata::IDList_t SrcMetadata::ids;
 
   namespace rtl {
 
@@ -88,6 +89,13 @@ namespace scabbard {
         if (device::DeviceTracker::BUFFER_SIZE < 4096ull 
             || device::DeviceTracker::BUFFER_SIZE > 4294967296ull) {
           SCAB_SERR << "\n[scabbard.rtl.init:ERROR] `$SCABBARD_DEVICE_BUFFER_SIZE` value not in range (min:4096,max:4294967296)"
+                       "\n[scabbard.rtl.init:ERROR]     $SCABBARD_DEVICE_BUFFER_SIZE: \""<< _DEVICE_BUFFER_SIZE << "\""
+                       "\n[scabbard.rtl.init:ERROR]                     Evaluated To:  "
+                    << device::DeviceTracker::BUFFER_SIZE << endl();
+          std::exit(EXIT_FAILURE);
+        }
+        if (device::DeviceTracker::BUFFER_SIZE % 64u != 0) {
+          SCAB_SERR << "\n[scabbard.rtl.init:ERROR] `$SCABBARD_DEVICE_BUFFER_SIZE` value not divisible by 64"
                        "\n[scabbard.rtl.init:ERROR]     $SCABBARD_DEVICE_BUFFER_SIZE: \""<< _DEVICE_BUFFER_SIZE << "\""
                        "\n[scabbard.rtl.init:ERROR]                     Evaluated To:  "
                     << device::DeviceTracker::BUFFER_SIZE << endl();

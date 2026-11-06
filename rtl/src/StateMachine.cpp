@@ -39,9 +39,9 @@ inline StateMachine::Result::Status add_result(StateMachine::ResultList_t& resul
 }
 
 template<>
-inline void StateMachine::sync_to_zone<StateMachine::Zone_t::HOST_CONTROL>(const StateMachine::DataPtr_t& td);
+inline void StateMachine::sync_to_zone<StateMachine::Zone_t::HOST_CONTROL>(const StateMachine::WDataPtr_t td);
 template<>
-inline void StateMachine::sync_to_zone<StateMachine::Zone_t::DEVICE_CONTROL>(const StateMachine::DataPtr_t& td);
+inline void StateMachine::sync_to_zone<StateMachine::Zone_t::DEVICE_CONTROL>(const StateMachine::WDataPtr_t td);
 
 StateMachine::Zone_t StateMachine::Zone_t::DEFAULT_ZONE = {StateMachine::Zone_t::INITIALIZATION_PHASE, 0ull};
 
@@ -70,7 +70,7 @@ void StateMachine::run(std::uint64_t remainder_quotient)
         break;
 
       case ON_HOST | ALLOCATE:
-        allocs[td->ptr] = td->_OPT_DATA;
+        allocs.emplace(td->ptr,td->_OPT_DATA);
         sync_to_zone<Zone_t::HOST_CONTROL>(td); // currently assuming all allocates and frees are sync events
         break;
 
@@ -79,14 +79,13 @@ void StateMachine::run(std::uint64_t remainder_quotient)
         if (r == allocs.end()) {
           add_result(results,{Result::INTERNAL_ERROR, td, nullptr, 
                               "Bad hipFree (could not find allocate/register call associated with this hipFree in trace history)"});
-          sync_to_zone<Zone_t::HOST_CONTROL>(td); // currently assuming all allocates and frees are sync events
-          break;
+        } else {
+          const std::uintptr_t end = td->ptr+r->second;
+          memH.erase(td->ptr, end);
+          memD.erase(td->ptr, end);
+          // ownership.erase(td->ptr, td->ptr+r->second);
+          allocs.erase(r);
         }
-        const std::uintptr_t end = td->ptr+r->second;
-        memH.erase(td->ptr, end);
-        memD.erase(td->ptr, end);
-        // ownership.erase(td->ptr, td->ptr+r->second);
-        allocs.erase(r);
         sync_to_zone<Zone_t::HOST_CONTROL>(td); // currently assuming all allocates and frees are sync events
         break;
       }
@@ -97,7 +96,7 @@ void StateMachine::run(std::uint64_t remainder_quotient)
       case ON_HOST | READ: {
         if (td->data & InstrData::_OPT_USED) { // bulk read (memcpy device to host)
           std::size_t occurrences_uninit = check_uninit_bulkR(td, memD, memH, 
-                                                              [this](auto& HR, auto& DE) 
+                                                              [this](auto HR, auto DE) 
                                                               {return check_race_HR(HR,DE);});
           if (occurrences_uninit)
             add_result(results,{Result::READ_UNINIT_H, td, nullptr, 
@@ -154,7 +153,7 @@ void StateMachine::run(std::uint64_t remainder_quotient)
       case ON_DEVICE | READ:
         if (td->data & InstrData::_OPT_USED) { // bulk read (memcpy device to host)
           std::size_t occurrences_uninit = check_uninit_bulkR(td, memH, memD,
-                                                              [this](auto& DR, auto& HE) 
+                                                              [this](auto DR, auto HE) 
                                                               {return check_race_DR(DR,HE);});
           if (occurrences_uninit)
             add_result(results,{Result::READ_UNINIT_D, td, nullptr, //DataPtr_t::make(last_occurrence_uninit), 
@@ -217,9 +216,13 @@ void StateMachine::reset()
   default_stream_zone = {Zone_t::INITIALIZATION_PHASE, 0ull};
   per_thread_zones.clear();
   zones.clear();
+  for (auto [k,v] : allocs) {
+    allocs.emplace(v,k);
+  }
+  allocs.clear();
 }
 
-std::size_t StateMachine::check_uninit_bulkR(const StateMachine::DataPtr_t& td, 
+std::size_t StateMachine::check_uninit_bulkR(const StateMachine::WDataPtr_t td, 
                                             const StateMachine::MemTable_t& mem, 
                                             const StateMachine::MemTable_t& mem_same,
                                             const StateMachine::CheckRaceFn_t& check_race_fn,
@@ -263,7 +266,7 @@ std::size_t StateMachine::check_uninit_bulkR(const StateMachine::DataPtr_t& td,
 }
 
 template<>
-inline void StateMachine::sync_to_zone<StateMachine::Zone_t::HOST_CONTROL>(const StateMachine::DataPtr_t& td)
+inline void StateMachine::sync_to_zone<StateMachine::Zone_t::HOST_CONTROL>(const StateMachine::WDataPtr_t td)
 {
   /* NOTE: this implementation does not support Non-BLocking Streams */
   std::uintptr_t stream = (td->ptr) ? td->ptr : DEFAULT_STREAM_BEHAVIOR();
@@ -285,7 +288,7 @@ inline void StateMachine::sync_to_zone<StateMachine::Zone_t::HOST_CONTROL>(const
   }
 }
 template<>
-inline void StateMachine::sync_to_zone<StateMachine::Zone_t::DEVICE_CONTROL>(const StateMachine::DataPtr_t& td)
+inline void StateMachine::sync_to_zone<StateMachine::Zone_t::DEVICE_CONTROL>(const StateMachine::WDataPtr_t td)
 {
   /* NOTE: this implementation does not support Non-BLocking Streams */
   /* NOTE: DEVICE_CONTROL should not update zone transition time if the zone was already in DEVICE_CONTROL */
@@ -318,7 +321,7 @@ inline void StateMachine::sync_to_zone<StateMachine::Zone_t::DEVICE_CONTROL>(con
   }
 }
 
-inline const StateMachine::Zone_t StateMachine::get_host_zone(const StateMachine::DataPtr_t& HE) const
+inline const StateMachine::Zone_t StateMachine::get_host_zone(const StateMachine::WDataPtr_t HE) const
 {
   // const Zone_t* zone = &Zone_t::DEFAULT_ZONE;
   // if (hipStreamLegacy_ull == DEFAULT_STREAM_BEHAVIOR()) {
@@ -337,7 +340,7 @@ inline const StateMachine::Zone_t StateMachine::get_host_zone(const StateMachine
   return Zone_t::DEFAULT_ZONE;
 }
 
-inline const StateMachine::Zone_t StateMachine::get_device_zone(const StateMachine::DataPtr_t& DE) const
+inline const StateMachine::Zone_t StateMachine::get_device_zone(const StateMachine::WDataPtr_t DE) const
 {
   /* NOTE: current implementation has all stored device thread id's are a hashed versions of the
       calling host's threadId rather than 0 if hipStreamPerThread is enabled */
@@ -361,8 +364,8 @@ inline const StateMachine::Zone_t StateMachine::get_device_zone(const StateMachi
   // return {Zone_t::DEVICE_CONTROL, DE->time_stamp};
 }
 
-inline const StateMachine::Zone_t StateMachine::get_zone(const StateMachine::DataPtr_t& HE,
-                                                          const StateMachine::DataPtr_t& DE) const
+inline const StateMachine::Zone_t StateMachine::get_zone(const StateMachine::WDataPtr_t HE,
+                                                          const StateMachine::WDataPtr_t DE) const
 {
   const StreamId stream = DE->threadId.device.job.STREAM;
   const HostThreadId thread = HE->threadId.host;
@@ -396,16 +399,9 @@ inline const StateMachine::Zone_t StateMachine::get_zone(const StateMachine::Dat
 // << ------------------------------------------------------------------------------------------ >> 
 
 
-StateMachine::Result::Status StateMachine::check_race_HR(const StateMachine::DataPtr_t& HR, 
-                                                         const StateMachine::DataPtr_t& DE) 
+StateMachine::Result::Status StateMachine::check_race_HR(const StateMachine::WDataPtr_t HR, 
+                                                         const StateMachine::WDataPtr_t DE) 
 {
-  // if (o->data & ON_HOST) {
-  //   Zone_t zone = get_host_zone(HR);
-  //   if (zone.state != Zone_t::HOST_CONTROL && zone.trans_time > 0u)
-  //     return add_result(results,{Result::UNPROTECTED_HR, HR, nullptr, "WARN: Host Read from memory not sync protected on this Host thread!"});
-  //   return Result::GOOD;
-  // }
-  
   Zone_t zone = get_zone(HR, DE);
 
   if (zone.state == Zone_t::HOST_CONTROL  // not a critical zone
@@ -428,16 +424,9 @@ StateMachine::Result::Status StateMachine::check_race_HR(const StateMachine::Dat
 }
 
 
-StateMachine::Result::Status StateMachine::check_race_HW(const StateMachine::DataPtr_t& HW, 
-                                                         const StateMachine::DataPtr_t& DE) 
+StateMachine::Result::Status StateMachine::check_race_HW(const StateMachine::WDataPtr_t HW, 
+                                                         const StateMachine::WDataPtr_t DE) 
 {
-  // if (o->data & ON_HOST) {
-  //   Zone_t zone = get_host_zone(HW);
-  //   if (zone.state != Zone_t::HOST_CONTROL)
-  //     return add_result(results,{Result::UNPROTECTED_HW, HW, nullptr, "WARN: Host Wrote to memory not sync protected on this Host thread!"});
-  //   return Result::GOOD;
-  // }
-  
   Zone_t zone = get_zone(HW, DE);
 
   if (zone.state == Zone_t::HOST_CONTROL  // not a critical zone
@@ -459,16 +448,9 @@ StateMachine::Result::Status StateMachine::check_race_HW(const StateMachine::Dat
 
 
 
-StateMachine::Result::Status StateMachine::check_race_DR(const StateMachine::DataPtr_t& DR, 
-                                                         const StateMachine::DataPtr_t& HE) 
+StateMachine::Result::Status StateMachine::check_race_DR(const StateMachine::WDataPtr_t DR, 
+                                                         const StateMachine::WDataPtr_t HE) 
 {
-  // Zone_t zone = ((o->data & ON_DEVICE) 
-  //                 ? get_device_zone(DR)
-  //                 : get_zone(o, DR));
-
-  // if (o->data & ON_DEVICE)
-  //   return Result::GOOD;
-
   Zone_t zone = get_zone(HE, DR);
 
   if (zone.state != Zone_t::DEVICE_CONTROL)
@@ -495,16 +477,9 @@ StateMachine::Result::Status StateMachine::check_race_DR(const StateMachine::Dat
 
 
 
-StateMachine::Result::Status StateMachine::check_race_DW(const StateMachine::DataPtr_t& DW, 
-                                                         const StateMachine::DataPtr_t& HE) 
+StateMachine::Result::Status StateMachine::check_race_DW(const StateMachine::WDataPtr_t DW, 
+                                                         const StateMachine::WDataPtr_t HE) 
 {
-  // Zone_t zone = ((o->data & ON_DEVICE) 
-  //                 ? get_device_zone(DW)
-  //                 : get_zone(o, DW));
-
-  // if (o->data & ON_DEVICE)
-  //   return Result::GOOD;
-
   Zone_t zone = get_zone(HE, DW);
 
   if (zone.state == Zone_t::HOST_CONTROL)
@@ -558,19 +533,26 @@ inline std::ostream& operator << (std::ostream& out, const StateMachine::Result:
 inline bool operator == (const StateMachine::Result& L, const StateMachine::Result& R)
 {
   return ( (L.status == R.status)
-      && ((L.first_td && R.first_td) ? *L.first_td->metadata == *R.first_td->metadata : L.first_td == R.first_td)
-      && ((L.second_td && R.second_td) ? *L.second_td->metadata == *R.second_td->metadata : L.second_td == R.second_td)
+      && ((L.first_td && R.first_td) 
+            ? *(L.first_td->metadata) == *(R.first_td->metadata) 
+            : L.first_td.get() == R.first_td.get())
+      && ((L.second_td && R.second_td) 
+            ? *(L.second_td->metadata) == *(R.second_td->metadata) 
+            : L.second_td.get() == R.second_td.get())
     );
 }
 
 inline bool operator < (const StateMachine::Result& l, const StateMachine::Result& r)
 {
   //TODO: figure out what orderings we want for this
+  if (l.status < r.status)
+    return true;
   if (l.status > r.status)
     return false;
-  return ( (l.status < r.status)
-      || ((l.first_td && r.first_td) && *l.first_td->metadata < *r.first_td->metadata)
-      || ((l.second_td && r.second_td) && *l.second_td->metadata < *r.second_td->metadata)
+  //else l.status == r.status -> compare trace data's metadata
+  return ((*(l.first_td->metadata) < *(r.first_td->metadata))
+            || ((l.second_td && r.second_td) 
+                && *(l.second_td->metadata) < *(r.second_td->metadata))
     );
 }
 

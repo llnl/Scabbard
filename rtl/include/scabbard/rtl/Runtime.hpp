@@ -16,7 +16,7 @@
 #include "DeviceTracker.hpp"
 
 #include <scabbard/TraceData.hpp>
-#include <scabbard/rtl/GroupedPtr.hpp>
+#include <scabbard/rtl/Pool.hpp>
 #include <scabbard/rtl/StateMachine.hpp>
 
 #include <hip/hip_ext.h>
@@ -24,6 +24,7 @@
 
 #include <string>
 #include <vector>
+#include <list>
 #include <map>
 #include <queue>
 #include <mutex>
@@ -60,10 +61,13 @@ namespace scabbard {
       StateMachine* SM = nullptr;
 
       /// @brief owner of all `GroupedPtrs` in the Runtime.
-      GroupedPtrFactory<const TraceData>* GPF = nullptr;
+      Pool<const TraceData>::Factory* PF = nullptr;
+
+      /// @brief the options for the pool allocator
+      PoolOptions PO{64u, 4u, true, true};
 
       /// @brief the owning list of device trackers
-      std::vector<device::DeviceTracker*> device_trackers;
+      std::list<device::DeviceTracker*> device_trackers;
 
       /// @brief a map connecting counters to each stream's jobs
       std::map<hipStream_t,StreamJobId> stream_job_counters;
@@ -72,7 +76,7 @@ namespace scabbard {
       std::mutex mx_device;
 
       /// @brief the host buffer
-      std::queue<GroupedPtr<const TraceData>> hostQ;
+      std::queue<Pool<const TraceData>::Ptr> hostQ;
 
       /// @brief the mutex protecting the host side volatiles
       std::mutex mx_host;
@@ -138,10 +142,12 @@ namespace scabbard {
       
       /**
        * @brief initialize the runtime
-       * @param mem_chunk_len size to set chunk size to in the GPF
+       * @param max_cached_chunks - the maximum number of empty chunks the Pool Allocator will keep 
+       *                            allocated and in a cache for easy use, before freeing uneeded
+       *                            chunks.
        */
       __host__
-      void initialize(std::size_t mem_chunk_len);
+      void initialize(std::size_t max_cached_chunks);
 
       /**
        * @brief Produce a report to the global `SCAB_SOUT` with the results produced by the 
@@ -154,7 +160,7 @@ namespace scabbard {
        * @brief Perform any final actions necessary before a deconstructor is called for final cleanup.
        */
       __host__
-      void finalize() {}
+      void finalize();
 
       /**
        * @brief how to trigger a single round of processing of the rtl data buffered from 
@@ -167,6 +173,17 @@ namespace scabbard {
 
       __host__ void process_device();
       __host__ void process_host();
+      /**
+       * @brief Run the StateMachine on the trace data.
+       * @param remainder_proportion how much of the trace to leave unprocessed,
+       *                             so that timings left in the buffers can be sorted appropriately. \n 
+       *                             Value is expressed in a left bit-shift format ( `>>` ),
+       *                             Such that `0` will process all of the current trace;
+       *                             `1` will leave 1/2 of the current trace un-processed;
+       *                             `2` will leave 1/4 of the current trace un-processed;
+       *                             and so on with the form (1/(2x)). 
+       */
+      __host__ void run_state_machine(std::uint64_t remainder_proportion);
       
 
     };

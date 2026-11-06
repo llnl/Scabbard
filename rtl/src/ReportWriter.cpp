@@ -14,6 +14,7 @@
 #include <scabbard/rtl/osteam.hpp>
 #include <scabbard/rtl/ReportWriter.hpp>
 #include <scabbard/rtl/globals.hpp>
+#include <scabbard/rtl/calls.hpp>
 
 
 #include <sstream>
@@ -31,6 +32,9 @@ void printResult(const StateMachine::Result& res);
 
 void print_report(const StateMachine::ResultList_t& results) {
   SCAB_SOUT.setLogType("REPORT").setLabel("scab.rtl");
+  SCAB_SOUT << nl() << "DEFAULT STREAM BEHAVIOR: " << ((DEFAULT_STREAM_BEHAVIOR() == 1u) 
+                                            ? "legacy (default)"
+                                            : "per-thread");
   if (results.size() == 0u) {
     SCAB_SOUT << nl() << "NO ISSUES FOUND" << endl();
     return;
@@ -51,17 +55,17 @@ void print_report(const StateMachine::ResultList_t& results) {
                   << "- {" << indent(4u) << nl()
                   << "RESULT: " << res.first.status << nl()
                   << "INFO: \"" << res.first.msg << '"' << nl()
-                  << "OCCURRENCE_COUNT: " << res.second << nl();
+                  << "OCCURRENCE COUNT: " << res.second << nl();
         if (not res.first.second_td) 
           SCAB_SOUT << "EVENT 1: " << indent(4u) << res.first.first_td << dedent(4u) << nl()
-                    << "EVENT 2: null" << dedent(4u) << nl();
+                    << "EVENT 2: null" << dedent(2u) << nl();
         else if (res.first.first_td->time_stamp < res.first.second_td->time_stamp)
           SCAB_SOUT << "EVENT 1: " << indent(4u) << res.first.first_td  << dedent(4u) << nl()
-                    << "EVENT 2: " << indent(4u) << res.first.second_td << dedent(8u) << nl();
+                    << "EVENT 2: " << indent(4u) << res.first.second_td << dedent(6u) << nl();
         else
           SCAB_SOUT << "EVENT 1: " << indent(4u) << res.first.second_td << dedent(4u) << nl()
-                    << "EVENT 2: " << indent(4u) << res.first.first_td  << dedent(8u) << nl();
-        SCAB_SOUT << '}';
+                    << "EVENT 2: " << indent(4u) << res.first.first_td  << dedent(6u) << nl();
+        SCAB_SOUT << '}' << dedent(2u);
         break;
 
       case StateMachine::Result::Status::GOOD:
@@ -70,16 +74,17 @@ void print_report(const StateMachine::ResultList_t& results) {
 
       case StateMachine::Result::Status::INTERNAL_ERROR:
         SCAB_SOUT.setLogType("ERROR");
-        SCAB_SOUT << nl() << nl() << "- { ERROR_MSG: \"" << res.first.msg
-                  << "\", COUNT: " << res.second;
+        SCAB_SOUT << nl() << "- {" << indent(4u)
+                  << nl() << "ERROR MSG: \"" << res.first.msg << '"'
+                  << nl() << "OCCURRENCE COUNT: " << res.second;
         if (res.first.first_td)
-          SCAB_SOUT << indent(4u) << nl()
+          SCAB_SOUT << nl()
                     << "FROM: " << *res.first.first_td->metadata << nl()
-                    << "  AT: " << res.first.first_td->time_stamp 
-                    << dedent(4u) << nl();
+                    << "TIME: " << res.first.first_td->time_stamp;
+        SCAB_SOUT << dedent(2u) << nl() << '}' << dedent(2u);
         SCAB_SOUT.setLogType("REPORT");
         //exit(EXIT_FAILURE);
-        continue;
+        break;
 
       default:
         SCAB_SERR << SetLabel("scabbard.rtl.report") << SetLogType("ERROR") << nl() 
@@ -89,12 +94,13 @@ void print_report(const StateMachine::ResultList_t& results) {
     }
   }
   SCAB_SOUT.reset();
+  SCAB_SOUT << '\n';
   return;
 }
 
 inline ostream& operator << (ostream& out, const SrcMetadata& data) {
-  out << "[`" << data.fnName << "()`](\""<< data.srcFile << ':' 
-              << data.line << ':' << data.col << "\")";
+  out << "[`" << data.fnName << "()`:"<<data.line<<','<<data.col<<"](\""<< data.srcFile << "\":" 
+              << data.line << ',' << data.col << ')';
   return out;
 }
 // inline ostream& operator << (ostream& out, const HostThreadId& threadId) {

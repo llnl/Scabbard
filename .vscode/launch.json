@@ -180,6 +180,34 @@
             "preLaunchTask": "[CMake] build test_sm_stress_pt"
         },
         {
+            "name": "(gdb) Launch current single file test",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${fileDirname}/${fileBasenameNoExtension}.instr.out",
+            // "args": ["--gtest_filter=SM_Stress.reduction_block_partials_clean"],
+            "stopAtEntry": true,
+            "cwd": "${fileDirname}",
+            "miDebuggerPath": "/opt/rocm-6.4.2/bin/rocgdb",
+            "environment": [
+                {"name":"SCABBARD_PATH","value":"${workspaceFolder}/build/scababrd"},
+                {"name":"ROCM_PATH","value":"/opt/rocm-6.4.2"}
+            ],
+            "externalConsole": false,
+            "MIMode": "gdb",
+            "setupCommands": [
+                {
+                    "description": "Enable pretty-printing for gdb",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                },
+                {
+                    "description": "Set Disassembly Flavor to Intel",
+                    "text": "-gdb-set disassembly-flavor intel",
+                    "ignoreFailures": true
+                }
+            ]
+        },
+        {
             "name": "Python Debugger: Synthetic Performace Test",
             "type": "debugpy",
             "request": "launch",

@@ -30,23 +30,27 @@ namespace scabbard {
 
     struct Hash {
       inline std::uint64_t operator () (const SrcMetadata* const & data) const {
+        return (*this)(data->srcFile,data->line,data->col);
+      }
+      template<typename StrTy>
+      inline std::uint64_t operator () (const StrTy& FilePath, std::size_t line, std::size_t col) const {
         uint64_t hash = 14695981039346656037ULL; // FNV offset basis
         uint64_t prime = 1099511628211ULL;       // FNV prime
 
         std::size_t i = 0ul;
-        while (data->srcFile[i] != '\0') {
-          hash ^= static_cast<uint64_t>(data->srcFile[i++]);
+        while (FilePath[i] != '\0') {
+          hash ^= static_cast<uint64_t>(FilePath[i++]);
           hash *= prime;
         }
         hash ^= static_cast<uint64_t>(':');
         hash *= prime;
-        for (const char& c : std::to_string(data->line)) {
+        for (const char& c : std::to_string(line)) {
           hash ^= static_cast<uint64_t>(c);
           hash *= prime;
         }
         hash ^= static_cast<uint64_t>(':');
         hash *= prime;
-        for (const char& c : std::to_string(data->col)) {
+        for (const char& c : std::to_string(col)) {
           hash ^= static_cast<uint64_t>(c);
           hash *= prime;
         }
@@ -55,26 +59,31 @@ namespace scabbard {
     };
     struct Equal {
       inline bool operator () (const SrcMetadata* const & l, const SrcMetadata* const & r) const {
-        return l->line == r->line && l->col == r->col && std::strcmp(l->srcFile,r->srcFile);
+        return l->line == r->line && l->col == r->col && (std::strcmp(l->srcFile,r->srcFile)==0);
       }
     };
     using SeenList_t = std::unordered_map<const SrcMetadata*,const std::size_t,SrcMetadata::Hash,SrcMetadata::Equal>;
+    using IDList_t = std::unordered_map<const SrcMetadata*,const std::size_t>;
 
     static std::size_t next_id;
-    static SeenList_t seen;
+    static SeenList_t seen_ids;
+    static IDList_t ids;
 
     inline std::size_t get_id() const {
       if (lazy_id != 0u)
         return lazy_id;
-      auto it = SrcMetadata::seen.find(this);
-      if (it != SrcMetadata::seen.end()) {
-        *const_cast<std::size_t*>(&lazy_id) = it->second;
-        return it->second;
+      auto it = SrcMetadata::ids.find(this);
+      if (it == SrcMetadata::ids.end()) {
+        auto _it = SrcMetadata::seen_ids.find(this);
+        if (_it == SrcMetadata::seen_ids.end()) {
+          auto id = SrcMetadata::next_id++;
+          SrcMetadata::seen_ids.emplace(this,id);
+          return id;
+        }
+        SrcMetadata::ids.emplace(this,_it->second);
+        return _it->second;
       }
-      auto id = SrcMetadata::next_id++;
-      auto res = SrcMetadata::seen.emplace(this,id);
-      // *const_cast<std::size_t*>(&lazy_id) = id; //DEBUG remove this for segfault test
-      return id;
+      return it->second;
     }
 
     inline bool operator == (const SrcMetadata& other) const {

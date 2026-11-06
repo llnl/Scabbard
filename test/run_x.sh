@@ -27,6 +27,18 @@ if [ -z "$CXX_ARGS_EXTRA" ]; then
   CXX_ARGS_EXTRA=""
 fi
 
+if [ -z "$RUN_ARGS" ]; then
+  RUN_ARGS=""
+fi
+
+if [ -z "$GDB_ARGS" ]; then
+  GDB_ARGS=""
+fi
+
+if [ -z "$APP_ARGS" ]; then
+  APP_ARGS=""
+fi
+
 # remove file extension
 FILE=$(realpath $1)
 FILE_BASE=$(echo "$FILE" | awk 'match($0, /^(.+)\.cpp$/, arr) { print arr[1]}')
@@ -84,64 +96,43 @@ else
   exit 0
 fi
 
-# determine if this should be compiled as a manual or instrumented test
-if [[ $FILE_BASE == *".man" ]]; then # this is a manual file
 
-  echo -e "\n\n==== BUILDING the MANUALLY instrumented executable ====\n\n"
-  
-  # make sure they provide a metadata file for manually instrumented files
-  test -f $SCABBARD_METADATA_FILE || \ 
-    { printf "\n\e[31m[run_x.sh] ERROR: manually instrumented files are no longer supported without accompaning metadata files\e[0m\n    \e[31m\xE2\x86\xB3\e[0m Please Create and poulate $SCABBARD_METADATA_FILE to use this util\n"; exit -1; }
-  
-  echo "$HIP_EXE $CXX_ARGS_EXTRA -L$SCABBARD_PATH -ltrace -lpthread -I$(pwd)/lib/include -I$(pwd)/libtrace/include -I$(pwd)/libtrace -std=c++17 -x hip -g -O2 -o$FILE_BASE.instr.out $FILE"
-  $HIP_EXE $CXX_ARGS_EXTRA -L$SCABBARD_PATH -ltrace -lpthread -I$(pwd)/lib/include -I$(pwd)/libtrace/include -I$(pwd)/libtrace -std=c++17 -x hip -g -O2 -o$FILE_BASE.instr.out $FILE || \
-    { printf "\n\e[31m[run_x.sh] ERROR: during build of manually instrumented file\e[0m\n"; exit -1; }
+echo -e "\n\n==== INSTRUMENTING and BUILDING the executable ====\n\n"
 
+# echo "$HIP_EXE -fpass-plugin=$SCABBARD_PATH/libinstr.so -L$SCABBARD_PATH -ltrace -lpthread -std=c++17 -x hip -g -O2 -o$FILE_BASE.instr.out $FILE"
+# $HIP_EXE -fpass-plugin=$SCABBARD_PATH/libinstr.so -L$SCABBARD_PATH -ltrace -lpthread -std=c++17 -x hip -g -O2 -o$FILE_BASE.instr.out $FILE || \
+#   { printf "\n\e[31m[run_x.sh] ERROR: during instrumented build\e[0m\n"; rm $SCABBARD_METADATA_FILE.lock 1> /dev/null 2> /dev/null; exit -1; }
 
-else # this is a file that needs to be instrumented
+echo "scabbard instr $HIP_EXE $CXX_ARGS_EXTRA -std=c++17 -x hip -g -O2 -o$FILE_BASE.instr.out $FILE"
+scabbard instr $HIP_EXE $CXX_ARGS_EXTRA -std=c++17 -x hip -g -O2 -o$FILE_BASE.instr.out $FILE || \
+  { printf "\n\e[31m[run_x.sh] ERROR: during instrumented build\e[0m\n"; rm $SCABBARD_METADATA_FILE.lock 1> /dev/null 2> /dev/null; exit -1; }
 
-  echo -e "\n\n==== INSTRUMENTING and BUILDING the executable ====\n\n"
+# # remove lock file regardless of the outcome
+# rm $SCABBARD_METADATA_FILE.lock 1> /dev/null 2> /dev/null
+# # make sure that a metadata file exists after instrumentation
+# test -f $SCABBARD_METADATA_FILE || 
+#   { printf "\n\e[31m[run_x.sh] ERROR: metadata file \"$SCABBARD_METADATA_FILE\" was not created during the instrumentation/build process\e[0m\n"; exit -1; }
 
-  # echo "$HIP_EXE -fpass-plugin=$SCABBARD_PATH/libinstr.so -L$SCABBARD_PATH -ltrace -lpthread -std=c++17 -x hip -g -O2 -o$FILE_BASE.instr.out $FILE"
-  # $HIP_EXE -fpass-plugin=$SCABBARD_PATH/libinstr.so -L$SCABBARD_PATH -ltrace -lpthread -std=c++17 -x hip -g -O2 -o$FILE_BASE.instr.out $FILE || \
-  #   { printf "\n\e[31m[run_x.sh] ERROR: during instrumented build\e[0m\n"; rm $SCABBARD_METADATA_FILE.lock 1> /dev/null 2> /dev/null; exit -1; }
-
-  echo "scabbard instr $HIP_EXE $CXX_ARGS_EXTRA -std=c++17 -x hip -g -O2 -o$FILE_BASE.instr.out $FILE"
-  scabbard instr $HIP_EXE $CXX_ARGS_EXTRA -std=c++17 -x hip -g -O2 -o$FILE_BASE.instr.out $FILE || \
-    { printf "\n\e[31m[run_x.sh] ERROR: during instrumented build\e[0m\n"; rm $SCABBARD_METADATA_FILE.lock 1> /dev/null 2> /dev/null; exit -1; }
-
-  # # remove lock file regardless of the outcome
-  # rm $SCABBARD_METADATA_FILE.lock 1> /dev/null 2> /dev/null
-  # # make sure that a metadata file exists after instrumentation
-  # test -f $SCABBARD_METADATA_FILE || 
-  #   { printf "\n\e[31m[run_x.sh] ERROR: metadata file \"$SCABBARD_METADATA_FILE\" was not created during the instrumentation/build process\e[0m\n"; exit -1; }
-
-fi
 
 
 #compile the required environment variables
 SCABBARD_INSTRUMENTED_EXE_NAME="$FILE_BASE.instr.out"
-# export SCABBARD_TRACE_FILE="$FILE_BASE.scabbard.trace"
 
+if [ -z "$USE_GDB" ]; then
 # run the built executable
 echo -e "\n\n==== RUNNING the executable ====\n\nthe executable: $SCABBARD_INSTRUMENTED_EXE_NAME\n"
-echo "scabbard run $SCABBARD_INSTRUMENTED_EXE_NAME"
-scabbard run $ROCGDB_EXE $SCABBARD_INSTRUMENTED_EXE_NAME || \
+echo "scabbard run $RUN_ARGS $SCABBARD_INSTRUMENTED_EXE_NAME $APP_ARGS"
+scabbard run $RUN_ARGS $SCABBARD_INSTRUMENTED_EXE_NAME $APP_ARGS || \
   { printf "\n\e[31m[run_x.sh] ERROR: running instrumented exe\e[0m\n"; exit -1; }
 
-# $ROCM_PATH/bin/rocgdb $SCABBARD_INSTRUMENTED_EXE_NAME
+else
+# run the built executable with rocgdb
+echo -e "\n\n==== RUNNING the executable w/rocgdb ====\n\nthe executable: $SCABBARD_INSTRUMENTED_EXE_NAME\n"
+echo "scabbard run $RUN_ARGS $ROCGDB_EXE $GDB_ARGS $SCABBARD_INSTRUMENTED_EXE_NAME $APP_ARGS"
+scabbard run $RUN_ARGS $ROCGDB_EXE $GDB_ARGS $SCABBARD_INSTRUMENTED_EXE_NAME $APP_ARGS || \
+  { printf "\n\e[31m[run_x.sh] ERROR: running instrumented exe w/ \"$ROCGDB_EXE\"\e[0m\n"; exit -1; }
+fi
 
-# <<< removed -> moved to an online approach >>>
-# make sure that a trace file exists after instrumentation
-# test -e $SCABBARD_TRACE_FILE || \ 
-#   { printf "\n\e[31m[run_x.sh] ERROR: the trace file \"$SCABBARD_TRACE_FILE\" was not created during the trace/running step\e[0m\n"; exit -1; }
-
-# <<< removed -> moved to an online approach >>>
-# run the verifier
-# echo -e "\n\n==== VERIFYING generated trace file ====\n\n"
-# echo "scabbard verif $SCABBARD_METADATA_FILE $SCABBARD_TRACE_FILE"
-# scabbard verif $SCABBARD_METADATA_FILE $SCABBARD_TRACE_FILE || \
-#   { printf "\n\e[31m[run_x.sh] ERROR: during verify\e[0m\n"; exit -1; }
 
 
 echo -e "\n\n==== END ====\n\n"

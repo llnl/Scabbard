@@ -60,7 +60,7 @@ target_compile_options(rtl PRIVATE
         -fgpu-rdc -flto -foffload-lto=full 
         -fpass-plugin=${SCABBARD_PATH}/libsafety_pass.so #use safety pass to mark all fn's as not to be instrumented.
       )
-target_link_options(rtl PRIVATE -fgpu-rdc -flto -foffload-lto=full )
+target_link_options(rtl PRIVATE -fgpu-rdc -flto -foffload-lto=full)
 
 # if(SCABBARD_USE_COMPRESSION)
 # target_link_libraries(rtl PUBLIC ZLIB::ZLIB)

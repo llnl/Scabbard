@@ -216,7 +216,7 @@ def run_instrumented_exe_mode(scabbard_args, args) -> None:
     except Exception as e:
         prRed(e)
         raise RuntimeError('Error when running scabbard on a trace command') from e
-    prGreen(f"[scabbard.run:INFO] Trace Finished!\n[scabbard.trace:INFO] Trace-file generated: `{env['SCABBARD_TRACE_FILE']}`\n")
+    prGreen(f"[scabbard.run:INFO] Finished!\n")
 
 
 

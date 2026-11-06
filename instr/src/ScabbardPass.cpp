@@ -15,6 +15,7 @@
 
 #include <scabbard/instr-names.def>
 #include <scabbard/Enums.hpp>
+#include <scabbard/Metadata.hpp>
 
 #include <llvm/IR/Function.h>
 #include <llvm/IR/Instructions.h>
@@ -94,9 +95,9 @@ struct DenseMapMetadataKeyInfo : public DenseMapInfo<Instruction*> {
     // Same file? Compare the scope's file, not just the line number.
     if (LLoc->getFile() != RLoc->getFile())   // DIFile nodes are uniqued
       return false;
-    // Same source text inlined at different call sites = different instances.
-    if (LLoc->getInlinedAt() != RLoc->getInlinedAt())
-      return false;
+    // // Same source text inlined at different call sites = different instances.
+    // if (LLoc->getInlinedAt() != RLoc->getInlinedAt())
+    //   return false;
     return true;
   }
 };
@@ -143,7 +144,7 @@ public:
 
   /// @brief connect and fill the remaining metadata information.
   /// @param M the module to inject the metadata object into
-  void finalizeMetadata(Module& M);
+  void finalize(Module& M);
 
   /// @brief remove the named globals created by this object.
   ///        (called if no instrumentation occurred in this module)
@@ -207,7 +208,7 @@ private:
   /// @brief Get the default value for the lazy load ID of this metadata entry
   /// @param C (required for generating constants for the module)
   /// @return a constant int of 0 64bits wide
-  inline ConstantInt* getLazyID(LLVMContext& C) const;
+  inline ConstantInt* getLazyID(const DIFile* DFile, const DILocation* DLoc, Module& M) const;
 
   /// @brief Retrieve the name of the original function containing the instruction in question
   ///        try to register the string with \c registerString,
@@ -625,7 +626,7 @@ public:
     changed |= handleAPICalls(M, FAM);
     
     if (changed) //NOTE: this method of metadata will need to be altered to work with instrumenting durring compilation instead of LTO.
-      ScabbardRTL.Metadata.finalizeMetadata(M);
+      ScabbardRTL.Metadata.finalize(M);
     else
       ScabbardRTL.Metadata.clean();    // cleanup metadata stuff if nothing was added.
 
@@ -1042,7 +1043,7 @@ public:
     // TODO handle ambagious calls
 
     if (changed) //NOTE: this method of metadata will need to be altered to work with instrumenting durring compilation instead of LTO.
-      ScabbardRTL.Metadata.finalizeMetadata(M);
+      ScabbardRTL.Metadata.finalize(M);
     else
       ScabbardRTL.Metadata.clean();
  
@@ -1794,8 +1795,13 @@ Value* get_ptr_from_ptr(Value* V) {
 
 bool ScabbardHostPassHip::APIInstr_Alloc(CallInst& CI, const InstrData Data) {
   if (auto ptr = get_ptr_from_ptr(CI.getArgOperand(0ull))) {
-    return CreateRTLCallEx(CI, InstrData::ON_HOST | Data,
-                            ptr, CI.getArgOperand(1ull), false) ? true : false;
+    auto _li = new LoadInst(PtrTy, ptr, "scabbard.instr.tmp."+CI.getName(),false, &CI);
+    CallInst* ci = CreateRTLCallEx(CI, InstrData::ON_HOST | Data,
+                                    _li, CI.getArgOperand(1ull), false);
+    auto li = new LoadInst(PtrTy, ptr, "scabbard.instr.allocLoad."+CI.getName(), false, ci);
+    _li->replaceAllUsesWith(li);
+    _li->eraseFromParent();
+    return true;
   }
   errs() << "\n[scabbard.instr.host.amdhip:ERR] could not backtrack `hipMalloc` ptr parameter (" 
           << IScabbardHostPass::getLocStr(CI) << ")\n";  
@@ -2558,7 +2564,7 @@ GlobalVariable* MetadataHandler::initializeMetadata(Module& M, unsigned AddrSpac
   return MetadataVar;
 }
 
-void MetadataHandler::finalizeMetadata(Module& M) {
+void MetadataHandler::finalize(Module& M) {
   SmallVector<Constant*, 16ul> Contents(Instructions.size());
   auto arr = ConstantDataArray::getString(M.getContext(), "<unknownFile>:<unknownFn>");
   auto stringsVar = new GlobalVariable(M, ArrayType::get(IntegerType::get(M.getContext(),8u), UINT32_MAX), 
@@ -2574,13 +2580,13 @@ void MetadataHandler::finalizeMetadata(Module& M) {
         const DIFile* dFile = dScope->getFile();
         if (dFile) {
           Contents[ID] = ConstantStruct::get(
-                          EntryTy, {getLazyID(M.getContext()),
+                          EntryTy, {getLazyID(dFile, dLoc.get(), M),
                                     getGEP(stringsVar, getSourceFile(dFile)), 
                                     getGEP(stringsVar, getCalledFn(dSubPro->getName())),
                                     getSourceLine(dLoc.get(), M.getContext()), getSourceCol(dLoc.get(), M.getContext())});
         } else
           Contents[ID] = ConstantStruct::get(
-                          EntryTy, {getLazyID(M.getContext()),
+                          EntryTy, {getLazyID(nullptr, dLoc.get(), M),
                                     getGEP(stringsVar, registerString(Twine("<UNKNOWN_SRC_FILE>{LLVM_IR_Module=\"")
                                                                       + M.getSourceFileName() + "\"}")), 
                                     getGEP(stringsVar, getCalledFn(dSubPro->getName())),
@@ -2588,7 +2594,7 @@ void MetadataHandler::finalizeMetadata(Module& M) {
         
       } else
         Contents[ID] = ConstantStruct::get(
-                          EntryTy, {getLazyID(M.getContext()),
+                          EntryTy, {getLazyID(nullptr, dLoc.get(), M),
                                     getGEP(stringsVar, registerString(Twine("<UNKNOWN_SRC_FILE>{LLVM_IR_Module=\"")
                                                                       + M.getSourceFileName() + "\"}")), 
                                     getGEP(stringsVar, registerString(Twine("<UNKNOWN_SRC_FN>{LLVM_IR_SCOPE=\"")
@@ -2596,7 +2602,7 @@ void MetadataHandler::finalizeMetadata(Module& M) {
                                     getSourceLine(dLoc.get(), M.getContext()), getSourceCol(dLoc.get(), M.getContext())});
     } else 
       Contents[ID] = ConstantStruct::get(
-                      EntryTy, {getLazyID(M.getContext()),
+                      EntryTy, {getLazyID(nullptr, nullptr, M),
                                 getGEP(stringsVar, registerString(Twine("<UNKNOWN_SRC_FILE>{Module=\"")
                                                                   + M.getSourceFileName() + "\"}")), 
                                 getGEP(stringsVar, registerString(Twine("<UNKNOWN_SRC_FN>{LLVM_IR_Fn=\"")
@@ -2656,8 +2662,19 @@ inline ConstantInt* MetadataHandler::getSourceCol(const DILocation* Loc, LLVMCon
   return cast<ConstantInt>(Constant::getIntegerValue(EntryTy->getTypeAtIndex(4u), APInt(64ul,Loc->getColumn())));
 }
 
-inline ConstantInt* MetadataHandler::getLazyID(LLVMContext& C) const {
-  return cast<ConstantInt>(Constant::getIntegerValue(EntryTy->getTypeAtIndex(0u), APInt(64ul,0ul)));
+inline ConstantInt* MetadataHandler::getLazyID(const DIFile* DFile, const DILocation* DLoc, Module& M) const {
+  auto FilePath = ((DFile)
+                    ? ((DFile->getDirectory().ends_with("/")) 
+                        ? DFile->getDirectory() + DFile->getFilename() 
+                        : DFile->getDirectory() + "/" + DFile->getFilename())
+                    : Twine("<UNKNOWN_SRC_FILE>{Module=\"") + M.getSourceFileName() + "\"}") + "\0";
+  std::size_t line = 0ul, col = 0ul;
+  if (DLoc) {
+    line = DLoc->getLine();
+    col = DLoc->getColumn();
+  }
+  return cast<ConstantInt>(Constant::getIntegerValue(EntryTy->getTypeAtIndex(0u), 
+                                                      APInt(64ul, SrcMetadata::Hash{}(FilePath.str(),line,col))));
 }
 
 inline size_t MetadataHandler::getCalledFn(const StringRef& FnName/* , LLVMContext& C */) {

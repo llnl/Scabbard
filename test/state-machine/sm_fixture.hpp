@@ -5,7 +5,7 @@
 
 #include <gtest/gtest.h>
 #include <scabbard/rtl/StateMachine.hpp>
-#include <scabbard/rtl/GroupedPtr.hpp>
+#include <scabbard/rtl/Pool.hpp>
 #include <scabbard/rtl/calls.hpp>
 #include <atomic>
 #include <bitset>
@@ -25,7 +25,7 @@ class SM_Tests : public testing::Test {
   using GPtr_t = StateMachine::DataPtr_t;
   using EventData_t = StateMachine::Data_t;
 private:
-  GroupedPtrFactory<const EventData_t> GF;
+  Pool<const EventData_t>::Factory GF;
   StateMachine SM;
   LTime_t vClk = 0u;
   DeviceVClks_t dev_vClks{{0u,1u}};
@@ -100,7 +100,7 @@ protected:
         M,
         0u
       )));
-    return jobId_t{JId, jobId_t::hash_stream_ptr(STREAM)};
+    return jobId_t(STREAM, JId);
   }
 
   void host_read_event(HostThreadId TId, std::uintptr_t PTR, std::size_t SIZE=0u, const SrcMetadata* M=nullptr) {
