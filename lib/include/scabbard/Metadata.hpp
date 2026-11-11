@@ -70,7 +70,7 @@ namespace scabbard {
     static IDList_t ids;
 
     inline std::size_t get_id() const {
-      if (lazy_id != 0u)
+      if (__builtin_expect(lazy_id != 0u, 1u))
         return lazy_id;
       auto it = SrcMetadata::ids.find(this);
       if (it == SrcMetadata::ids.end()) {

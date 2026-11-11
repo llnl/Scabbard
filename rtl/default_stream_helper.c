@@ -1,7 +1,7 @@
 
-#include <hip/hip_runtime.h>
 
 #ifndef __SCABBARD_HIP_DEFAULT_STREAM__
+#include <hip/hip_runtime.h>
 # ifdef HIP_API_PER_THREAD_DEFAULT_STREAM
 #   define __SCABBARD_HIP_DEFAULT_STREAM__ 2u
 # else

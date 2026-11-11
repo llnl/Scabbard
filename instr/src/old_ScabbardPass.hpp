@@ -64,11 +64,11 @@ namespace instr {
         llvm::FunctionCallee scabbard_init;
         const std::string scabbard_init_name = SCABBARD_CALLBACK_INIT_NAME;
         llvm::FunctionCallee trace_append$mem;
-        const std::string trace_append$mem_name = SCABBARD_HOST_CALLBACK_APPEND_MEM_NAME;
+        const std::string trace_append$mem_name = SCABBARD_HOST_CALLBACK_APPEND_NAME;
         llvm::FunctionCallee trace_append$mem$cond; 
-        const std::string trace_append$mem$cond_name = SCABBARD_HOST_CALLBACK_APPEND_MEM_COND_NAME;
+        const std::string trace_append$mem$cond_name = SCABBARD_HOST_CALLBACK_APPEND_COND_NAME;
         llvm::FunctionCallee trace_append$alloc;
-        const std::string trace_append$alloc_name = SCABBARD_HOST_CALLBACK_APPEND_ALLOC_NAME;
+        const std::string trace_append$alloc_name = SCABBARD_HOST_CALLBACK_APPEND_EXT_NAME;
         llvm::FunctionCallee register_job;
         const std::string register_job_name = SCABBARD_CALLBACK_REGISTER_JOB;
         llvm::FunctionCallee register_job_callback;
@@ -76,13 +76,13 @@ namespace instr {
       } host;
     struct {
         llvm::FunctionCallee trace_append$mem;
-        const std::string trace_append$mem_name = SCABBARD_DEVICE_CALLBACK_APPEND_MEM_NAME;
+        const std::string trace_append$mem_name = SCABBARD_DEVICE_CALLBACK_APPEND_NAME;
         llvm::FunctionCallee trace_append$alloc;
-        const std::string trace_append$alloc_name = SCABBARD_DEVICE_CALLBACK_APPEND_ALLOC_NAME;
+        const std::string trace_append$alloc_name = SCABBARD_DEVICE_CALLBACK_APPEND_EXT_NAME;
         llvm::FunctionCallee dummyFunc;
         const std::unordered_set<std::string> NO_INSTR_FNS{
-                SCABBARD_DEVICE_CALLBACK_APPEND_MEM_NAME,
-                SCABBARD_DEVICE_CALLBACK_APPEND_ALLOC_NAME,
+                SCABBARD_DEVICE_CALLBACK_APPEND_NAME,
+                SCABBARD_DEVICE_CALLBACK_APPEND_EXT_NAME,
                 SCABBARD_DEVICE_DUMMY_FUNC_NAME,
                 "__ockl_hostcall_internal",
                 "__cxa_pure_virtual",

@@ -30,7 +30,7 @@ option(ENABLE_SCABBARD "instrument specified targets with scabbard" On)
 
 
 function(scabbard_check_default_stream_flag target)
-    get_target_property(CURRENT_FLAGS target COMPILE_OPTIONS)
+    get_target_property(CURRENT_FLAGS ${target} COMPILE_OPTIONS)
     if("--fgpu-default-stream" IN_LIST CURRENT_FLAGS OR "-fgpu-default-stream" IN_LIST CURRENT_FLAGS)
         if ("per-thread" IN_LIST CURRENT_FLAGS)
             set(SCABBARD_HIP_DEFAULT_STREAM "-D__SCABBARD_HIP_DEFAULT_STREAM__=2u")
@@ -58,9 +58,9 @@ function(scabbard_instrument_target target)
                 # --offload-new-driver # -Wl,--offload-new-driver -Xoffload-linker "--offload-new-driver" -Xclang "--offload-new-driver"
                 -fgpu-rdc
                 -foffload-lto=full
-                -Wl,--load-pass-plugin=${SCABBARD_PATH}/libinstr.so 
+                # -Wl,--load-pass-plugin=${SCABBARD_PATH}/libinstr.so #until AMD fixes the toolchain host instr moved to compile time.
                 -Xoffload-linker "--load-pass-plugin=${SCABBARD_PATH}/libinstr.so"
-                -L${SCABBARD_PATH} -ltrace -ltrace.device -lpthread
+                -L${SCABBARD_PATH} -lrtl -lrtl.device -lpthread
                 )
             target_compile_options(${target} 
                 PUBLIC 
@@ -72,7 +72,7 @@ function(scabbard_instrument_target target)
             message(NOTICE "[scabbard:NOTE] enabling GPU-RDC and LTO for '${target_type}' lib: '${target}'")
             target_compile_options(${target} 
                 PUBLIC 
-                -g -fgpu-rdc -foffload-lto=full
+                -g -fgpu-rdc -foffload-lto=full -flto=full
                 -fpass-plugin=${SCABBARD_PATH}/libinstr.so) # debug info always required for scabbard
             target_link_options(${target} PUBLIC -g -fgpu-rdc -foffload-lto=full) # debug info always required for scabbard
         elseif(NOT DEFINED SCABBARD_SUPPRESS_TYPE_WARN)
@@ -84,7 +84,17 @@ function(scabbard_instrument_target target)
         if (target_type MATCHES "EXECUTABLE")
             scabbard_check_default_stream_flag(${target})
             target_compile_options(${target} PRIVATE ${SCABBARD_HIP_DEFAULT_STREAM})
-            target_sources(${target} PRIVATE ${SCABBARD_PATH}/default_stream_helper.cpp)
+            file(COPY_FILE "${SCABBARD_PATH}/default_stream_helper.c" "${CMAKE_BINARY_DIR}/default_stream_helper.c" 
+                ONLY_IF_DIFFERENT)
+            target_sources(${target} PUBLIC "${CMAKE_BINARY_DIR}/default_stream_helper.c")
+            get_target_property(target_srcs ${target} SOURCES)
+            list(GET target_srcs 0 target_first_src)
+            get_source_file_property(target_lang ${target_first_src} LANGUAGE)
+            set_source_files_properties("${CMAKE_BINARY_DIR}/default_stream_helper.c" 
+                    PROPERTIES 
+                    LANGUAGE ${target_lang}
+                    HEADER_FILE_ONLY FALSE)
+            message(NOTICE "[scabbard:NOTE] '${target}' had the default stream helper added to its list of source files.")
         endif()
     endif()
 endfunction()

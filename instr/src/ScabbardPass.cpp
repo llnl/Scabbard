@@ -181,8 +181,9 @@ private:
   /// @param M the module to add the global string array to
   /// @param AddrSpace the integer value associated with the global address space for
   ///        the target architecture (0 for CPU/HOST, 1 for most GPUs/DEVICES)
+  /// @param srcHash64 string representation of the modules hash as a base 64 number (used to unique global var name)
   /// @return the global string array already inserted into the module
-  GlobalVariable* outputStrings(Module& M, unsigned AddrSpace) const;
+  GlobalVariable* outputStrings(Module& M, unsigned AddrSpace, const std::string& srcHash64) const;
 
   /// @brief Retrieve the source directory & file name from the metadata,
   ///        combine them into a full file path, try to register the string with
@@ -306,6 +307,9 @@ public:
 
   friend class MetadataHandler;
   
+  protected:
+  void setDebugLoc(Instruction* i, const Instruction& I) const;
+  void setDebugLoc(Instruction* i, const Instruction* I) const { setDebugLoc(i,*I); }
   // ConstantInt* getConstInt(const IntegerType* Ty, uint64_t val) const {
   //   return ConstantInt::get((Type*)Ty, APInt(val,Ty->getBitWidth()));
   // }
@@ -357,14 +361,14 @@ protected:
     const std::string scabbard_init_name = SCABBARD_CALLBACK_INIT_NAME;
     llvm::FunctionCallee scabbard_close;
     const std::string scabbard_close_name = SCABBARD_CALLBACK_CLOSE_NAME;
-    llvm::FunctionCallee trace_append$mem;
-    const std::string trace_append$mem_name = SCABBARD_HOST_CALLBACK_APPEND_MEM_NAME;
-    llvm::FunctionCallee trace_append$mem$cond; 
-    const std::string trace_append$mem$cond_name = SCABBARD_HOST_CALLBACK_APPEND_MEM_COND_NAME;
-    llvm::FunctionCallee trace_append$alloc;
-    const std::string trace_append$alloc_name = SCABBARD_HOST_CALLBACK_APPEND_ALLOC_NAME;
-    llvm::FunctionCallee trace_append$alloc$cond;
-    const std::string trace_append$alloc$cond_name = SCABBARD_HOST_CALLBACK_APPEND_ALLOC_COND_NAME;
+    llvm::FunctionCallee trace_append;
+    const std::string trace_append_name = SCABBARD_HOST_CALLBACK_APPEND_NAME;
+    llvm::FunctionCallee trace_append$cond; 
+    const std::string trace_append$cond_name = SCABBARD_HOST_CALLBACK_APPEND_COND_NAME;
+    llvm::FunctionCallee trace_append$ext;
+    const std::string trace_append$ext_name = SCABBARD_HOST_CALLBACK_APPEND_EXT_NAME;
+    llvm::FunctionCallee trace_append$ext$cond;
+    const std::string trace_append$ext$cond_name = SCABBARD_HOST_CALLBACK_APPEND_EXT_COND_NAME;
     llvm::FunctionCallee register_job;
     const std::string register_job_name = SCABBARD_CALLBACK_REGISTER_JOB;
     llvm::FunctionCallee register_job_callback;
@@ -397,7 +401,7 @@ protected:
             && not F.isDeclaration()                        // exclude any functions not defined
             && not F.getName().starts_with("llvm.")         // exclude intrinsics
             && not F.getName().starts_with("scabbard.")     // exclude name mangled scabbard rtl functions
-            && not F.getName().contains("__device_stub__")  // exclude device stubFn's from regular instruction instr
+            // && not F.getName().contains("__device_stub__")  // exclude device stubFn's from regular instruction instr
             // any fn marked as not to be instrumented
             && not (F.hasFnAttribute(Attribute::AttrKind::DisableSanitizerInstrumentation)
                     || F.hasFnAttribute(Attribute::AttrKind::NoSanitizeCoverage))
@@ -543,7 +547,7 @@ protected:
     if (auto mainFn = dyn_cast_or_null<Function>(M.getFunction("main"))) {
       auto firstInst = &(*(mainFn->getEntryBlock().getFirstInsertionPt()));
       auto ci = llvm::CallInst::Create(ScabbardRTL.scabbard_init, "", firstInst);
-      ci->setDebugLoc(firstInst->getDebugLoc());
+      setDebugLoc(ci,firstInst);
       return true;
     }
     return false;
@@ -562,7 +566,7 @@ protected:
           if (auto _CI = dyn_cast<CallInst>(user))
             if (exitFn == _CI->getCalledFunction()) {
               auto ci = CallInst::Create(ScabbardRTL.scabbard_close, "", _CI);
-              ci->setDebugLoc(_CI->getDebugLoc());
+              setDebugLoc(ci,_CI);
               changed = true;
             }
     }
@@ -574,7 +578,7 @@ protected:
         }
       for (auto* RI : Returns) {
         auto ci = CallInst::Create(ScabbardRTL.scabbard_close, "", RI);
-        ci->setDebugLoc(RI->getDebugLoc());
+        setDebugLoc(ci,RI);
       }
       if (not Returns.empty())
         changed = true;
@@ -644,7 +648,7 @@ public:
     } else
       changed |= true;
 
-    errs() << "\n\n[scabbard.instr.host:DBG] Module written to: \"" << _DBG::write_module_to_file(M,"host.postInstr") << "\"\n\n"; //DEBUG
+    // errs() << "\n\n[scabbard.instr.host:DBG] Module written to: \"" << _DBG::write_module_to_file(M,"host.postInstr") << "\"\n\n"; //DEBUG
 
     return changed;
   }
@@ -741,10 +745,10 @@ protected:
   ///        will be pulled from the module as this pass should only run after
   ///        the rtl gets linked in.
   struct scabbardDeviceRTL {
-    FunctionCallee trace_append$mem;
-    const std::string trace_append$mem_name = SCABBARD_DEVICE_CALLBACK_APPEND_MEM_NAME;
-    FunctionCallee trace_append$alloc;
-    const std::string trace_append$alloc_name = SCABBARD_DEVICE_CALLBACK_APPEND_ALLOC_NAME;
+    FunctionCallee trace_append;
+    const std::string trace_append_name = SCABBARD_DEVICE_CALLBACK_APPEND_NAME;
+    FunctionCallee trace_append$ext;
+    const std::string trace_append$ext_name = SCABBARD_DEVICE_CALLBACK_APPEND_EXT_NAME;
     MetadataHandler Metadata;
   } ScabbardRTL;
 
@@ -1048,7 +1052,7 @@ public:
       ScabbardRTL.Metadata.clean();
  
 
-    errs() << "\n\n[scabbard.instr.device:DBG] Module written to: \"" << _DBG::write_module_to_file(M,"device.postInstr") << "\"\n\n"; //DEBUG
+    // errs() << "\n\n[scabbard.instr.device:DBG] Module written to: \"" << _DBG::write_module_to_file(M,"device.postInstr") << "\"\n\n"; //DEBUG
 
     return changed || alt_changed;
   }
@@ -1108,7 +1112,7 @@ protected:
   /// @return \c bool - if any changes were made to the instruction, parent fn, or module.
   bool instrumentLoadInst(LoopInfo& LI, LoadInst& Load) override {
     return instrumentInScabbardFunc(LI, Load, Load.getPointerOperand(), 
-                                    ScabbardRTL.trace_append$mem, 
+                                    ScabbardRTL.trace_append, 
                                     InstrData::ON_GPU | InstrData::READ 
                                     | (Load.isAtomic() ? InstrData::ATOMIC : InstrData::NO));
   }
@@ -1121,7 +1125,7 @@ protected:
   /// @return \c bool - if any changes were made to the instruction, parent fn, or module.
   bool instrumentStoreInst(LoopInfo& LI, StoreInst& Store) override {
     return instrumentInScabbardFunc(LI, Store, Store.getPointerOperand(), 
-                                    ScabbardRTL.trace_append$mem, 
+                                    ScabbardRTL.trace_append, 
                                     InstrData::ON_GPU | InstrData::WRITE 
                                     | (Store.isAtomic() ? InstrData::ATOMIC : InstrData::NO));
   }
@@ -1134,7 +1138,7 @@ protected:
   /// @return \c bool - if any changes were made to the instruction, parent fn, or module.
   bool instrumentAtomicRMWInst(LoopInfo& LI, AtomicRMWInst& RMW) override {
     return instrumentInScabbardFunc(LI, RMW, RMW.getPointerOperand(), 
-                                    ScabbardRTL.trace_append$mem, 
+                                    ScabbardRTL.trace_append, 
                                     InstrData::ON_GPU | InstrData::READ 
                                     | InstrData::WRITE | InstrData::ATOMIC);
   }
@@ -1147,7 +1151,7 @@ protected:
   /// @return \c bool - if any changes were made to the instruction, parent fn, or module.
   bool instrumentCmpXChgInst(LoopInfo& LI, AtomicCmpXchgInst& CXC) override {
     return instrumentInScabbardFunc(LI, CXC, CXC.getPointerOperand(), 
-                                    ScabbardRTL.trace_append$mem, 
+                                    ScabbardRTL.trace_append, 
                                     InstrData::ON_GPU | InstrData::WRITE 
                                     | InstrData::READ | InstrData::ATOMIC);
   }
@@ -1215,8 +1219,8 @@ void IScabbardHostPass::registerRTL(Module& M) {
           false
         )
     );
-  ScabbardRTL.trace_append$mem = M.getOrInsertFunction(
-      ScabbardRTL.trace_append$mem_name,
+  ScabbardRTL.trace_append = M.getOrInsertFunction(
+      ScabbardRTL.trace_append_name,
       FunctionType::get(
           VoidTy,
           std::array<Type*,3ull>{
@@ -1227,8 +1231,8 @@ void IScabbardHostPass::registerRTL(Module& M) {
           false
         )
     );
-  ScabbardRTL.trace_append$mem$cond = M.getOrInsertFunction(
-      ScabbardRTL.trace_append$mem$cond_name,
+  ScabbardRTL.trace_append$cond = M.getOrInsertFunction(
+      ScabbardRTL.trace_append$cond_name,
       FunctionType::get(
           VoidTy,
           std::array<Type*,3ull>{
@@ -1239,8 +1243,8 @@ void IScabbardHostPass::registerRTL(Module& M) {
           false
         )
     );
-  ScabbardRTL.trace_append$alloc = M.getOrInsertFunction(
-      ScabbardRTL.trace_append$alloc_name,
+  ScabbardRTL.trace_append$ext = M.getOrInsertFunction(
+      ScabbardRTL.trace_append$ext_name,
       FunctionType::get(
           VoidTy,
           std::array<Type*,4ull>{
@@ -1252,8 +1256,8 @@ void IScabbardHostPass::registerRTL(Module& M) {
           false
         )
     );
-  ScabbardRTL.trace_append$alloc$cond = M.getOrInsertFunction(
-      ScabbardRTL.trace_append$alloc$cond_name,
+  ScabbardRTL.trace_append$ext$cond = M.getOrInsertFunction(
+      ScabbardRTL.trace_append$ext$cond_name,
       FunctionType::get(
           VoidTy,
           std::array<Type*,4ull>{
@@ -1666,6 +1670,14 @@ IScabbardInstrPass::PtrOrigin IScabbardHostPass::getPtrOrigin(LoopInfo& LI, cons
   return PO;
 }
 
+void IRHelper::setDebugLoc(Instruction* i, const Instruction& I) const {
+  if (I.getDebugLoc())
+    i->setDebugLoc(I.getDebugLoc());
+  else if (DISubprogram *SP = I.getFunction()->getSubprogram()) {
+    i->setDebugLoc(DILocation::get(I.getContext(), 0, 0, SP));
+  }
+}
+
 bool IScabbardHostPass::instrumentInScabbardFunc(LoopInfo& LI, Instruction& I, Value* Ptr, 
                                                    const InstrData InstrContext, Value* ExtraData) {
   Value* PtrOp = Ptr;
@@ -1687,7 +1699,7 @@ bool IScabbardHostPass::instrumentInScabbardFunc(LoopInfo& LI, Instruction& I, V
   CallInst* ci = nullptr;
   if (ExtraData == nullptr)
     ci = CallInst::Create(
-        (PO & UNKNOWN_HEAP) ? ScabbardRTL.trace_append$mem$cond : ScabbardRTL.trace_append$mem,
+        (PO & UNKNOWN_HEAP) ? ScabbardRTL.trace_append$cond : ScabbardRTL.trace_append,
         std::array<Value*, 3ull>{
             ConstantInt::get(TraceDataTy, APInt(sizeof(InstrData)*8, InstrContext | PO)),
             Ptr,
@@ -1698,7 +1710,7 @@ bool IScabbardHostPass::instrumentInScabbardFunc(LoopInfo& LI, Instruction& I, V
       );
   else 
     ci = CallInst::Create(
-        (PO & UNKNOWN_HEAP) ? ScabbardRTL.trace_append$alloc$cond : ScabbardRTL.trace_append$alloc,
+        (PO & UNKNOWN_HEAP) ? ScabbardRTL.trace_append$ext$cond : ScabbardRTL.trace_append$ext,
         std::array<Value*, 4ull>{
             ConstantInt::get(TraceDataTy, APInt(sizeof(InstrData)*8, InstrContext | PO)),
             Ptr,
@@ -1709,7 +1721,7 @@ bool IScabbardHostPass::instrumentInScabbardFunc(LoopInfo& LI, Instruction& I, V
         /* insertBefore= */ &I
       );
   
-  ci->setDebugLoc(I.getDebugLoc());
+  setDebugLoc(ci,I);
   
   return true;
 }
@@ -1721,7 +1733,7 @@ CallInst* ScabbardHostPassHip::CreateRTLCall(CallInst& CI, const InstrData Data,
     errs() << "\n[scabbard.instr.host.metadata.amdhip:WARN] Failed to insert instruction into the metadata system!"
               "\n[scabbard.instr.host.metadata.amdhip:WARN]   -> make sure debug info is turned on (`-g`)\n";
   auto ci = CallInst::Create(
-        ScabbardRTL.trace_append$mem,
+        ScabbardRTL.trace_append,
         std::array<Value*, 3ull>{
             ConstantInt::get(TraceDataTy, APInt(sizeof(InstrData)*8, 
                               InstrData::ON_HOST | Data)),
@@ -1734,7 +1746,7 @@ CallInst* ScabbardHostPassHip::CreateRTLCall(CallInst& CI, const InstrData Data,
     ci->insertBefore(&CI);
   else
     ci->insertAfter(&CI);
-  ci->setDebugLoc(CI.getDebugLoc());
+  setDebugLoc(ci,CI);
   return ci;
 }
 
@@ -1745,7 +1757,7 @@ CallInst* ScabbardHostPassHip::CreateRTLCallEx(CallInst& CI, const InstrData Dat
     errs() << "\n[scabbard.instr.host.metadata.amdhip:WARN] Failed to insert instruction into the metadata system!"
               "\n[scabbard.instr.host.metadata.amdhip:WARN]   -> make sure debug info is turned on (`-g`)\n";
   auto ci = CallInst::Create(
-        ScabbardRTL.trace_append$alloc,
+        ScabbardRTL.trace_append$ext,
         std::array<Value*, 4ull>{
             ConstantInt::get(TraceDataTy, APInt(sizeof(InstrData)*8, 
                               InstrData::ON_HOST | Data | InstrData::_OPT_USED)),
@@ -1760,7 +1772,7 @@ CallInst* ScabbardHostPassHip::CreateRTLCallEx(CallInst& CI, const InstrData Dat
     ci->insertBefore(&CI);
   else
     ci->insertAfter(&CI);
-  ci->setDebugLoc(CI.getDebugLoc());
+  setDebugLoc(ci,CI);
   return ci;
 }
 
@@ -1769,6 +1781,7 @@ CallInst* ScabbardHostPassHip::CreateRTLCallEx(CallInst& CI, const InstrData Dat
 ///        (used to get the mem address of the ptr value of hipMalloc)
 ///       Not safe to use outside of specific use
 Value* get_ptr_from_ptr(Value* V) {
+  V = getUnderlyingObject(V); //NOTE: might change this to aggressive
   switch (V->getValueID()) {
   case Instruction::Alloca + Value::InstructionVal:
     return V;
@@ -1803,7 +1816,7 @@ bool ScabbardHostPassHip::APIInstr_Alloc(CallInst& CI, const InstrData Data) {
     _li->eraseFromParent();
     return true;
   }
-  errs() << "\n[scabbard.instr.host.amdhip:ERR] could not backtrack `hipMalloc` ptr parameter (" 
+  errs() << "\n[scabbard.instr.host.amdhip:ERR] could not backtrack `"<< CI.getCalledFunction()->getName() <<"` ptr parameter (" 
           << IScabbardHostPass::getLocStr(CI) << ")\n";  
   return false;
 }
@@ -1835,7 +1848,7 @@ bool ScabbardHostPassHip::APIInstr_Memcpy(CallInst& CI, FunctionAnalysisManager&
   CallInst* ReadCall = nullptr, * WriteCall = nullptr;
   if (ReadData != InstrData::NO) {
     ReadCall  = CallInst::Create(
-                  (ReadData & UNKNOWN_HEAP) ? ScabbardRTL.trace_append$alloc$cond : ScabbardRTL.trace_append$alloc,
+                  (ReadData & UNKNOWN_HEAP) ? ScabbardRTL.trace_append$ext$cond : ScabbardRTL.trace_append$ext,
                   std::array<Value*, 4ull>{
                       ConstantInt::get(TraceDataTy, APInt(sizeof(InstrData)*8, 
                                                           ReadData | ON_HOST | READ_EVENT | _OPT_DATA
@@ -1846,12 +1859,11 @@ bool ScabbardHostPassHip::APIInstr_Memcpy(CallInst& CI, FunctionAnalysisManager&
                     },
                   Twine("scabbard.") + CI.getName() + ".read"
                 );
-      ReadCall->insertAfter((SyncCall) ? SyncCall : &CI);
-      ReadCall->setDebugLoc(CI.getDebugLoc());
+      setDebugLoc(ReadCall,CI);
     }
   if (WriteData != InstrData::NO) {
     WriteCall = CallInst::Create(
-                  (WriteData & UNKNOWN_HEAP) ? ScabbardRTL.trace_append$alloc$cond : ScabbardRTL.trace_append$alloc,
+                  (WriteData & UNKNOWN_HEAP) ? ScabbardRTL.trace_append$ext$cond : ScabbardRTL.trace_append$ext,
                   std::array<Value*, 4ull>{
                       ConstantInt::get(TraceDataTy, APInt(sizeof(InstrData)*8, 
                                                           WriteData | ON_HOST | WRITE_EVENT | _OPT_DATA
@@ -1863,7 +1875,7 @@ bool ScabbardHostPassHip::APIInstr_Memcpy(CallInst& CI, FunctionAnalysisManager&
                   Twine("scabbard.") + CI.getName() + ".write"
                 );
     WriteCall->insertAfter((ReadCall) ? ReadCall : ((SyncCall) ? SyncCall : &CI));
-    WriteCall->setDebugLoc(CI.getDebugLoc());
+    setDebugLoc(WriteCall,CI);
   }
   return SyncCall || ReadCall || WriteCall;
 }
@@ -1888,14 +1900,14 @@ GetElementPtrInst* ScabbardHostPassHip::expand_param_args_alloc(AllocaInst& allo
                           Twine("scabbard.instrParamAlloc.") + alloc.getName(),
                           &alloc
                         );
-  newAlloc->setDebugLoc(alloc.getDebugLoc()); //might cause issues after alloc is deleted
+  setDebugLoc(newAlloc,alloc); //might cause issues after alloc is deleted
   auto memLoc = GetElementPtrInst::Create(
                     PtrTy,
                     newAlloc, 
                     std::array<Value*,1>{ConstantInt::get(u64Ty, APInt(64u, 0u))}
                   );
   memLoc->insertAfter(newAlloc);
-  memLoc->setDebugLoc(alloc.getDebugLoc()); //might cause issues after alloc is deleted
+  setDebugLoc(memLoc,alloc); //might cause issues after alloc is deleted
   alloc.replaceAllUsesWith(memLoc); //DBG: does not seem to be working
   alloc.eraseFromParent();
   return GetElementPtrInst::Create(
@@ -1937,7 +1949,7 @@ bool ScabbardHostPassHip::APIInstr_LaunchKernel(CallInst& CI) {
       std::array<Value*,1ull>{CI.getArgOperand(7ull)}
     );
   regFn->insertBefore(&CI);
-  regFn->setDebugLoc(CI.getDebugLoc()); //might cause issues if in a device stub
+  setDebugLoc(regFn,CI); //might cause issues if in a device stub
   auto [locID, is_inserted] = ScabbardRTL.Metadata.insert(&CI);
   if (not is_inserted && locID == 0ull)
     errs() << "\n[scabbard.instr.host.metadata.amdhip:WARN] Failed to insert instruction into the metadata system!"
@@ -1955,18 +1967,18 @@ bool ScabbardHostPassHip::APIInstr_LaunchKernel(CallInst& CI) {
         }
     );
   regCbFn->insertAfter(&CI);
-  regCbFn->setDebugLoc(CI.getDebugLoc()); //might cause issues if in a device stub
+  setDebugLoc(regCbFn,CI); //might cause issues if in a device stub
   //TODO? modify the type of the last operand (should be a global or function pass)
   // trace back args var and expand it to include the pointer to the DeviceTracker that is returned as the result of `scabbard.trace.register_job` as the last parameter
   GetElementPtrInst* paramPtr = create_or_expand_param_args_alloc(CI.getArgOperand(5ull));
   auto dtAlloc = new AllocaInst(PtrTy, 0u, "dtPtr", regFn);
-  dtAlloc->setDebugLoc(CI.getDebugLoc()); //might cause issues if in a device stub
+  setDebugLoc(dtAlloc,CI); //might cause issues if in a device stub
   paramPtr->insertAfter(regFn);
-  paramPtr->setDebugLoc(CI.getDebugLoc()); //might cause issues if in a device stub
+  setDebugLoc(paramPtr,CI); //might cause issues if in a device stub
   auto dtStore = new StoreInst(regFn, dtAlloc, paramPtr);
-  dtStore->setDebugLoc(CI.getDebugLoc()); //might cause issues if in a device stub
+  setDebugLoc(dtStore,CI); //might cause issues if in a device stub
   auto dtParamStore = new StoreInst(dtAlloc, paramPtr, &CI);
-  dtParamStore->setDebugLoc(CI.getDebugLoc()); //might cause issues if in a device stub
+  setDebugLoc(dtParamStore,CI); //might cause issues if in a device stub
   return true;
 }
 
@@ -2170,8 +2182,8 @@ void ScabbardHostPassHip::registerAPIInstrumenters() {
 // << ================================== DEVICE HELPER CODE ==================================== >> 
 
 void IScabbardDevicePass::registerRTL(Module& M) {
-  ScabbardRTL.trace_append$mem = M.getOrInsertFunction(
-      ScabbardRTL.trace_append$mem_name,
+  ScabbardRTL.trace_append = M.getOrInsertFunction(
+      ScabbardRTL.trace_append_name,
       FunctionType::get(
           VoidTy,
           std::array<Type*,4ull>{
@@ -2183,8 +2195,8 @@ void IScabbardDevicePass::registerRTL(Module& M) {
           false
         )
     );
-  ScabbardRTL.trace_append$alloc = M.getOrInsertFunction(
-      ScabbardRTL.trace_append$alloc_name,
+  ScabbardRTL.trace_append$ext = M.getOrInsertFunction(
+      ScabbardRTL.trace_append$ext_name,
       FunctionType::get(
           VoidTy,
           std::array<Type*,5ull>{
@@ -2389,9 +2401,9 @@ inline bool IScabbardDevicePass::expandFnParams(Module& M) const {
           ci->setCanReturnTwice();
         ci->insertBefore(CI);
         CI->replaceAllUsesWith(ci);
-        ci->setDebugLoc(CI->getDebugLoc());
+        setDebugLoc(ci,CI);
         ci->setCallingConv(CI->getCallingConv());
-        ci->setDebugLoc(CI->getDebugLoc());
+        setDebugLoc(ci,CI);
         to_remove.insert(CI);
 
       } else {
@@ -2518,7 +2530,7 @@ bool IScabbardDevicePass::instrumentInScabbardFunc(LoopInfo& LI, Instruction& I,
                   "scabbard." + I.getName(), 
                   /* insertBefore= */ &I
                 );
-    ci->setDebugLoc(I.getDebugLoc());
+    setDebugLoc(ci,I);
     return true;
   }
 
@@ -2550,6 +2562,20 @@ Constant* MetadataHandler::getGEP(GlobalVariable* GV, size_t Index) const {
 //     return nullptr;
 //   return Constant::getIntegerValue(Type::getInt64Ty(I->getContext()), APInt(res.first->second, 64ul));
 // }
+void x64(const std::string& input, char* output) {
+  const char C_SAFE_BASE64_MAP[65u] = 
+      "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+      "abcdefghijklmnopqrstuvwxyz"
+      "0123456789__";
+  std::uint64_t value = std::hash<std::string>{}(input);
+  for (std::size_t i = 0u; i < 11u; i++) {
+    // Extract 6 bits at a time starting from the least significant bits
+    uint8_t index = (uint8_t)(value & 0x3Fu);
+    output[11u - i] = C_SAFE_BASE64_MAP[index];
+    value >>= 6u;
+  }
+  output[12u] = '\0';
+}
 
 GlobalVariable* MetadataHandler::initializeMetadata(Module& M, unsigned AddrSpace, IRHelper* IRH) {
   EntryTy = StructType::create(std::array<Type*,5>{
@@ -2565,6 +2591,9 @@ GlobalVariable* MetadataHandler::initializeMetadata(Module& M, unsigned AddrSpac
 }
 
 void MetadataHandler::finalize(Module& M) {
+  char _srcHash64[16u];
+  x64(M.getSourceFileName(),_srcHash64);
+  std::string srcHash64(_srcHash64);
   SmallVector<Constant*, 16ul> Contents(Instructions.size());
   auto arr = ConstantDataArray::getString(M.getContext(), "<unknownFile>:<unknownFn>");
   auto stringsVar = new GlobalVariable(M, ArrayType::get(IntegerType::get(M.getContext(),8u), UINT32_MAX), 
@@ -2611,14 +2640,14 @@ void MetadataHandler::finalize(Module& M) {
                                 Constant::getIntegerValue(EntryTy->getTypeAtIndex(4ul), APInt(64ul, 0ul))});
   }
 
-  auto _strVar = outputStrings(M, MetadataVar->getAddressSpace());
+  auto _strVar = outputStrings(M, MetadataVar->getAddressSpace(), srcHash64);
   stringsVar->replaceAllUsesWith(_strVar);  // replace with completed variable
   stringsVar->eraseFromParent();            // cleanup old temp
   
   const auto ArrTy = ArrayType::get(EntryTy, Instructions.size());
   const auto Arr = ConstantArray::get(ArrTy, Contents);
-  auto _MetadataVar = new GlobalVariable(M, cast<Type>(ArrTy), /*IsConstant=*/true,  GlobalValue::ExternalLinkage, // GlobalValue::AvailableExternallyLinkage,
-                                          Arr, "scabbard.metadata", nullptr,
+  auto _MetadataVar = new GlobalVariable(M, cast<Type>(ArrTy), /*IsConstant=*/true,  GlobalValue::ExternalLinkage, //GlobalValue::AvailableExternallyLinkage,
+                                          Arr, Twine("scabbard.metadata.")+srcHash64, nullptr,
                                           GlobalValue::NotThreadLocal, MetadataVar->getAddressSpace());
   MetadataVar->replaceAllUsesWith(_MetadataVar);  // replace with completed version
   MetadataVar->eraseFromParent();                // cleanup old temp
@@ -2638,10 +2667,11 @@ uint64_t MetadataHandler::registerString(const Twine& Str) {
   return It.first->second;
 }
 
-GlobalVariable* MetadataHandler::outputStrings(Module& M, unsigned AddrSpace) const {
+GlobalVariable* MetadataHandler::outputStrings(Module& M, unsigned AddrSpace, const std::string& srcHash64) const {
   auto Arr = ConstantDataArray::getString(M.getContext(), ConcatenatedString);
   return new GlobalVariable(M, cast<Type>(Arr->getType()), /*IsConstant=*/true, GlobalValue::ExternalLinkage, Arr,
-                            "scabbard.metadata.strings", nullptr, GlobalValue::NotThreadLocal, AddrSpace);
+                            Twine("scabbard.metadata.strings.")+srcHash64, 
+                            nullptr, GlobalValue::NotThreadLocal, AddrSpace);
 }
 
 inline size_t MetadataHandler::getSourceFile(const DIFile* File/* , LLVMContext& C */) {
