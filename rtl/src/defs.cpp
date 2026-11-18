@@ -190,6 +190,9 @@ namespace scabbard {
       if (std_out) SCAB_SOUT.replace(std_out);
       if (std_err) SCAB_SERR.replace(std_err);
 
+      SCAB_SOUT << "\n[scabbard.rtl:INFO] Device Buffer size set to: " << device::DeviceTracker::BUFFER_SIZE
+                << "\n[scabbard.rtl:INFO] Memory Pool Max Unused Cache Size: " << MEM_CHUNK_SIZE << endl();
+
       SCAB_RUNTIME.start();
     }
 
@@ -213,15 +216,15 @@ namespace scabbard {
 
     [[clang::disable_sanitizer_instrumentation, gnu::used, gnu::retain, gnu::noinline]] 
     __host__
-    void* job(hipStream_t STREAM)
+    std::uintptr_t job(hipStream_t STREAM)
     {
       if (STREAM == nullptr)  // I think state machine now handles all concerns of this
         STREAM = (hipStream_t) DEFAULT_STREAM_BEHAVIOR();
       if (STREAM == hipStreamLegacy) //TODO: double check this still works later
-        return ((void*) SCAB_RUNTIME.add_job(nullptr));
+        return ((std::uintptr_t) SCAB_RUNTIME.add_job(nullptr));
       if (STREAM == hipStreamPerThread)
-        return ((void*) SCAB_RUNTIME.add_job((hipStream_t)std::hash<std::thread::id>{}(std::this_thread::get_id())));
-      return ((void*) SCAB_RUNTIME.add_job(STREAM));
+        return ((std::uintptr_t) SCAB_RUNTIME.add_job((hipStream_t)std::hash<std::thread::id>{}(std::this_thread::get_id())));
+      return ((std::uintptr_t) SCAB_RUNTIME.add_job(STREAM));
     }
 
     [[clang::disable_sanitizer_instrumentation, gnu::used, gnu::retain, gnu::noinline]] 

@@ -25,6 +25,7 @@
 
 #define SCABBARD_DEVICE_CALLBACK_APPEND_NAME "scabbard.rtl.device.trace_append"
 #define SCABBARD_DEVICE_CALLBACK_APPEND_EXT_NAME "scabbard.rtl.device.trace_append$ext"
+#define SCABBARD_DEVICE_DEBUG_PRINT_ULL_NAME "scabbard.rtl.device.dbg_print.ull"
 
 
 #define SCABBARD_HOST_CALLBACK_APPEND_NAME "scabbard.rtl.host.trace_append"

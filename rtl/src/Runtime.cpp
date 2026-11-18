@@ -144,15 +144,17 @@ namespace scabbard {
         SCAB_SERR << "\033[91m\n[scabbard.rtl:ERROR] failed to allocate managed memory before kernel launch!\033[00m\n" << endl();
         exit(EXIT_FAILURE);
       }
+      mx_device.lock();
       auto it = stream_job_counters.find(STREAM);
       if (it == stream_job_counters.end())
         it = stream_job_counters.emplace(STREAM,0u).first;
       // in place construction into allocated managed memory
-      new (dt) device::DeviceTracker(jobId_t(STREAM,++it->second), vClk);
-      mx_device.lock();
+      new (dt) device::DeviceTracker(jobId_t(STREAM,it->second), vClk);
       device_trackers.push_back(dt);
+      it->second++;
       mx_device.unlock();
-      it->second++; 
+      // SCAB_SERR << "\n[scabbard.rtl.reg.job:DBG] deviceTracker stored at 0x" << std::hex << dt << std::dec << endl(); //DEBUG test for bad dt ptr
+      SCAB_SERR << "\n[scabbard.rtl.reg.job:DBG] deviceTracker stored at " << (std::uintptr_t)dt << endl(); //DEBUG test for bad dt ptr
       return dt;
     }
 

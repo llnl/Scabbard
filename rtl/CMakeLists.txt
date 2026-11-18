@@ -87,8 +87,8 @@ target_include_directories(rtl.device
 
 target_link_libraries(rtl.device
   PUBLIC
-  $<BUILD_INTERFACE:${SCABBARD_PATH}/libscabbard.so>
-  $<INSTALL_INTERFACE:${CMAKE_INSTALL_LIBDIR}/libscabbard.so>
+  # $<BUILD_INTERFACE:${SCABBARD_PATH}/libscabbard.so>
+  # $<INSTALL_INTERFACE:${CMAKE_INSTALL_LIBDIR}/libscabbard.so>
   PRIVATE
   hip::device
   # libscabbard
@@ -195,9 +195,18 @@ target_link_options(rtl.device PRIVATE -x hip --offload-arch=${KERNEL_OFFLOAD_AR
 
 # add_dependencies(rtl rtl-device) # uncomment to auto build the manually linked GPU module
 
+add_library(defaultStream.leg STATIC
+    default_stream_helper.c
+  )
+target_compile_options(defaultStream.leg PUBLIC -flto=full -D__SCABBARD_HIP_DEFAULT_STREAM__=1u)
+add_library(defaultStream.pt STATIC
+    default_stream_helper.c
+  )
+target_compile_options(defaultStream.pt PUBLIC -flto=full -D__SCABBARD_HIP_DEFAULT_STREAM__=2u)
 
 
-install(TARGETS rtl rtl.device EXPORT libtraceConfig
+
+install(TARGETS rtl rtl.device defaultStream.leg defaultStream.pt EXPORT librtlConfig
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}

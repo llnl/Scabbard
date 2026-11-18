@@ -42,11 +42,15 @@ namespace scabbard {
     namespace device {
       
       __device__
-      void trace_append$mem(void* deviceTracker, const InstrData data, const void*const PTR, const void*const SRC_ID) 
+      void trace_append$mem(std::uintptr_t deviceTracker, const InstrData data, const void*const PTR, const void*const SRC_ID) 
         asm (SCABBARD_DEVICE_CALLBACK_APPEND_NAME);
       __device__ 
-      void trace_append$alloc(void* deviceTracker, const InstrData data, const void*const PTR, const void*const SRC_ID, const std::size_t SIZE) 
+      void trace_append$alloc(std::uintptr_t deviceTracker, const InstrData data, const void*const PTR, const void*const SRC_ID, const std::size_t SIZE) 
         asm (SCABBARD_DEVICE_CALLBACK_APPEND_EXT_NAME);
+
+      __device__
+      void dbg_print(std::uint64_t value) 
+        asm (SCABBARD_DEVICE_DEBUG_PRINT_ULL_NAME);
 
 
     } //?namespace device
@@ -78,7 +82,7 @@ namespace scabbard {
      *        That will be passed into the kernel and through all user defined kernel functions.
      */
     __host__
-    void* job(hipStream_t STREAM)
+    std::uintptr_t job(hipStream_t STREAM)
       asm (SCABBARD_CALLBACK_REGISTER_JOB);
     
     

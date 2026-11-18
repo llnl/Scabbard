@@ -100,8 +100,8 @@ namespace rtl {
 
     inline const ResultList_t& get_results() const { return results; }
 
-    inline void append(DataPtr_t&& __Ptr) { move_append(std::move(__Ptr)); }
-    inline void append(const DataPtr_t& Ptr) { copy_append(Ptr); }
+    inline void append(DataPtr_t&& __Ptr) { /* if (__Ptr->data != InstrData::NO) */ move_append(std::move(__Ptr)); }
+    inline void append(const DataPtr_t& Ptr) { /* if (Ptr->data != InstrData::NO) */ copy_append(Ptr); }
 
   private:
 

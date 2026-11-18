@@ -140,8 +140,10 @@ InstrArgParser.add_argument('--lmod-load','-lml',
     )
 
 
-RunArgParser.add_argument('--device-buff-size','-b',
+RunArgParser.add_argument('--device-buffer-size','-b',
         nargs=1,
+        dest='device_buffer_size',
+        type=int,
         default=None,
         metavar='<uint64>',
         required=False,
@@ -150,8 +152,10 @@ RunArgParser.add_argument('--device-buff-size','-b',
               "(default: 65536; min: 4096; max: 4294967296). "
               "[decrease if memory balloons; increase if data loss occurs]"
     )
-RunArgParser.add_argument('--rtl-alloc-cache-len','-l',
+RunArgParser.add_argument('--pool-cache-len','-l',
         nargs=1,
+        dest='pool_cache_len',
+        type=int,
         default=None,
         metavar='<uint64>',
         required=False,

@@ -32,28 +32,34 @@ namespace scabbard {
     // << ======================================== Device ========================================== >> 
     namespace device {
 
+      [[clang::disable_sanitizer_instrumentation, gnu::used, gnu::retain]] 
+      __device__
+      void dbg_print(std::uint64_t value)
+      {
+        printf("\n[scabbard.rtl.device:DBG] %lu", value);
+      }
       
       [[clang::disable_sanitizer_instrumentation, gnu::used, gnu::retain]] 
       __device__
-      void trace_append$mem(void* deviceTracker, const InstrData DATA, const void*const PTR, const void*const SRC_ID)
+      void trace_append$mem(std::uintptr_t deviceTracker, const InstrData DATA, const void*const PTR, const void*const SRC_ID)
       {
         DeviceTracker& DT = *((DeviceTracker*) deviceTracker);
         const std::size_t BUF_SIZE = DT._BUF_SIZE;
         DT.buffer[(DT.next++) % BUF_SIZE] = TraceData(DT.vClk++, DATA, DT.JOB_ID,
                                                       blockIdx, threadIdx,
-                                                      (std::uint64_t)PTR, SRC_ID,  0ull);
+                                                      (std::uintptr_t)PTR, SRC_ID,  0ull);
       }
 
       [[clang::disable_sanitizer_instrumentation, gnu::used, gnu::retain]] 
       __device__
-      void trace_append$alloc(void* deviceTracker, const InstrData DATA, const void*const PTR, 
+      void trace_append$alloc(std::uintptr_t deviceTracker, const InstrData DATA, const void*const PTR, 
                               const void*const SRC_ID, const std::size_t SIZE)
       {
         DeviceTracker& DT = *((DeviceTracker*) deviceTracker);
         const std::size_t BUF_SIZE = DT._BUF_SIZE;
         DT.buffer[(DT.next++) % BUF_SIZE] = TraceData(DT.vClk++, (InstrData)(DATA | InstrData::_OPT_USED),
                                                       DT.JOB_ID, blockIdx, threadIdx,
-                                                      (std::uint64_t)PTR, 
+                                                      (std::uintptr_t)PTR,
                                                       SRC_ID, SIZE);
       }
 

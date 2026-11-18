@@ -277,6 +277,8 @@ protected:
   Type* const VoidTy = nullptr;
   /// @brief a handy pointer the oft used generic IR pointer type for this module.
   PointerType* const PtrTy = nullptr;
+  /// @brief a handy pointer the oft used generic IR pointer type for this module.
+  PointerType* const PtrDGTy = nullptr;
   /// @brief a handy pointer to the oft used IR Integer Type for the RTL's TraceData
   IntegerType* const TraceDataTy = nullptr;
   /// @brief a handy pointer to the oft used IR Integer Type for the RTL's source code location metadata ID
@@ -287,6 +289,8 @@ protected:
   IntegerType* const u64Ty = nullptr;
   /// @brief a handy pointer to the oft used IR Integer Type unsigned 32-bit.
   IntegerType* const u32Ty = nullptr;
+  /// @brief a handy pointer to the oft used IR Integer Type unsigned 8-bit.
+  IntegerType* const u8Ty = nullptr;
   StructType* const UserCallbackDataWrapperTy = nullptr;
 public:
   IRHelper() = delete;
@@ -294,11 +298,13 @@ public:
     _M(M),
     VoidTy(Type::getVoidTy(M.getContext())),
     PtrTy(PointerType::get(M.getContext(), 0ull)),
+    PtrDGTy(PointerType::get(M.getContext(), 1ull)),
     TraceDataTy(IntegerType::get(M.getContext(), sizeof(InstrData)*8)),
     LocDataTy(PointerType::get(M.getContext(), 0ull)),
     ExtraDataTy(IntegerType::get(M.getContext(), 64u)),
     u64Ty(IntegerType::get(M.getContext(), 64u)),
-    u32Ty(IntegerType::get(M.getContext(), 64u)),
+    u32Ty(IntegerType::get(M.getContext(), 32u)),
+    u8Ty(IntegerType::get(M.getContext(), 8u)),
     UserCallbackDataWrapperTy(StructType::create(M.getContext(),
           std::array<Type*,2u>{PtrTy, PtrTy},
           "scabbard.instr.userCallbackDataWrapperTy",
@@ -386,7 +392,7 @@ protected:
 
   /// @brief Fn Type that describes a Function that will instrument a call of a GPU Driver API Fn, 
   ///        and return true if any changes were made to the module durring the process.
-  using APIInstrumenterFn_t = std::function<bool(CallInst&,FunctionAnalysisManager&)>;
+  using APIInstrumenterFn_t = std::function<bool(CallBase&,FunctionAnalysisManager&)>;
 
   /// @brief List of {APIFnName, APIHandlerFn} that will proccess the relevant GPU Driver API calls.
   SmallVector<std::pair<const StringRef,APIInstrumenterFn_t>,23u> APIInstrumenters;
@@ -527,13 +533,22 @@ protected:
   /// @return \c bool - if any changes were made to the IR.
   virtual bool handleAPICalls(Module& M, FunctionAnalysisManager& FAM) {
     bool changed = false;
-    for (auto [APIName, InstrumenterFn] : APIInstrumenters)
-      if (Function* APIFn = M.getFunction(APIName))
+    // SmallVector<std::pair<APIInstrumenterFn_t&, CallBase*>> to_process;
+    for (auto [APIName, InstrFn] : APIInstrumenters)
+      if (Function* APIFn = M.getFunction(APIName)) {
+        SmallVector<CallBase*> to_process;
         for (auto user : APIFn->users())
-          if (auto _CI = dyn_cast<CallInst>(user))
-            if (isInstrumentableFn(*_CI->getFunction()))
-              if (APIFn == _CI->getCalledFunction())
-                changed |= InstrumenterFn(*_CI, FAM);
+          if (auto _CB = dyn_cast<CallBase>(user))
+            if (isInstrumentableFn(*_CB->getFunction()))
+              if (APIFn == _CB->getCalledFunction())
+                to_process.emplace_back(_CB);
+                // changed |= InstrFn(*_CB, FAM);
+        for (auto _CB : to_process)
+          changed |= InstrFn(*_CB, FAM);
+      }
+    //             to_process.emplace_back(InstrFn,_CB);
+    // for (auto [InstrFn, _CB] : to_process)
+    //   changed |= InstrFn(*_CB, FAM);
     return changed;
   }
 
@@ -607,6 +622,7 @@ public:
   /// @return \c bool - if the module was modified.
   virtual bool run(Module& M, ModuleAnalysisManager& MAM) final {
     errs() << "\n[scabbard.instr.host:INFO] Instrumenting: \"" << M.getSourceFileName() << "\"\n"; //DEBUG
+    errs() << "\n\n[scabbard.instr.host:DBG] Module written to: \"" << _DBG::write_module_to_file(M,"host.preInstr") << "\"\n\n"; //DEBUG
 
     // initialize metadata object and get a copy of the temp global variable for storing the metadata in.
     GlobalVariable* MetadataVar = ScabbardRTL.Metadata.initializeMetadata(M, 0ull, this);
@@ -648,7 +664,7 @@ public:
     } else
       changed |= true;
 
-    // errs() << "\n\n[scabbard.instr.host:DBG] Module written to: \"" << _DBG::write_module_to_file(M,"host.postInstr") << "\"\n\n"; //DEBUG
+    errs() << "\n\n[scabbard.instr.host:DBG] Module written to: \"" << _DBG::write_module_to_file(M,"host.postInstr") << "\"\n\n"; //DEBUG
 
     return changed;
   }
@@ -661,20 +677,20 @@ class ScabbardHostPassHip : public IScabbardHostPass {
   /// @brief Load up the API Instrumenters into \c IScabbardHostPass::APIInstrumenters
   void registerAPIInstrumenters();
 protected:
-  CallInst* CreateRTLCall(CallInst& CI, const InstrData data, 
+  CallInst* CreateRTLCall(CallBase& CB, const InstrData data, 
                           Value* Ptr, const bool InsertBefore=true);
-  CallInst* CreateRTLCallEx(CallInst& CI, const InstrData data, Value* Ptr, 
+  CallInst* CreateRTLCallEx(CallBase& CB, const InstrData data, Value* Ptr, 
                             Value* Extra, const bool InsertBefore=true);
-  bool APIInstr_Alloc(CallInst& CI, const InstrData Data);
-  bool APIInstr_Memcpy(CallInst& CI, FunctionAnalysisManager& FAM, const uint CopyDir,
+  bool APIInstr_Alloc(CallBase& CB, const InstrData Data);
+  bool APIInstr_Memcpy(CallBase& CB, FunctionAnalysisManager& FAM, const uint CopyDir,
                        Value* Stream=nullptr, const bool IsAsync=false);
-  bool APIInstr_Unsupported(const CallInst& CI, const StringRef APIName) const;
-  bool APIInstr_LaunchKernel(CallInst& CI);
-  GetElementPtrInst* expand_param_args_alloc(AllocaInst& alloc) const;
-  GetElementPtrInst* create_or_expand_param_args_alloc(Value* arg) const;
-  Constant* getBestLocIDForUserCallback(CallInst& RegCallbackCI);
-  bool APIInstr_HostCallback(CallInst& CI);
-  bool APIInstr_HostFnLaunch(CallInst& CI);
+  bool APIInstr_Unsupported(const CallInst& CB, const StringRef APIName) const;
+  bool APIInstr_LaunchKernel(CallBase& CB);
+  AllocaInst* expand_param_args_alloc(const CallBase& CB, AllocaInst& alloc) const;
+  AllocaInst* create_or_expand_param_args_alloc(const CallBase& CB, Value* arg) const;
+  Constant* getBestLocIDForUserCallback(CallBase& RegCallbackCI);
+  bool APIInstr_HostCallback(CallBase& CB);
+  bool APIInstr_HostFnLaunch(CallBase& CB);
 public:
   ScabbardHostPassHip() = delete;
   ScabbardHostPassHip(Module& M_, const Triple& T_) :
@@ -749,6 +765,8 @@ protected:
     const std::string trace_append_name = SCABBARD_DEVICE_CALLBACK_APPEND_NAME;
     FunctionCallee trace_append$ext;
     const std::string trace_append$ext_name = SCABBARD_DEVICE_CALLBACK_APPEND_EXT_NAME;
+    FunctionCallee dbg_print_ull;
+    const std::string dbg_print_ull_name = SCABBARD_DEVICE_DEBUG_PRINT_ULL_NAME;
     MetadataHandler Metadata;
   } ScabbardRTL;
 
@@ -1012,6 +1030,7 @@ public:
     bool changed = false;
     // initialize metadata object and get a copy of the temp global variable for storing the metadata in.
     GlobalVariable* MetadataVar = ScabbardRTL.Metadata.initializeMetadata(M, 0ull, this);
+    errs() << "\n\n[scabbard.instr.device:DBG] Module written to: \"" << _DBG::write_module_to_file(M,"device.preInstr") << "\"\n\n"; //DEBUG
     // determine if any local allocations are made in this module
     HasAllocas = [&]() {
       for (const Function& Fn : M)
@@ -1052,7 +1071,7 @@ public:
       ScabbardRTL.Metadata.clean();
  
 
-    // errs() << "\n\n[scabbard.instr.device:DBG] Module written to: \"" << _DBG::write_module_to_file(M,"device.postInstr") << "\"\n\n"; //DEBUG
+    errs() << "\n\n[scabbard.instr.device:DBG] Module written to: \"" << _DBG::write_module_to_file(M,"device.postInstr") << "\"\n\n"; //DEBUG
 
     return changed || alt_changed;
   }
@@ -1272,7 +1291,7 @@ void IScabbardHostPass::registerRTL(Module& M) {
   ScabbardRTL.register_job = M.getOrInsertFunction(
       ScabbardRTL.register_job_name,
       FunctionType::get(
-          PtrTy,
+          u64Ty,//PtrTy,
           std::array<Type*,1ull>{PtrTy},
           false
         )
@@ -1726,9 +1745,18 @@ bool IScabbardHostPass::instrumentInScabbardFunc(LoopInfo& LI, Instruction& I, V
   return true;
 }
 
-CallInst* ScabbardHostPassHip::CreateRTLCall(CallInst& CI, const InstrData Data, 
+void insertHandlingInvokes(CallInst* ci, CallBase& CB, bool InsertBefore=false) {
+  if (InsertBefore)
+    ci->insertBefore(&CB);
+  else if (InvokeInst* II = dyn_cast<InvokeInst>(&CB)) {
+    ci->insertBefore(II->getNormalDest()->getFirstNonPHI());
+  } else
+    ci->insertAfter(&CB);
+}
+
+CallInst* ScabbardHostPassHip::CreateRTLCall(CallBase& CB, const InstrData Data, 
                                              Value* Ptr, const bool InsertBefore) {
-  auto [locID, is_inserted] = ScabbardRTL.Metadata.insert(&CI);
+  auto [locID, is_inserted] = ScabbardRTL.Metadata.insert(&CB);
   if (not is_inserted && locID == 0ull)
     errs() << "\n[scabbard.instr.host.metadata.amdhip:WARN] Failed to insert instruction into the metadata system!"
               "\n[scabbard.instr.host.metadata.amdhip:WARN]   -> make sure debug info is turned on (`-g`)\n";
@@ -1740,19 +1768,16 @@ CallInst* ScabbardHostPassHip::CreateRTLCall(CallInst& CI, const InstrData Data,
             Ptr,
             locID
           },
-        Twine("scabbard.") + (InsertBefore ? "pre." : "post.") + CI.getName()
+        Twine("scabbard.") + (InsertBefore ? "pre." : "post.") + CB.getName()
       );
-  if (InsertBefore)
-    ci->insertBefore(&CI);
-  else
-    ci->insertAfter(&CI);
-  setDebugLoc(ci,CI);
+  insertHandlingInvokes(ci,CB,InsertBefore);
+  setDebugLoc(ci,CB);
   return ci;
 }
 
-CallInst* ScabbardHostPassHip::CreateRTLCallEx(CallInst& CI, const InstrData Data, 
+CallInst* ScabbardHostPassHip::CreateRTLCallEx(CallBase& CB, const InstrData Data, 
                                               Value* Ptr, Value* Extra, const bool InsertBefore) {
-  auto [locID, is_inserted] = ScabbardRTL.Metadata.insert(&CI);
+  auto [locID, is_inserted] = ScabbardRTL.Metadata.insert(&CB);
   if (not is_inserted && locID == 0ull)
     errs() << "\n[scabbard.instr.host.metadata.amdhip:WARN] Failed to insert instruction into the metadata system!"
               "\n[scabbard.instr.host.metadata.amdhip:WARN]   -> make sure debug info is turned on (`-g`)\n";
@@ -1765,14 +1790,11 @@ CallInst* ScabbardHostPassHip::CreateRTLCallEx(CallInst& CI, const InstrData Dat
             locID,
             Extra
           },
-        Twine("scabbard.") + (InsertBefore ? "pre." : "post.") + CI.getName()
+        Twine("scabbard.") + (InsertBefore ? "pre." : "post.") + CB.getName()
       );
   if (ci == nullptr) return nullptr;
-  if (InsertBefore)
-    ci->insertBefore(&CI);
-  else
-    ci->insertAfter(&CI);
-  setDebugLoc(ci,CI);
+  insertHandlingInvokes(ci,CB,InsertBefore);
+  setDebugLoc(ci,CB);
   return ci;
 }
 
@@ -1806,7 +1828,7 @@ Value* get_ptr_from_ptr(Value* V) {
   errs() << "\n[scabbard.host.amdhip:ERR] unreachable section `get_ptr_from_ptr()`\n";
 }
 
-bool ScabbardHostPassHip::APIInstr_Alloc(CallInst& CI, const InstrData Data) {
+bool ScabbardHostPassHip::APIInstr_Alloc(CallBase& CI, const InstrData Data) {
   if (auto ptr = get_ptr_from_ptr(CI.getArgOperand(0ull))) {
     auto _li = new LoadInst(PtrTy, ptr, "scabbard.instr.tmp."+CI.getName(),false, &CI);
     CallInst* ci = CreateRTLCallEx(CI, InstrData::ON_HOST | Data,
@@ -1821,7 +1843,7 @@ bool ScabbardHostPassHip::APIInstr_Alloc(CallInst& CI, const InstrData Data) {
   return false;
 }
 
-bool ScabbardHostPassHip::APIInstr_Memcpy(CallInst& CI, FunctionAnalysisManager& FAM, 
+bool ScabbardHostPassHip::APIInstr_Memcpy(CallBase& CI, FunctionAnalysisManager& FAM, 
                                           const uint CopyDir, Value* Stream, bool IsAsync) {
   CallInst* SyncCall = nullptr;
   if (not IsAsync) // register memcpy as a sync event if it is not an Async call (inserted before )
@@ -1859,6 +1881,7 @@ bool ScabbardHostPassHip::APIInstr_Memcpy(CallInst& CI, FunctionAnalysisManager&
                     },
                   Twine("scabbard.") + CI.getName() + ".read"
                 );
+      insertHandlingInvokes(ReadCall,*((SyncCall) ? SyncCall : &CI));
       setDebugLoc(ReadCall,CI);
     }
   if (WriteData != InstrData::NO) {
@@ -1874,83 +1897,97 @@ bool ScabbardHostPassHip::APIInstr_Memcpy(CallInst& CI, FunctionAnalysisManager&
                     },
                   Twine("scabbard.") + CI.getName() + ".write"
                 );
-    WriteCall->insertAfter((ReadCall) ? ReadCall : ((SyncCall) ? SyncCall : &CI));
+    insertHandlingInvokes(WriteCall, *((ReadCall) ? ReadCall : ((SyncCall) ? SyncCall : &CI)));
     setDebugLoc(WriteCall,CI);
   }
   return SyncCall || ReadCall || WriteCall;
 }
 
-GetElementPtrInst* ScabbardHostPassHip::expand_param_args_alloc(AllocaInst& alloc) const {
+AllocaInst* ScabbardHostPassHip::expand_param_args_alloc(const CallBase& CB, AllocaInst& alloc) const {
+  static std::size_t next_id = 0u;
+  std::string id = std::to_string(next_id++);
   auto oldAllocTy = alloc.getAllocatedType();
   size_t old_size = 0ul;
+  AllocaInst* newAlloc = nullptr;
   if (auto arrTy = dyn_cast<ArrayType>(oldAllocTy)) { // case: alloc array type
     old_size = arrTy->getNumElements();
+    newAlloc = new AllocaInst(
+                          ArrayType::get(PtrTy,old_size),
+                          0u,
+                          ConstantInt::get(u32Ty, APInt(32u, 1u)),
+                          Twine("scabbard.instr.kl.paramArrayAlloc.") + id,
+                          &alloc
+                        );
   } else if (auto C = dyn_cast<ConstantInt>(alloc.getArraySize())) { // case: built in alloc array concept
     old_size = C->getSExtValue();
+    newAlloc = new AllocaInst(
+                          PtrTy,
+                          0u,
+                          ConstantInt::get(u32Ty, APInt(32u, old_size+1u)),
+                          Twine("scabbard.instr.kl.paramArrayAlloc.") + id,
+                          &alloc
+                        );
   } else {  // case: unknown size 
     LLVM_DEBUG(errs() << "\n[scabbard.instr.host.amdhip:ERROR] could not determine size of alloc instr!\n";);
     old_size = 1;
   }
   auto PtrTy = PointerType::get(alloc.getContext(),0ul);
   // auto newAllocTy = ArrayType::get(PtrTy, old_size+1);
-  auto newAlloc = new AllocaInst(
-                          PtrTy,
-                          0u,
-                          ConstantInt::get(u32Ty, APInt(32u, old_size+1)),
-                          Twine("scabbard.instrParamAlloc.") + alloc.getName(),
-                          &alloc
-                        );
+  newAlloc->setAlignment(alloc.getAlign());
   setDebugLoc(newAlloc,alloc); //might cause issues after alloc is deleted
-  auto memLoc = GetElementPtrInst::Create(
-                    PtrTy,
-                    newAlloc, 
-                    std::array<Value*,1>{ConstantInt::get(u64Ty, APInt(64u, 0u))}
-                  );
-  memLoc->insertAfter(newAlloc);
-  setDebugLoc(memLoc,alloc); //might cause issues after alloc is deleted
-  alloc.replaceAllUsesWith(memLoc); //DBG: does not seem to be working
+  alloc.replaceAllUsesWith(newAlloc); //DBG: does not seem to be working
   alloc.eraseFromParent();
-  return GetElementPtrInst::Create(
-            PtrTy,
-            newAlloc, 
-            std::array<Value*,1>{ConstantInt::get(u64Ty, APInt(64u, old_size))}
+  auto DTAlloc = new AllocaInst(
+            u64Ty, 0u, ConstantInt::get(u32Ty, APInt(32u, 1u)),
+            "scabbard.instr.kl.DTAlloc."+id,
+            newAlloc
           );
+  setDebugLoc(DTAlloc, CB);
+  auto DTParamPtr = GetElementPtrInst::CreateInBounds(
+            u8Ty,
+            newAlloc, 
+            std::array<Value*,1>{ConstantInt::get(u64Ty, APInt(64u, old_size*8u))},
+            "scabbard.instr.kl.DTParamPtr."+id
+          );
+  setDebugLoc(DTParamPtr, CB);
+  DTParamPtr->insertAfter(newAlloc);
+  auto DTAllocStore = new StoreInst(DTAlloc, DTParamPtr, DTParamPtr->getNextNonDebugInstruction());
+  setDebugLoc(DTAllocStore, CB);
+  return DTAlloc;
 }
 
-GetElementPtrInst* ScabbardHostPassHip::create_or_expand_param_args_alloc(Value* ARG) const {
-  GetElementPtrInst* paramPtr = nullptr;
+AllocaInst* ScabbardHostPassHip::create_or_expand_param_args_alloc(const CallBase& CB, Value* ARG) const {
+  AllocaInst* dtAlloc = nullptr;
   if (auto argElmPtr = dyn_cast<GetElementPtrInst>(ARG)) { // case: >=2 function parameter length
     if (auto argAlloc = dyn_cast<AllocaInst>(argElmPtr->getPointerOperand())) {
-      paramPtr = expand_param_args_alloc(*argAlloc);
-      if (paramPtr != nullptr)
-        argElmPtr->replaceAllUsesWith(paramPtr);
+      dtAlloc = expand_param_args_alloc(CB, *argAlloc);
     } else {
       errs() << "\n[scabbard.instr.host.amdhip:ERROR] kernel launch user args could not be traced to param args construct allocation\n";
     }
   } else if (auto argAlloc = dyn_cast<AllocaInst>(ARG)) { // case: single or zero function parameter length
-    paramPtr = expand_param_args_alloc(*argAlloc);
+    dtAlloc = expand_param_args_alloc(CB, *argAlloc);
   } else {
     errs() << "\n[scabbard.instr.host.amdhip:DBG] kernel launch user args are not loaded from local frame\n```\n";
     ARG->print(errs());
     errs() << "\n```\n\n";
   }
-  if (paramPtr == nullptr) {
+  if (dtAlloc == nullptr) {
     errs() << "\n[scabbard.instr.host.amdhip:ERROR] could not instrument kernel call (instrumentation failed)\n";
   }
-  return paramPtr;
+  return dtAlloc;
 }
 
 
-bool ScabbardHostPassHip::APIInstr_LaunchKernel(CallInst& CI) {
+bool ScabbardHostPassHip::APIInstr_LaunchKernel(CallBase& CB) {
   // instrument in `scabbard.trace.register_job` before this function and instrument in `scabbard.trace.register_job_callback` after this function call
   auto regFn = CallInst::Create(
       ScabbardRTL.register_job.getFunctionType(),
       ScabbardRTL.register_job.getCallee(),
-      std::array<Value*,1ull>{CI.getArgOperand(7ull)}
+      std::array<Value*,1ull>{CB.getArgOperand(7ull)}
     );
-  regFn->insertBefore(&CI);
-  setDebugLoc(regFn,CI); //might cause issues if in a device stub
-  auto [locID, is_inserted] = ScabbardRTL.Metadata.insert(&CI);
+  regFn->insertBefore(&CB);
+  setDebugLoc(regFn,CB); //might cause issues if in a device stub
+  auto [locID, is_inserted] = ScabbardRTL.Metadata.insert(&CB);
   if (not is_inserted && locID == 0ull)
     errs() << "\n[scabbard.instr.host.metadata.amdhip:WARN] Failed to insert instruction into the metadata system!"
               "\n[scabbard.instr.host.metadata.amdhip:WARN]   -> make sure debug info is turned on (`-g`)\n";
@@ -1962,217 +1999,240 @@ bool ScabbardHostPassHip::APIInstr_LaunchKernel(CallInst& CI) {
       ScabbardRTL.register_job_callback.getCallee(),
       std::array<Value*,3ull>{
           regFn,
-          CI.getArgOperand(7ull),
+          CB.getArgOperand(7ull),
           locID,
         }
     );
-  regCbFn->insertAfter(&CI);
-  setDebugLoc(regCbFn,CI); //might cause issues if in a device stub
+  insertHandlingInvokes(regCbFn,CB);
+  setDebugLoc(regCbFn,CB); //might cause issues if in a device stub
   //TODO? modify the type of the last operand (should be a global or function pass)
   // trace back args var and expand it to include the pointer to the DeviceTracker that is returned as the result of `scabbard.trace.register_job` as the last parameter
-  GetElementPtrInst* paramPtr = create_or_expand_param_args_alloc(CI.getArgOperand(5ull));
-  auto dtAlloc = new AllocaInst(PtrTy, 0u, "dtPtr", regFn);
-  setDebugLoc(dtAlloc,CI); //might cause issues if in a device stub
-  paramPtr->insertAfter(regFn);
-  setDebugLoc(paramPtr,CI); //might cause issues if in a device stub
-  auto dtStore = new StoreInst(regFn, dtAlloc, paramPtr);
-  setDebugLoc(dtStore,CI); //might cause issues if in a device stub
-  auto dtParamStore = new StoreInst(dtAlloc, paramPtr, &CI);
-  setDebugLoc(dtParamStore,CI); //might cause issues if in a device stub
+  AllocaInst* dtAlloc = create_or_expand_param_args_alloc(CB, CB.getArgOperand(5ull)->stripPointerCasts());
+  auto dtStore = new StoreInst(regFn, dtAlloc, &CB);
+  setDebugLoc(dtStore,CB); //might cause issues if in a device stub
+  // auto dtParamStore = new StoreInst(dtAlloc, dtAlloc, &CB);
+  // setDebugLoc(dtParamStore,CB); //might cause issues if in a device stub
   return true;
 }
 
-Constant* ScabbardHostPassHip::getBestLocIDForUserCallback(CallInst& RegisterCallbackCI) {
-  if (const auto* UsrFn = dyn_cast<Function>(RegisterCallbackCI.getArgOperand(1u))) {
+Constant* ScabbardHostPassHip::getBestLocIDForUserCallback(CallBase& CB) {
+  if (const auto* UsrFn = dyn_cast<Function>(CB.getArgOperand(1u))) {
     for (auto& i : instructions(*UsrFn))
       if (i.getDebugLoc())
         return ScabbardRTL.Metadata.insert(&i).first;
   }
-  return ScabbardRTL.Metadata.insert(&RegisterCallbackCI).first;
+  return ScabbardRTL.Metadata.insert(&CB).first;
 }
 
-bool ScabbardHostPassHip::APIInstr_HostCallback(CallInst& CI) {
-  auto regUsrCallbackCI = CallInst::Create(
-          ScabbardRTL.register_user_callback.getFunctionType(),
-          ScabbardRTL.register_user_callback.getCallee(),
-          std::array<Value*,5u>{CI.getArgOperand(0u), CI.getArgOperand(1u), 
-                                CI.getArgOperand(2u), CI.getArgOperand(3u),
-                                getBestLocIDForUserCallback(CI)},
-          Twine("scabbard.instr.usrcallbackdata.0")+CI.getName(),
-          &CI
-        );
-  CI.replaceAllUsesWith(regUsrCallbackCI);
-  CI.eraseFromParent();
+bool ScabbardHostPassHip::APIInstr_HostCallback(CallBase& CB) {
+  CallBase* cb = nullptr;
+  if (auto _II = dyn_cast<InvokeInst>(&CB)) {
+    cb = InvokeInst::Create(
+            ScabbardRTL.register_user_callback,
+            _II->getNormalDest(), _II->getUnwindDest(),
+            std::array<Value*,5u>{CB.getArgOperand(0u), CB.getArgOperand(1u), 
+                                  CB.getArgOperand(2u), CB.getArgOperand(3u),
+                                  getBestLocIDForUserCallback(CB)},
+            Twine("scabbard.instr.usrcallbackdata.0")+CB.getName(),
+            &CB
+          );
+  } else
+    cb = CallInst::Create(
+            ScabbardRTL.register_user_callback.getFunctionType(),
+            ScabbardRTL.register_user_callback.getCallee(),
+            std::array<Value*,5u>{CB.getArgOperand(0u), CB.getArgOperand(1u), 
+                                  CB.getArgOperand(2u), CB.getArgOperand(3u),
+                                  getBestLocIDForUserCallback(CB)},
+            Twine("scabbard.instr.usrcallbackdata.0")+CB.getName(),
+            &CB
+          );
+  CB.replaceAllUsesWith(cb);
+  setDebugLoc(cb,CB);
+  CB.eraseFromParent();
   return true;
 }
 
-bool ScabbardHostPassHip::APIInstr_HostFnLaunch(CallInst& CI) {
-  auto regUsrCallbackCI = CallInst::Create(
-          ScabbardRTL.register_user_hostFn_launch.getFunctionType(),
-          ScabbardRTL.register_user_hostFn_launch.getCallee(),
-          std::array<Value*,4u>{CI.getArgOperand(0u),
-                                CI.getArgOperand(1u), 
-                                CI.getArgOperand(2u),
-                                getBestLocIDForUserCallback(CI)},
-          Twine("scabbard.instr.usrHostFnLaunch.0")+CI.getName(),
-          &CI
-        );
-  CI.replaceAllUsesWith(regUsrCallbackCI);
-  CI.eraseFromParent();
+bool ScabbardHostPassHip::APIInstr_HostFnLaunch(CallBase& CB) {
+  CallBase* cb = nullptr;
+  if (auto _II = dyn_cast<InvokeInst>(&CB)) {
+    cb = InvokeInst::Create(
+            ScabbardRTL.register_user_hostFn_launch,
+            _II->getNormalDest(), _II->getUnwindDest(),
+            std::array<Value*,4u>{CB.getArgOperand(0u),
+                                  CB.getArgOperand(1u), 
+                                  CB.getArgOperand(2u),
+                                  getBestLocIDForUserCallback(CB)},
+            Twine("scabbard.instr.usrHostFnLaunch.0")+CB.getName(),
+            &CB
+          );
+  } else
+    cb = CallInst::Create(
+            ScabbardRTL.register_user_hostFn_launch.getFunctionType(),
+            ScabbardRTL.register_user_hostFn_launch.getCallee(),
+            std::array<Value*,4u>{CB.getArgOperand(0u),
+                                  CB.getArgOperand(1u), 
+                                  CB.getArgOperand(2u),
+                                  getBestLocIDForUserCallback(CB)},
+            Twine("scabbard.instr.usrHostFnLaunch.0")+CB.getName(),
+            &CB
+          );
+  CB.replaceAllUsesWith(cb);
+  setDebugLoc(cb,CB);
+  CB.eraseFromParent();
   return true;
 }
 
 
-bool ScabbardHostPassHip::APIInstr_Unsupported(const CallInst& CI, const StringRef APIName) const {
+bool ScabbardHostPassHip::APIInstr_Unsupported(const CallInst& CB, const StringRef APIName) const {
   errs() << "\n[scabbard.instr.host.amdhip:WARN] WARNING: Scabbard does not support the following HIP API: `" 
          << APIName << "`"
             "\n[scabbard.instr.host.amdhip:WARN]          -> Scabbard's Results may be invalid! "
             "\n[scabbard.instr.host.amdhip:WARN]  SrcLoc: "
-         << IScabbardHostPass::getLocStr(CI) << "\n";
+         << IScabbardHostPass::getLocStr(CB) << "\n";
   return false;
 }
 
 
 
-void ScabbardHostPassHip::registerAPIInstrumenters() {
+void ScabbardHostPassHip::registerAPIInstrumenters() { //TODO: change CallInst to CallBase and handle invoke paths
   // APIInstrumenters = /* (std::vector<std::pair<const std::string,APIInstrumenterFn_t>>) */{
   APIInstrumenters = {
     {
       "hipStreamSynchronize",
-      [this](CallInst& CI, FunctionAnalysisManager& FAM) -> bool {
-        return CreateRTLCall(CI, InstrData::SYNC_EVENT, 
-                             CI.getArgOperand(0ull), false) ? true : false;
+      [this](CallBase& CB, FunctionAnalysisManager& FAM) -> bool {
+        return CreateRTLCall(CB, InstrData::SYNC_EVENT, 
+                             CB.getArgOperand(0ull), false) ? true : false;
       }
     },
     {
       "hipDeviceSynchronize", 
-      [this](CallInst& CI, FunctionAnalysisManager& FAM) -> bool { 
-        return CreateRTLCall(CI, InstrData::SYNC_EVENT,
+      [this](CallBase& CB, FunctionAnalysisManager& FAM) -> bool { 
+        return CreateRTLCall(CB, InstrData::SYNC_EVENT,
                              ConstantPointerNull::get(PtrTy), false) ? true : false;
       }
     },
     {
       "hipMalloc", 
-      [this](CallInst& CI, FunctionAnalysisManager& FAM) -> bool { return APIInstr_Alloc(CI,ALLOCATE|DEVICE_HEAP); }
+      [this](CallBase& CB, FunctionAnalysisManager& FAM) -> bool { return APIInstr_Alloc(CB,ALLOCATE|DEVICE_HEAP); }
     },
     {
       "hipExtMallocWithFlags", 
-      [this](CallInst& CI, FunctionAnalysisManager& FAM) -> bool { return APIInstr_Alloc(CI,ALLOCATE|DEVICE_HEAP); }
+      [this](CallBase& CB, FunctionAnalysisManager& FAM) -> bool { return APIInstr_Alloc(CB,ALLOCATE|DEVICE_HEAP); }
     },
     {
       "hipHostAlloc", 
-      [this](CallInst& CI, FunctionAnalysisManager& FAM) -> bool { return APIInstr_Alloc(CI,ALLOCATE|HOST_HEAP); }
+      [this](CallBase& CB, FunctionAnalysisManager& FAM) -> bool { return APIInstr_Alloc(CB,ALLOCATE|HOST_HEAP); }
     },
     {
       "hipHostMalloc", 
-      [this](CallInst& CI, FunctionAnalysisManager& FAM) -> bool { return APIInstr_Alloc(CI,ALLOCATE|HOST_HEAP); }
+      [this](CallBase& CB, FunctionAnalysisManager& FAM) -> bool { return APIInstr_Alloc(CB,ALLOCATE|HOST_HEAP); }
     },
     {
       "hipMallocManaged", 
-      [this](CallInst& CI, FunctionAnalysisManager& FAM) -> bool { return APIInstr_Alloc(CI,ALLOCATE|MANAGED_MEM); }
+      [this](CallBase& CB, FunctionAnalysisManager& FAM) -> bool { return APIInstr_Alloc(CB,ALLOCATE|MANAGED_MEM); }
     },
     {
       "hipHostRegister", 
-      [this](CallInst& CI, FunctionAnalysisManager& FAM) -> bool {
-        return CreateRTLCallEx(CI, InstrData::ALLOCATE | InstrData::HOST_HEAP,
-                              CI.getArgOperand(0ull), CI.getArgOperand(1ull), false) ? true : false;
+      [this](CallBase& CB, FunctionAnalysisManager& FAM) -> bool {
+        return CreateRTLCallEx(CB, InstrData::ALLOCATE | InstrData::HOST_HEAP,
+                              CB.getArgOperand(0ull), CB.getArgOperand(1ull), false) ? true : false;
       }
     },
     {
       "hipFree",
-      [this](CallInst& CI, FunctionAnalysisManager& FAM) -> bool {
-        return CreateRTLCall(CI, InstrData::FREE_EVENT | InstrData::UNKNOWN_HEAP,
-                              CI.getArgOperand(0ull), true) ? true : false;
+      [this](CallBase& CB, FunctionAnalysisManager& FAM) -> bool {
+        return CreateRTLCall(CB, InstrData::FREE_EVENT | InstrData::UNKNOWN_HEAP,
+                              CB.getArgOperand(0ull), true) ? true : false;
       }
     },
     {
       "hipFreeHost",
-      [this](CallInst& CI, FunctionAnalysisManager& FAM) -> bool {
-        return CreateRTLCall(CI, InstrData::FREE_EVENT | InstrData::HOST_HEAP,
-                              CI.getArgOperand(0ull), true) ? true : false;
+      [this](CallBase& CB, FunctionAnalysisManager& FAM) -> bool {
+        return CreateRTLCall(CB, InstrData::FREE_EVENT | InstrData::HOST_HEAP,
+                              CB.getArgOperand(0ull), true) ? true : false;
       }
     },
     {
       "hipMemcpy",
-      [this](CallInst& CI, FunctionAnalysisManager& FAM) -> bool {
-        if (auto* CpyDir = dyn_cast<ConstantInt>(CI.getArgOperand(3ull))) {
-          return APIInstr_Memcpy(CI, FAM, CpyDir->getSExtValue()); 
+      [this](CallBase& CB, FunctionAnalysisManager& FAM) -> bool {
+        if (auto* CpyDir = dyn_cast<ConstantInt>(CB.getArgOperand(3ull))) {
+          return APIInstr_Memcpy(CB, FAM, CpyDir->getSExtValue()); 
         }
         errs() << "\n[scabbard.instr.host.amdhip:WARN] hipMemcpyKind was not a const value"
                   " --unsupported by scabbard-- ("
-               << IScabbardHostPass::getLocStr(CI.getArgOperand(3ull)) << ")\n";
+               << IScabbardHostPass::getLocStr(CB.getArgOperand(3ull)) << ")\n";
         return false;
       }
     },
     {
       "hipMemcpyWithStream",
-      [this](CallInst& CI, FunctionAnalysisManager& FAM) -> bool {
-        if (auto* CpyDir = dyn_cast<ConstantInt>(CI.getArgOperand(3ull))) {
-          return APIInstr_Memcpy(CI, FAM, CpyDir->getSExtValue(), CI.getArgOperand(4ull)); 
+      [this](CallBase& CB, FunctionAnalysisManager& FAM) -> bool {
+        if (auto* CpyDir = dyn_cast<ConstantInt>(CB.getArgOperand(3ull))) {
+          return APIInstr_Memcpy(CB, FAM, CpyDir->getSExtValue(), CB.getArgOperand(4ull)); 
         }
         errs() << "\n[scabbard.instr.host.amdhip:WARN] hipMemcpyKind was not a const value"
                   " --unsupported by scabbard-- ("
-               << IScabbardHostPass::getLocStr(CI.getArgOperand(3ull)) << ")\n";
+               << IScabbardHostPass::getLocStr(CB.getArgOperand(3ull)) << ")\n";
         return false;
       }
     },
     {
       "hipMemcpyHtoD",
-      [this](CallInst& CI, FunctionAnalysisManager& FAM) -> bool { return APIInstr_Memcpy(CI,FAM,1u); }
+      [this](CallBase& CB, FunctionAnalysisManager& FAM) -> bool { return APIInstr_Memcpy(CB,FAM,1u); }
     },
     {
       "hipMemcpyDtoH",
-      [this](CallInst& CI, FunctionAnalysisManager& FAM) -> bool { return APIInstr_Memcpy(CI,FAM,2u); }
+      [this](CallBase& CB, FunctionAnalysisManager& FAM) -> bool { return APIInstr_Memcpy(CB,FAM,2u); }
     },
     {
       "hipMemcpyDtoD",
-      [this](CallInst& CI, FunctionAnalysisManager& FAM) -> bool { return APIInstr_Memcpy(CI,FAM,3u); }
+      [this](CallBase& CB, FunctionAnalysisManager& FAM) -> bool { return APIInstr_Memcpy(CB,FAM,3u); }
     },
     {
       "hipMemcpyAsync",
-      [this](CallInst& CI, FunctionAnalysisManager& FAM) -> bool {
-        if (auto* CpyDir = dyn_cast<ConstantInt>(CI.getArgOperand(3ull))) {
-          return APIInstr_Memcpy(CI,FAM, CpyDir->getSExtValue(), CI.getArgOperand(4ull), true);
+      [this](CallBase& CB, FunctionAnalysisManager& FAM) -> bool {
+        if (auto* CpyDir = dyn_cast<ConstantInt>(CB.getArgOperand(3ull))) {
+          return APIInstr_Memcpy(CB,FAM, CpyDir->getSExtValue(), CB.getArgOperand(4ull), true);
         }
         errs() << "\n[scabbard.instr.host.amdhip:WARN] hipMemcpyKind was not a const value"
                   " --unsupported by scabbard-- ("
-               << IScabbardHostPass::getLocStr(CI.getArgOperand(3ull)) << ")\n";
+               << IScabbardHostPass::getLocStr(CB.getArgOperand(3ull)) << ")\n";
         return false;
       }
     },
     {
       "hipMemcpyHtoDAsync",
-      [this](CallInst& CI, FunctionAnalysisManager& FAM) -> bool { 
-        return APIInstr_Memcpy(CI,FAM,1u,CI.getArgOperand(3ull),true); 
+      [this](CallBase& CB, FunctionAnalysisManager& FAM) -> bool { 
+        return APIInstr_Memcpy(CB,FAM,1u,CB.getArgOperand(3ull),true); 
       }
     },
     {
       "hipMemcpyDtoHAsync",
-      [this](CallInst& CI, FunctionAnalysisManager& FAM) -> bool { 
-        return APIInstr_Memcpy(CI,FAM,2u,CI.getArgOperand(3ull),true); 
+      [this](CallBase& CB, FunctionAnalysisManager& FAM) -> bool { 
+        return APIInstr_Memcpy(CB,FAM,2u,CB.getArgOperand(3ull),true); 
       }
     },
     {
       "hipMemcpyDtoDAsync",
-      [this](CallInst& CI, FunctionAnalysisManager& FAM) -> bool { 
-        return APIInstr_Memcpy(CI,FAM,3u,CI.getArgOperand(3ull),true); 
+      [this](CallBase& CB, FunctionAnalysisManager& FAM) -> bool { 
+        return APIInstr_Memcpy(CB,FAM,3u,CB.getArgOperand(3ull),true); 
       }
     },
     {
       "hipLaunchKernel",
-      [this](CallInst& CI, FunctionAnalysisManager& FAM) -> bool { return APIInstr_LaunchKernel(CI); }
+      [this](CallBase& CB, FunctionAnalysisManager& FAM) -> bool { return APIInstr_LaunchKernel(CB); }
     },
     {
       "hipExtLaunchKernel",
-      [this](CallInst& CI, FunctionAnalysisManager& FAM) -> bool { return APIInstr_LaunchKernel(CI); }
+      [this](CallBase& CB, FunctionAnalysisManager& FAM) -> bool { return APIInstr_LaunchKernel(CB); }
     },
     {
       "hipStreamAddCallback",
-      [this](CallInst& CI, FunctionAnalysisManager& FAM) -> bool { return APIInstr_HostCallback(CI); }
+      [this](CallBase& CB, FunctionAnalysisManager& FAM) -> bool { return APIInstr_HostCallback(CB); }
     },
     {
       "hipLaunchHostFunc",
-      [this](CallInst& CI, FunctionAnalysisManager& FAM) -> bool { return APIInstr_HostFnLaunch(CI); }
+      [this](CallBase& CB, FunctionAnalysisManager& FAM) -> bool { return APIInstr_HostFnLaunch(CB); }
     }
   };
   // APIInstrumenters = _APIInstrumenters;
@@ -2186,8 +2246,8 @@ void IScabbardDevicePass::registerRTL(Module& M) {
       ScabbardRTL.trace_append_name,
       FunctionType::get(
           VoidTy,
-          std::array<Type*,4ull>{
-              PtrTy,
+          std::array<Type*,4u>{
+              u64Ty,
               TraceDataTy,
               PtrTy,
               LocDataTy
@@ -2199,13 +2259,21 @@ void IScabbardDevicePass::registerRTL(Module& M) {
       ScabbardRTL.trace_append$ext_name,
       FunctionType::get(
           VoidTy,
-          std::array<Type*,5ull>{
-              PtrTy,
+          std::array<Type*,5u>{
+              u64Ty,
               TraceDataTy,
               PtrTy,
               LocDataTy,
               ExtraDataTy
             },
+          false
+        )
+    );
+  ScabbardRTL.dbg_print_ull = M.getOrInsertFunction(
+      ScabbardRTL.dbg_print_ull_name,
+      FunctionType::get(
+          VoidTy,
+          std::array<Type*,1u>{u64Ty},
           false
         )
     );
@@ -2301,6 +2369,9 @@ bool IScabbardDevicePass::runImpl(Function& F, FunctionAnalysisManager& FAM) {
 
   // changed |= instrumentReturns(LI, Allocas, Returns);
 
+  //setDebugLoc(CallInst::Create(ScabbardRTL.dbg_print_ull,std::array<Value*,1u>{F.getArg(F.arg_size()-1u)},"",F.getEntryBlock().getFirstNonPHIOrDbgOrLifetime()),F.getEntryBlock().getFirstNonPHIOrDbgOrLifetime()); //DEBUG
+
+
   return changed;
 }
 
@@ -2318,7 +2389,7 @@ inline bool IScabbardDevicePass::expandFnParams(Module& M) const {
     OldFn->setName(old_name + "__old__scabbard_instr_replaced__old__");
     auto oldParamTys = OldFn->getFunctionType()->params();
     std::vector<Type*> paramTys(oldParamTys.begin(), oldParamTys.end());
-    paramTys.push_back((Type*)PtrTy);
+    paramTys.push_back((Type*)u64Ty); //PtrDGTy);
     auto fn_callee =
         M.getOrInsertFunction(old_name,
                               FunctionType::get(OldFn->getFunctionType()->getReturnType(), ArrayRef<Type*>(paramTys),
@@ -2497,6 +2568,11 @@ IScabbardDevicePass::PtrOrigin IScabbardDevicePass::getPtrOrigin(LoopInfo& LI, V
 bool IScabbardDevicePass::instrumentInScabbardFunc(LoopInfo& LI, Instruction& I, Value* Ptr, 
                                                    FunctionCallee& ScabbardFn, const InstrData InstrContext) {
     Value* PtrOp = Ptr;
+    PointerType* ptrTy = cast<PointerType>(Ptr->getType());
+    std::uint32_t ptrTyAddrSp = ptrTy->getAddressSpace();
+    if (not (ptrTyAddrSp <= 1u        //PTR in: Generic (0), Global (1)
+              || ptrTyAddrSp == 4u))  //        OR Constant (4) address-space to even be considered
+      return false;                   //        these are the addresspaces that can be in unified memory
     const Value *Object = nullptr;
     PtrOrigin PO = getPtrOrigin(LI, PtrOp, &Object);
 
@@ -2511,11 +2587,10 @@ bool IScabbardDevicePass::instrumentInScabbardFunc(LoopInfo& LI, Instruction& I,
     // if Ptr is not in the expected address space (0: global) we will need to cast it's Addrspace first.
     //    This is only a LLVM formality and does not cost any compute at runtime.
     llvm::CastInst* castInst = nullptr;
-    if (auto ptrTy = dyn_cast<llvm::PointerType>(Ptr->getType()))
-      if (ptrTy->getAddressSpace() != 0u) //NOTE: hard coding this might be an issue
-        castInst = AddrSpaceCastInst::Create(llvm::Instruction::CastOps::AddrSpaceCast, Ptr, 
-                                              ScabbardFn.getFunctionType()->getParamType(2u),
-                                            "scabbard.addrCast." + I.getName(),  /* insertBefore= */ &I);
+    if (ptrTyAddrSp != 0u) //NOTE: hard coding this might be an issue
+      castInst = AddrSpaceCastInst::Create(llvm::Instruction::CastOps::AddrSpaceCast, Ptr, 
+                                            ScabbardFn.getFunctionType()->getParamType(2u),
+                                          "scabbard.addrCast." + I.getName(),  /* insertBefore= */ &I);
 
     Function& fn = *I.getFunction();
     Value* kernelDeviceTracker = fn.getArg(fn.arg_size() - 1ul);
@@ -2563,15 +2638,15 @@ Constant* MetadataHandler::getGEP(GlobalVariable* GV, size_t Index) const {
 //   return Constant::getIntegerValue(Type::getInt64Ty(I->getContext()), APInt(res.first->second, 64ul));
 // }
 void x64(const std::string& input, char* output) {
-  const char C_SAFE_BASE64_MAP[65u] = 
+  const char C_SAFE_BASE64_MAP[66u] = 
       "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
       "abcdefghijklmnopqrstuvwxyz"
-      "0123456789__";
+      "0123456789$__";
   std::uint64_t value = std::hash<std::string>{}(input);
   for (std::size_t i = 0u; i < 11u; i++) {
     // Extract 6 bits at a time starting from the least significant bits
     uint8_t index = (uint8_t)(value & 0x3Fu);
-    output[11u - i] = C_SAFE_BASE64_MAP[index];
+    output[10u - i] = C_SAFE_BASE64_MAP[index];
     value >>= 6u;
   }
   output[12u] = '\0';
@@ -2591,7 +2666,7 @@ GlobalVariable* MetadataHandler::initializeMetadata(Module& M, unsigned AddrSpac
 }
 
 void MetadataHandler::finalize(Module& M) {
-  char _srcHash64[16u];
+  char _srcHash64[16u] = "\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0";
   x64(M.getSourceFileName(),_srcHash64);
   std::string srcHash64(_srcHash64);
   SmallVector<Constant*, 16ul> Contents(Instructions.size());
