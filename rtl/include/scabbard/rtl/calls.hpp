@@ -69,6 +69,9 @@ namespace scabbard {
       __host__ 
       void trace_append$alloc$cond(const InstrData data, const void*const PTR, const void* const SRC_ID, const std::size_t SIZE) 
         asm (SCABBARD_HOST_CALLBACK_APPEND_EXT_COND_NAME);
+      __host__
+      void dbg_print(std::uint64_t value) 
+        asm (SCABBARD_HOST_DEBUG_PRINT_ULL_NAME);
       
     } // namespace host
 
@@ -83,7 +86,16 @@ namespace scabbard {
      */
     __host__
     std::uintptr_t job(hipStream_t STREAM)
-      asm (SCABBARD_CALLBACK_REGISTER_JOB);
+      asm (SCABBARD_CALLBACK_REGISTER_JOB_NAME);
+
+    /**
+     * @brief during runtime this call gets instrumented befor a kernel launch function
+     *        it returns a pointer to a scabbard::rtl::DeviceTracker object in device memory.
+     *        That will be passed into the kernel and through all user defined kernel functions.
+     */
+    __host__
+    std::uintptr_t job_stub(hipStream_t STREAM, std::uintptr_t*const dt)
+      asm (SCABBARD_CALLBACK_REGISTER_JOB_IN_STUB_NAME);
     
     
     /**
@@ -93,7 +105,7 @@ namespace scabbard {
      */
     __host__
     void job_callback(void* dt, hipStream_t stream, const void*const SRC_ID)
-      asm (SCABBARD_CALLBACK_REGISTER_JOB_CALLBACK);
+      asm (SCABBARD_CALLBACK_REGISTER_JOB_CALLBACK_NAME);
 
     /**
      * @brief Register a user defined job stream callback with the rtl
@@ -102,7 +114,7 @@ namespace scabbard {
     __host__
     hipError_t user_callback(hipStream_t stream, const hipStreamCallback_t usrCallbackFn, void*const usrData,  
                                       unsigned int flags, const void*const SRC_ID)
-      asm (SCABBARD_CALLBACK_REGISTER_USER_CALLBACK);
+      asm (SCABBARD_CALLBACK_REGISTER_USER_CALLBACK_NAME);
     
       /**
      * @brief Register a user defined job stream callback with the rtl
@@ -111,7 +123,7 @@ namespace scabbard {
     __host__
     hipError_t user_hostFn_launch(hipStream_t stream, const hipHostFn_t usrCallbackFn, 
                                         void*const usrData, const void*const SRC_ID)
-      asm (SCABBARD_CALLBACK_REGISTER_USER_HOST_FN_LAUNCH);
+      asm (SCABBARD_CALLBACK_REGISTER_USER_HOST_FN_LAUNCH_NAME);
 
     } //?namespace reg
 

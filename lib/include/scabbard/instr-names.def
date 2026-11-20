@@ -18,10 +18,11 @@
 #define SCABBARD_CALLBACK_INIT_NAME "scabbard.rtl.scabbard_init"
 #define SCABBARD_CALLBACK_CLOSE_NAME "scabbard.rtl.scabbard_close"
 
-#define SCABBARD_CALLBACK_REGISTER_JOB "scabbard.rtl.register.job"
-#define SCABBARD_CALLBACK_REGISTER_JOB_CALLBACK "scabbard.rtl.register.job_callback"
-#define SCABBARD_CALLBACK_REGISTER_USER_CALLBACK "scabbard.rtl.register.user_callback"
-#define SCABBARD_CALLBACK_REGISTER_USER_HOST_FN_LAUNCH "scabbard.rtl.register.user_hostFn_launch"
+#define SCABBARD_CALLBACK_REGISTER_JOB_NAME "scabbard.rtl.register.job"
+#define SCABBARD_CALLBACK_REGISTER_JOB_IN_STUB_NAME "scabbard.rtl.register.job_stub"
+#define SCABBARD_CALLBACK_REGISTER_JOB_CALLBACK_NAME "scabbard.rtl.register.job_callback"
+#define SCABBARD_CALLBACK_REGISTER_USER_CALLBACK_NAME "scabbard.rtl.register.user_callback"
+#define SCABBARD_CALLBACK_REGISTER_USER_HOST_FN_LAUNCH_NAME "scabbard.rtl.register.user_hostFn_launch"
 
 #define SCABBARD_DEVICE_CALLBACK_APPEND_NAME "scabbard.rtl.device.trace_append"
 #define SCABBARD_DEVICE_CALLBACK_APPEND_EXT_NAME "scabbard.rtl.device.trace_append$ext"
@@ -32,6 +33,7 @@
 #define SCABBARD_HOST_CALLBACK_APPEND_COND_NAME "scabbard.rtl.host.trace_append$cond"
 #define SCABBARD_HOST_CALLBACK_APPEND_EXT_NAME "scabbard.rtl.host.trace_append$ext"
 #define SCABBARD_HOST_CALLBACK_APPEND_EXT_COND_NAME "scabbard.rtl.host.trace_append$ext$cond"
+#define SCABBARD_HOST_DEBUG_PRINT_ULL_NAME "scabbard.rtl.host.dbg_print.ull"
 
 #define SCABBARD_DEVICE_DUMMY_FUNC_NAME "scabbard.rtl.device.dummyFunc"
 

@@ -277,8 +277,6 @@ protected:
   Type* const VoidTy = nullptr;
   /// @brief a handy pointer the oft used generic IR pointer type for this module.
   PointerType* const PtrTy = nullptr;
-  /// @brief a handy pointer the oft used generic IR pointer type for this module.
-  PointerType* const PtrDGTy = nullptr;
   /// @brief a handy pointer to the oft used IR Integer Type for the RTL's TraceData
   IntegerType* const TraceDataTy = nullptr;
   /// @brief a handy pointer to the oft used IR Integer Type for the RTL's source code location metadata ID
@@ -291,20 +289,21 @@ protected:
   IntegerType* const u32Ty = nullptr;
   /// @brief a handy pointer to the oft used IR Integer Type unsigned 8-bit.
   IntegerType* const u8Ty = nullptr;
+  Type* const DTTy = nullptr;
   StructType* const UserCallbackDataWrapperTy = nullptr;
 public:
   IRHelper() = delete;
   IRHelper(Module& M) :
     _M(M),
     VoidTy(Type::getVoidTy(M.getContext())),
-    PtrTy(PointerType::get(M.getContext(), 0ull)),
-    PtrDGTy(PointerType::get(M.getContext(), 1ull)),
+    PtrTy(PointerType::getUnqual(M.getContext())),
     TraceDataTy(IntegerType::get(M.getContext(), sizeof(InstrData)*8)),
     LocDataTy(PointerType::get(M.getContext(), 0ull)),
     ExtraDataTy(IntegerType::get(M.getContext(), 64u)),
     u64Ty(IntegerType::get(M.getContext(), 64u)),
     u32Ty(IntegerType::get(M.getContext(), 32u)),
     u8Ty(IntegerType::get(M.getContext(), 8u)),
+    DTTy(u64Ty),
     UserCallbackDataWrapperTy(StructType::create(M.getContext(),
           std::array<Type*,2u>{PtrTy, PtrTy},
           "scabbard.instr.userCallbackDataWrapperTy",
@@ -316,6 +315,9 @@ public:
   protected:
   void setDebugLoc(Instruction* i, const Instruction& I) const;
   void setDebugLoc(Instruction* i, const Instruction* I) const { setDebugLoc(i,*I); }
+  Function* cloneWithTrailingArg(Function &F, Type* T, const Twine& arg_name) const;
+  void insertHandlingInvokes(CallInst* ci, CallBase& CB, bool InsertBefore=false) const;
+  CallBase* addArgumentToCallBase(CallBase *CB, FunctionCallee Fn, Value *NewArg) const;
   // ConstantInt* getConstInt(const IntegerType* Ty, uint64_t val) const {
   //   return ConstantInt::get((Type*)Ty, APInt(val,Ty->getBitWidth()));
   // }
@@ -376,13 +378,17 @@ protected:
     llvm::FunctionCallee trace_append$ext$cond;
     const std::string trace_append$ext$cond_name = SCABBARD_HOST_CALLBACK_APPEND_EXT_COND_NAME;
     llvm::FunctionCallee register_job;
-    const std::string register_job_name = SCABBARD_CALLBACK_REGISTER_JOB;
+    const std::string register_job_name = SCABBARD_CALLBACK_REGISTER_JOB_NAME;
+    llvm::FunctionCallee register_job_stub;
+    const std::string register_job_stub_name = SCABBARD_CALLBACK_REGISTER_JOB_IN_STUB_NAME;
     llvm::FunctionCallee register_job_callback;
-    const std::string register_job_callback_name = SCABBARD_CALLBACK_REGISTER_JOB_CALLBACK;
+    const std::string register_job_callback_name = SCABBARD_CALLBACK_REGISTER_JOB_CALLBACK_NAME;
     llvm::FunctionCallee register_user_callback;
-    const std::string register_user_callback_name = SCABBARD_CALLBACK_REGISTER_USER_CALLBACK;
+    const std::string register_user_callback_name = SCABBARD_CALLBACK_REGISTER_USER_CALLBACK_NAME;
     llvm::FunctionCallee register_user_hostFn_launch;
-    const std::string register_user_hostFn_launch_name = SCABBARD_CALLBACK_REGISTER_USER_HOST_FN_LAUNCH;
+    const std::string register_user_hostFn_launch_name = SCABBARD_CALLBACK_REGISTER_USER_HOST_FN_LAUNCH_NAME;
+    llvm::FunctionCallee debug_print_ull;
+    const std::string debug_print_ull_name = SCABBARD_HOST_DEBUG_PRINT_ULL_NAME;
     MetadataHandler Metadata;
   } ScabbardRTL;
 
@@ -407,7 +413,7 @@ protected:
             && not F.isDeclaration()                        // exclude any functions not defined
             && not F.getName().starts_with("llvm.")         // exclude intrinsics
             && not F.getName().starts_with("scabbard.")     // exclude name mangled scabbard rtl functions
-            // && not F.getName().contains("__device_stub__")  // exclude device stubFn's from regular instruction instr
+            && not F.getName().contains("__device_stub__")  // exclude device stubFn's from regular instruction instr
             // any fn marked as not to be instrumented
             && not (F.hasFnAttribute(Attribute::AttrKind::DisableSanitizerInstrumentation)
                     || F.hasFnAttribute(Attribute::AttrKind::NoSanitizeCoverage))
@@ -626,15 +632,15 @@ public:
 
     // initialize metadata object and get a copy of the temp global variable for storing the metadata in.
     GlobalVariable* MetadataVar = ScabbardRTL.Metadata.initializeMetadata(M, 0ull, this);
-    
-    // run the actual implementation that might be modified in inherited classes
-    bool changed = runImpl(M, MAM);
 
 
     // notate all global variables that are known to be in Unified memory at some point (in this module/TU)
     registerGlobalVarsInUnifiedMemory(M);
     // add definitions for our RTL fn's
     registerRTL(M);
+
+    // run the actual implementation that might be modified in inherited classes
+    bool changed = runImpl(M, MAM);
 
     FunctionAnalysisManager& FAM = MAM.getResult<FunctionAnalysisManagerModuleProxy>(M)
                                       .getManager();
@@ -691,6 +697,7 @@ protected:
   Constant* getBestLocIDForUserCallback(CallBase& RegCallbackCI);
   bool APIInstr_HostCallback(CallBase& CB);
   bool APIInstr_HostFnLaunch(CallBase& CB);
+  bool runImpl(Module& M, ModuleAnalysisManager& MAM) override;
 public:
   ScabbardHostPassHip() = delete;
   ScabbardHostPassHip(Module& M_, const Triple& T_) :
@@ -1096,10 +1103,17 @@ class ScabbardAMDDevicePass final : public IScabbardDevicePass {
   const uint64_t SHARED_ADDRESS_SPACE = 3ul;
 
 public:
-  ScabbardAMDDevicePass(Module& M) : IScabbardDevicePass(M) {}
+  ScabbardAMDDevicePass(Module& M) 
+  : IScabbardDevicePass(M),
+    PtrDGTy(PointerType::get(M.getContext(), 1ull))
+  {}
   ScabbardAMDDevicePass() = delete;
 
 protected:
+
+  /// @brief the oft used generic IR pointer type in the Devices Global AddressSpace for this module.
+  PointerType* const PtrDGTy = nullptr;
+
   /// @brief Return if the address-space of a global variable is in the
   ///        address space specified by the device vendor as shared memory.
   /// @param G the global variable.
@@ -1218,6 +1232,118 @@ inline Twine IScabbardInstrPass::getLocStr(const Value* V) {
   return Twine(V->getName());
 }
 
+void IRHelper::setDebugLoc(Instruction* i, const Instruction& I) const {
+  if (I.getDebugLoc())
+    i->setDebugLoc(I.getDebugLoc());
+  else if (DISubprogram *SP = I.getFunction()->getSubprogram()) {
+    i->setDebugLoc(DILocation::get(I.getContext(), 0, 0, SP));
+  }
+}
+
+void IRHelper::insertHandlingInvokes(CallInst* ci, CallBase& CB, bool InsertBefore) const {
+  if (InsertBefore)
+    ci->insertBefore(&CB);
+  else if (InvokeInst* II = dyn_cast<InvokeInst>(&CB)) {
+    ci->insertBefore(II->getNormalDest()->getFirstNonPHI());
+  } else
+    ci->insertAfter(&CB);
+}
+
+Function* IRHelper::cloneWithTrailingArg(Function &F, Type* T, const Twine& ARG_NAME) const {
+  Module &M = *F.getParent();
+  FunctionType *OT = F.getFunctionType();
+  SmallVector<Type *> Ps(OT->param_begin(), OT->param_end());
+  Ps.push_back(T);
+  auto *NT = FunctionType::get(OT->getReturnType(), Ps, /*vararg*/false);
+
+  Function *NF = Function::Create(NT, F.getLinkage(), F.getAddressSpace(), "", &M);
+  NF->copyAttributesFrom(&F);          // CC (amdgpu_kernel), fn attrs, param attrs
+  NF->setComdat(F.getComdat());
+  SmallVector<std::pair<unsigned, MDNode *>> MDs;
+  F.getAllMetadata(MDs);               // !dbg subprogram etc.
+  for (auto &[K, N] : MDs) NF->addMetadata(K, *N);
+
+  NF->takeName(&F);                    // keep the SAME symbol name
+  NF->splice(NF->begin(), &F);         // move the body
+  for (auto OA = F.arg_begin(), NA = NF->arg_begin(); OA != F.arg_end(); ++OA, ++NA) {
+    NA->takeName(&*OA);
+    OA->replaceAllUsesWith(&*NA);
+  }
+  NF->getArg(NF->arg_size() - 1u)->setName(ARG_NAME);
+  return NF;                           // caller handles RAUW/erase
+}
+
+CallBase* IRHelper::addArgumentToCallBase(CallBase* CB, FunctionCallee Fn, Value* NewArg) const {
+    SmallVector<Value*> Args(CB->arg_begin(), CB->arg_end());
+    Args.push_back(NewArg);
+
+    CallBase* NewCB = nullptr;
+    if (auto II = dyn_cast<InvokeInst>(CB)) {
+      NewCB = InvokeInst::Create(Fn, II->getNormalDest(), II->getUnwindDest(), Args, CB->getName(), CB);
+    } else if (auto CI = dyn_cast<CallInst>(CB)) {
+      NewCB = CallInst::Create(Fn, Args, CB->getName(), CB);
+    }
+
+    NewCB->setCallingConv(CB->getCallingConv());
+    NewCB->setAttributes(CB->getAttributes());
+    NewCB->copyMetadata(*CB);
+
+    CB->replaceAllUsesWith(NewCB);
+    CB->eraseFromParent();
+
+    return NewCB;
+}
+
+bool ScabbardHostPassHip::runImpl(Module& M, ModuleAnalysisManager& MAM) {
+  SmallVector<std::pair<Function*,CallBase*>> Stubs;
+  Function* LaunchFn = M.getFunction("hipLaunchKernel");
+  for (auto U : LaunchFn->users())
+    if (auto* CB = dyn_cast<CallBase>(U)) {
+      if (CB->getCalledFunction() != LaunchFn) continue;
+      Function* F = CB->getFunction();
+      if (F->getName().contains("__device_stub__"))
+        Stubs.emplace_back(F,CB);
+    }
+
+
+  for (auto [Stub,Launch] : Stubs) {
+      Function* NS = cloneWithTrailingArg(*Stub, DTTy, "scabbard.rtl.dt");
+      
+      auto* BufSlot = create_or_expand_param_args_alloc(*Launch,Launch->getArgOperand(5u)->stripPointerCasts());
+
+      IRBuilder<> DTSB(BufSlot->getNextNode());
+      DTSB.CreateStore(NS->getArg(NS->arg_size() - 1u), BufSlot);
+
+      IRBuilder<> LB(Launch);
+      auto tmp = ScabbardRTL.register_job_stub.getFunctionType()->getReturnType();
+      auto* regCI = LB.CreateCall(ScabbardRTL.register_job_stub,{Launch->getArgOperand(7u),BufSlot});
+      auto [locID, isNew] = ScabbardRTL.Metadata.insert(Launch);
+      auto* cbCI = CallInst::Create(ScabbardRTL.register_job_callback,{regCI,Launch->getArgOperand(7u),locID});
+      insertHandlingInvokes(cbCI,*Launch);
+      setDebugLoc(cbCI,Launch);
+
+      // RAUW Stub -> erase
+      SmallVector<std::pair<CallBase*,Value*>> to_expand;
+      for (Use& U : Stub->uses()) 
+        if (auto *CB = dyn_cast<CallBase>(U.getUser())) {
+          if (CB->isCallee(&U))
+           to_expand.emplace_back(CB,NS);
+        } else if (auto* GA = dyn_cast<GlobalAlias>(U.getUser())) {
+          for (User* UR : GA->users())
+            if (auto *CB = dyn_cast<CallBase>(UR)) {
+              if (CB->isCallee(&U))
+                to_expand.emplace_back(CB,GA);
+            }
+        }
+      for (auto [CB, Fn] : to_expand) 
+        addArgumentToCallBase(CB, FunctionCallee(NS->getFunctionType(),Fn), LB.getInt64(0u));
+      Stub->replaceAllUsesWith(NS);
+      Stub->eraseFromParent();
+    }
+
+  return Stubs.size() > 0u;
+}
+
 // << ================================= HOST PASS DEFINITIONS ================================== >> 
 
 void IScabbardHostPass::registerRTL(Module& M) {
@@ -1291,8 +1417,16 @@ void IScabbardHostPass::registerRTL(Module& M) {
   ScabbardRTL.register_job = M.getOrInsertFunction(
       ScabbardRTL.register_job_name,
       FunctionType::get(
-          u64Ty,//PtrTy,
+          DTTy,//PtrTy,
           std::array<Type*,1ull>{PtrTy},
+          false
+        )
+    );
+  ScabbardRTL.register_job_stub = M.getOrInsertFunction(
+      ScabbardRTL.register_job_stub_name,
+      FunctionType::get(
+          DTTy,//PtrTy,
+          std::array<Type*,2ull>{PtrTy,PtrTy},
           false
         )
     );
@@ -1322,6 +1456,16 @@ void IScabbardHostPass::registerRTL(Module& M) {
           u32Ty,
           std::array<Type*,4ull>{
               PtrTy, PtrTy, PtrTy, LocDataTy
+            },
+          false
+        )
+    );
+  ScabbardRTL.debug_print_ull = M.getOrInsertFunction(
+      ScabbardRTL.debug_print_ull_name,
+      FunctionType::get(
+          VoidTy,
+          std::array<Type*,1ull>{
+              u64Ty
             },
           false
         )
@@ -1689,14 +1833,6 @@ IScabbardInstrPass::PtrOrigin IScabbardHostPass::getPtrOrigin(LoopInfo& LI, cons
   return PO;
 }
 
-void IRHelper::setDebugLoc(Instruction* i, const Instruction& I) const {
-  if (I.getDebugLoc())
-    i->setDebugLoc(I.getDebugLoc());
-  else if (DISubprogram *SP = I.getFunction()->getSubprogram()) {
-    i->setDebugLoc(DILocation::get(I.getContext(), 0, 0, SP));
-  }
-}
-
 bool IScabbardHostPass::instrumentInScabbardFunc(LoopInfo& LI, Instruction& I, Value* Ptr, 
                                                    const InstrData InstrContext, Value* ExtraData) {
   Value* PtrOp = Ptr;
@@ -1743,15 +1879,6 @@ bool IScabbardHostPass::instrumentInScabbardFunc(LoopInfo& LI, Instruction& I, V
   setDebugLoc(ci,I);
   
   return true;
-}
-
-void insertHandlingInvokes(CallInst* ci, CallBase& CB, bool InsertBefore=false) {
-  if (InsertBefore)
-    ci->insertBefore(&CB);
-  else if (InvokeInst* II = dyn_cast<InvokeInst>(&CB)) {
-    ci->insertBefore(II->getNormalDest()->getFirstNonPHI());
-  } else
-    ci->insertAfter(&CB);
 }
 
 CallInst* ScabbardHostPassHip::CreateRTLCall(CallBase& CB, const InstrData Data, 
@@ -1908,11 +2035,11 @@ AllocaInst* ScabbardHostPassHip::expand_param_args_alloc(const CallBase& CB, All
   std::string id = std::to_string(next_id++);
   auto oldAllocTy = alloc.getAllocatedType();
   size_t old_size = 0ul;
-  AllocaInst* newAlloc = nullptr;
+  AllocaInst* NewAlloc = nullptr;
   if (auto arrTy = dyn_cast<ArrayType>(oldAllocTy)) { // case: alloc array type
     old_size = arrTy->getNumElements();
-    newAlloc = new AllocaInst(
-                          ArrayType::get(PtrTy,old_size),
+    NewAlloc = new AllocaInst(
+                          ArrayType::get(PtrTy,old_size+1u),
                           0u,
                           ConstantInt::get(u32Ty, APInt(32u, 1u)),
                           Twine("scabbard.instr.kl.paramArrayAlloc.") + id,
@@ -1920,7 +2047,7 @@ AllocaInst* ScabbardHostPassHip::expand_param_args_alloc(const CallBase& CB, All
                         );
   } else if (auto C = dyn_cast<ConstantInt>(alloc.getArraySize())) { // case: built in alloc array concept
     old_size = C->getSExtValue();
-    newAlloc = new AllocaInst(
+    NewAlloc = new AllocaInst(
                           PtrTy,
                           0u,
                           ConstantInt::get(u32Ty, APInt(32u, old_size+1u)),
@@ -1933,24 +2060,34 @@ AllocaInst* ScabbardHostPassHip::expand_param_args_alloc(const CallBase& CB, All
   }
   auto PtrTy = PointerType::get(alloc.getContext(),0ul);
   // auto newAllocTy = ArrayType::get(PtrTy, old_size+1);
-  newAlloc->setAlignment(alloc.getAlign());
-  setDebugLoc(newAlloc,alloc); //might cause issues after alloc is deleted
-  alloc.replaceAllUsesWith(newAlloc); //DBG: does not seem to be working
+  NewAlloc->setAlignment(alloc.getAlign());
+  setDebugLoc(NewAlloc,alloc); //might cause issues after alloc is deleted
+  alloc.replaceAllUsesWith(NewAlloc); //DBG: does not seem to be working
   alloc.eraseFromParent();
   auto DTAlloc = new AllocaInst(
-            u64Ty, 0u, ConstantInt::get(u32Ty, APInt(32u, 1u)),
+            DTTy, 0u, ConstantInt::get(u32Ty, APInt(32u, 1u)),
             "scabbard.instr.kl.DTAlloc."+id,
-            newAlloc
+            NewAlloc
           );
   setDebugLoc(DTAlloc, CB);
+  // find where to put the GEP and store instructions (After last Store instruction into NewAlloc)
+  Instruction* InsertAfter = NewAlloc;
+  for (auto U : NewAlloc->users())
+    if (auto GEP = dyn_cast<GetElementPtrInst>(U))
+      InsertAfter = GEP;
+  if (InsertAfter != NewAlloc)
+    for (auto U : InsertAfter->users())
+      if (auto SI = dyn_cast<StoreInst>(U))
+        InsertAfter = SI;
+  
   auto DTParamPtr = GetElementPtrInst::CreateInBounds(
             u8Ty,
-            newAlloc, 
+            NewAlloc, 
             std::array<Value*,1>{ConstantInt::get(u64Ty, APInt(64u, old_size*8u))},
             "scabbard.instr.kl.DTParamPtr."+id
           );
   setDebugLoc(DTParamPtr, CB);
-  DTParamPtr->insertAfter(newAlloc);
+  DTParamPtr->insertAfter(InsertAfter);
   auto DTAllocStore = new StoreInst(DTAlloc, DTParamPtr, DTParamPtr->getNextNonDebugInstruction());
   setDebugLoc(DTAllocStore, CB);
   return DTAlloc;
@@ -1983,9 +2120,9 @@ bool ScabbardHostPassHip::APIInstr_LaunchKernel(CallBase& CB) {
   auto regFn = CallInst::Create(
       ScabbardRTL.register_job.getFunctionType(),
       ScabbardRTL.register_job.getCallee(),
-      std::array<Value*,1ull>{CB.getArgOperand(7ull)}
+      std::array<Value*,1ull>{CB.getArgOperand(7ull)},
+      "",&CB
     );
-  regFn->insertBefore(&CB);
   setDebugLoc(regFn,CB); //might cause issues if in a device stub
   auto [locID, is_inserted] = ScabbardRTL.Metadata.insert(&CB);
   if (not is_inserted && locID == 0ull)
@@ -2010,6 +2147,7 @@ bool ScabbardHostPassHip::APIInstr_LaunchKernel(CallBase& CB) {
   AllocaInst* dtAlloc = create_or_expand_param_args_alloc(CB, CB.getArgOperand(5ull)->stripPointerCasts());
   auto dtStore = new StoreInst(regFn, dtAlloc, &CB);
   setDebugLoc(dtStore,CB); //might cause issues if in a device stub
+  auto dbg_ci=CallInst::Create(ScabbardRTL.debug_print_ull,{regFn},"",&CB); setDebugLoc(dbg_ci,CB); //DEBUG
   // auto dtParamStore = new StoreInst(dtAlloc, dtAlloc, &CB);
   // setDebugLoc(dtParamStore,CB); //might cause issues if in a device stub
   return true;
@@ -2247,7 +2385,7 @@ void IScabbardDevicePass::registerRTL(Module& M) {
       FunctionType::get(
           VoidTy,
           std::array<Type*,4u>{
-              u64Ty,
+              DTTy,
               TraceDataTy,
               PtrTy,
               LocDataTy
@@ -2260,7 +2398,7 @@ void IScabbardDevicePass::registerRTL(Module& M) {
       FunctionType::get(
           VoidTy,
           std::array<Type*,5u>{
-              u64Ty,
+              DTTy,
               TraceDataTy,
               PtrTy,
               LocDataTy,
@@ -2282,6 +2420,7 @@ void IScabbardDevicePass::registerRTL(Module& M) {
 bool IScabbardDevicePass::runImpl(Function& F, FunctionAnalysisManager& FAM) {
   bool changed = false;
   LoopInfo& LI = FAM.getResult<LoopAnalysis>(F);
+  if (F.getName().contains("force_kernel")) {auto ii=&*F.getEntryBlock().getFirstNonPHIOrDbgOrAlloca();IRBuilder<> IRB(ii);auto dbg_ci=CallInst::Create(ScabbardRTL.dbg_print_ull,{IRB.getInt64(F.arg_size())},"",ii); setDebugLoc(dbg_ci,ii);}//DEBUG
   // SmallVector<std::pair<AllocaInst*, Value*>> Allocas; // for fakPtr/ShadowMem impl (not cur impl)
   // SmallVector<ReturnInst*> Returns; // for fakPtr/ShadowMem impl (not cur impl)
   SmallVector<LoadInst*> Loads;
@@ -2378,125 +2517,37 @@ bool IScabbardDevicePass::runImpl(Function& F, FunctionAnalysisManager& FAM) {
 inline bool IScabbardDevicePass::expandFnParams(Module& M) const {
   // expand the signatures of all relevant fn's
   // (this requires cloning and RAUW since llvm ir fn sigs are immutable)
-  bool changed = false;
-  SmallVector<Function*,8ul> to_expand;
+  SmallVector<Function*> to_expand;
   for (auto& Fn : M)
     if (isInstrumentableFn(Fn)) // only expand instrumentable fn's
       to_expand.push_back(&Fn);
-  SmallVector<std::pair<Function*, Function*>, 8ul> to_replace;
+  // SmallVector<std::pair<Function*, Function*>> to_replace;
   for (auto* OldFn : to_expand) {
-    std::string old_name = OldFn->getName().str();
-    OldFn->setName(old_name + "__old__scabbard_instr_replaced__old__");
-    auto oldParamTys = OldFn->getFunctionType()->params();
-    std::vector<Type*> paramTys(oldParamTys.begin(), oldParamTys.end());
-    paramTys.push_back((Type*)u64Ty); //PtrDGTy);
-    auto fn_callee =
-        M.getOrInsertFunction(old_name,
-                              FunctionType::get(OldFn->getFunctionType()->getReturnType(), ArrayRef<Type*>(paramTys),
-                                                OldFn->getFunctionType()->isVarArg()),
-                              OldFn->getAttributes());
-    Function* NewFn = dyn_cast<Function>(fn_callee.getCallee()); // new function (OldFn is old function)
-    NewFn->setCallingConv(OldFn->getCallingConv());
-    NewFn->setLinkage(OldFn->getLinkage());
+    auto NewFn = cloneWithTrailingArg(*OldFn, DTTy, "scabbard.rtl.dt");
 
-    to_replace.push_back({OldFn, NewFn});
-    changed |= true;
-    // if (OldFn->isDeclaration())
-    //   return NewFn;
-
-    ValueToValueMapTy vMap;
-    for (size_t i = 0; i < OldFn->arg_size(); ++i)
-      vMap[OldFn->getArg(i)] = NewFn->getArg(i);
-    SmallVector<ReturnInst*, 8> rets;
-    //?NOTE: this might be used wrong.  Double check results in testing to make sure it works correctly
-    //?     if wrong likely due to not creating vMap properly
-    CloneFunctionInto(NewFn, OldFn, vMap, CloneFunctionChangeType::LocalChangesOnly, rets);
-    // provide metadata for the added argument
-    // if (NewFn->isDeclaration()) return NewFn; //skip this for external functions
-    // auto* subPMD = NewFn->getSubprogram();
-    // auto retMDNs = subPMD->getRetainedNodes();
-    // std::vector<Metadata*> arg_metadata;
-    // for (auto arg : retMDNs) arg_metadata.push_back(arg);
-    // arg_metadata.push_back(
-    //     DILocalVariable::get(
-    //       NewFn->getContext(),
-    //       subPMD,
-    //       MDString::get(NewFn->getContext(), "SCABBARD_DT"),
-    //       subPMD->getFile(),
-    //       subPMD->getLine(),
-    //       device.DeviceTrackerPtrTy_metadata,
-    //       arg_metadata.size(),
-    //       DINode::DIFlags::FlagObjectPointer,
-    //       dwarf::MemorySpace::DW_MSPACE_LLVM_constant,
-    //       8u,
-    //       nullptr
-    //     )
-    //   );
-    // subPMD->replaceRetainedNodes(DINodeArray(MDTuple::get(NewFn->getContext(),arg_metadata)));
-    // // amend function type metadata
-    // std::vector<Metadata*> fnTy_metadata;
-    // auto fnTyMDs = subPMD->getType();
-    // for (auto type : subPMD->getType()->getTypeArray()) fnTy_metadata.push_back(type);
-    // fnTy_metadata.push_back(device.DeviceTrackerPtrTy_metadata);
-    // subPMD->replaceType(
-    //   DISubroutineType::get(
-    //       NewFn->getContext(),
-    //       fnTyMDs->getFlags(),
-    //       fnTyMDs->getCC(),
-    //       DITypeRefArray(MDTuple::get(NewFn->getContext(), fnTy_metadata))
-    //     )
-    //   );
-  }
-  // replace all references to overriden fn's (special case for calls to the fn to patch in carried param)
-  SmallPtrSet<CallInst*, 8u> to_remove;
-  // modify to pass device tracker through as last parameter to all functions defined in this module'
-  for (auto& tr : to_replace) {
-    Function *OldFn, *NewFn; // MDNode* NewFnMDN;
-    // std::tie(OldFn, NewFn, NewFnMDN) = tr;
-    std::tie(OldFn, NewFn) = tr;
-    for (auto u : OldFn->users()) {
-      // if (auto CI = dyn_cast<CallInst>(u.getUser())) {
-      if (auto CI = dyn_cast<CallInst>(u)) {
-        Function* iFn = CI->getFunction();
-        if (iFn->getName().ends_with("__old__scabbard_instr_replaced__old__"))
-          continue;
-
-        SmallVector<Value*, 4u> operands;
-        for (auto& op : CI->args())
-          operands.push_back(op.get());
-        operands.push_back(iFn->getArg(iFn->arg_size() - 1));
-        auto ci = CallInst::Create(NewFn->getFunctionType(), NewFn, ArrayRef<Value*>(operands));
-        if (CI->isTailCall())
-          ci->setTailCallKind(CI->getTailCallKind());
-        if (CI->canReturnTwice())
-          ci->setCanReturnTwice();
-        ci->insertBefore(CI);
-        CI->replaceAllUsesWith(ci);
-        setDebugLoc(ci,CI);
-        ci->setCallingConv(CI->getCallingConv());
-        setDebugLoc(ci,CI);
-        to_remove.insert(CI);
-
-      } else {
-        LLVM_DEBUG(errs() << "\n[scabbard.instr.device:DBG] overwritten device function used in non-call instruction!\n";);
+    SmallVector<std::tuple<CallBase*,Value*,Argument*>> cb_to_replace;
+    for (auto& U : OldFn->uses())
+      if (auto CB = dyn_cast<CallBase>(U.getUser())) {
+        auto Caller = CB->getCaller();
+        if (CB->isCallee(&U))
+          cb_to_replace.emplace_back(CB,NewFn,Caller->getArg(Caller->arg_size()-1u));
+      } else if (auto GA = dyn_cast<GlobalAlias>(U.getUser())) {
+        for (auto& _U : GA->uses())
+          if (auto CB = dyn_cast<CallBase>(_U.getUser())) {
+            auto Caller = CB->getCaller();
+            if (CB->isCallee(&_U))
+              cb_to_replace.emplace_back(CB,GA,Caller->getArg(Caller->arg_size()-1u));
+          }
       }
-    }
-    for (auto ci : to_remove)
-      ci->eraseFromParent();
-    to_remove.clear();
-  }
-  // remove OldFn from module
-  for (auto& tr : to_replace) {
-    Function *OldFn, *NewFn;
-    std::tie(OldFn, NewFn) = tr;
+
+    for (auto [CB, TargFn, Arg] : cb_to_replace)
+      addArgumentToCallBase(CB, FunctionCallee(NewFn->getFunctionType(), TargFn), Arg);
+
     OldFn->replaceAllUsesWith(NewFn);
     OldFn->eraseFromParent();
   }
-  // clear the list so we're ready for reuse
-  to_replace.clear();
-
   // return if changes were made
-  return changed;
+  return to_expand.size() > 0u;
 }
 
 IScabbardDevicePass::PtrOrigin IScabbardDevicePass::getPtrOrigin(LoopInfo& LI, Value* Ptr, const Value** Object) const {

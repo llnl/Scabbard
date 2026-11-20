@@ -36,7 +36,17 @@ namespace scabbard {
       __device__
       void dbg_print(std::uint64_t value)
       {
-        printf("\n[scabbard.rtl.device:DBG] %lu", value);
+        if (blockIdx.x != 0 && threadIdx.x != 0) return;
+        const void* kernarg_ptr = __builtin_amdgcn_kernarg_segment_ptr();
+        const auto* raw_args = static_cast<const uint8_t*>(kernarg_ptr);
+        auto a0 = *reinterpret_cast<std::uintptr_t*>(raw_args+0);
+        auto a1 = *reinterpret_cast<std::int32_t*>(raw_args+8);
+        auto a2 = *reinterpret_cast<std::int32_t*>(raw_args+12);
+        auto a3 = *reinterpret_cast<std::int32_t*>(raw_args+16);
+        auto a4 = *reinterpret_cast<std::uintptr_t*>(raw_args+20);
+        auto a5 = *reinterpret_cast<std::uintptr_t*>(raw_args+24);
+        printf("\n[scabbard.rtl.device:DBG] %%0: %lu, %%1: %d, %%2: %lu, %%3: %lu, %%4: %lu, %%5: %lu",
+                a0, a1, a2, a3, a4, a5);
       }
       
       [[clang::disable_sanitizer_instrumentation, gnu::used, gnu::retain]] 

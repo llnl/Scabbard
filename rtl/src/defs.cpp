@@ -229,6 +229,15 @@ namespace scabbard {
 
     [[clang::disable_sanitizer_instrumentation, gnu::used, gnu::retain, gnu::noinline]] 
     __host__
+    std::uintptr_t job_stub(hipStream_t STREAM, std::uintptr_t*const dt)
+    {
+      if (*dt == 0u)
+        return (*((std::uintptr_t*const)dt) = job(STREAM));
+      return *dt;
+    }
+
+    [[clang::disable_sanitizer_instrumentation, gnu::used, gnu::retain, gnu::noinline]] 
+    __host__
     void scabbard_stream_callback(hipStream_t stream, hipError_t status, void* dt_)
     {
       // mark the device tracker as finished for the SCAB_RUNTIME to take care of during next device upkeep cycle
@@ -381,6 +390,8 @@ namespace scabbard {
           );
       }
 
+      [[clang::disable_sanitizer_instrumentation, gnu::used, gnu::retain, gnu::noinline]]
+      __host__
       void trace_append$alloc$cond(const InstrData data, const void*const PTR, const void* const SRC_ID, const std::size_t SIZE)
       {
         hipPointerAttribute_t attrs;
@@ -406,6 +417,13 @@ namespace scabbard {
             exit(EXIT_FAILURE);
 #         endif
         }
+      }
+
+      [[clang::disable_sanitizer_instrumentation, gnu::used, gnu::retain, gnu::noinline]]
+      __host__
+      void dbg_print(std::uint64_t value)
+      {
+        SCAB_SERR << "\n[scabbard.rtl.host:DBG] " << value << "\n";
       }
       
     } // namespace host

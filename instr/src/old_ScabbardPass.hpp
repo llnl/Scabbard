@@ -70,9 +70,9 @@ namespace instr {
         llvm::FunctionCallee trace_append$alloc;
         const std::string trace_append$alloc_name = SCABBARD_HOST_CALLBACK_APPEND_EXT_NAME;
         llvm::FunctionCallee register_job;
-        const std::string register_job_name = SCABBARD_CALLBACK_REGISTER_JOB;
+        const std::string register_job_name = SCABBARD_CALLBACK_REGISTER_JOB_NAME;
         llvm::FunctionCallee register_job_callback;
-        const std::string register_job_callback_name = SCABBARD_CALLBACK_REGISTER_JOB_CALLBACK;
+        const std::string register_job_callback_name = SCABBARD_CALLBACK_REGISTER_JOB_CALLBACK_NAME;
       } host;
     struct {
         llvm::FunctionCallee trace_append$mem;
